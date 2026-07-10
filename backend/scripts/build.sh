@@ -11,13 +11,19 @@
 set -euo pipefail
 
 echo "==> Installing db package dependencies"
-(cd db && npm install)
+# --include=dev overrides npm's default behaviour of skipping
+# devDependencies when NODE_ENV=production is set in the environment
+# (which render.yaml does, since the app needs to run in production
+# mode). TypeScript, @types/*, and Prisma's CLI all live in
+# devDependencies for db/ and backend/ - without this flag, `npx prisma
+# generate`/`npm run build` fail because none of those got installed.
+(cd db && npm install --include=dev)
 
 echo "==> Generating Prisma client"
 (cd db && npx prisma generate)
 
 echo "==> Installing backend dependencies"
-(cd backend && npm install)
+(cd backend && npm install --include=dev)
 
 echo "==> Linking generated Prisma client into backend/node_modules"
 rm -rf backend/node_modules/@prisma/client backend/node_modules/.prisma
