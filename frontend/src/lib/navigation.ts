@@ -7,6 +7,7 @@ const ALL_ROLES: UserRole[] = [
 
 const ADMIN_ROLES: UserRole[] = ["SUPER_ADMIN", "BRANCH_ADMIN"];
 const STAFF_ROLES: UserRole[] = ["SUPER_ADMIN", "BRANCH_ADMIN", "TEACHER", "ACCOUNTANT", "LIBRARIAN", "TRANSPORT_MANAGER", "WARDEN", "STAFF"];
+const PARENT_PORTAL_ROLES: UserRole[] = ["STUDENT", "PARENT"];
 
 export const navigation: NavItem[] = [
   {
@@ -26,6 +27,12 @@ export const navigation: NavItem[] = [
     href: "/dashboard/academic-years",
     icon: "Calendar",
     roles: ["SUPER_ADMIN", "BRANCH_ADMIN"],
+  },
+  {
+    label: "Admissions",
+    href: "/dashboard/admissions",
+    icon: "Inbox",
+    roles: ADMIN_ROLES,
   },
   {
     label: "Students",
@@ -49,13 +56,32 @@ export const navigation: NavItem[] = [
     label: "Attendance",
     href: "/dashboard/attendance",
     icon: "ClipboardCheck",
-    roles: [...ADMIN_ROLES, "TEACHER", "STUDENT", "PARENT"],
+    roles: [...ADMIN_ROLES, "TEACHER"],
+  },
+  // The parent-portal ("My ...") pages below are deliberately separate
+  // routes rather than role-branching inside the existing admin pages -
+  // the admin pages (attendance/fees/exams/homework) manage ALL
+  // students/classes and assume staff-level query params (sectionId,
+  // classId, etc), whereas these are self-service, single-child-scoped
+  // views with a completely different UI (child switcher, pay/download
+  // buttons instead of data-entry forms).
+  {
+    label: "My Attendance",
+    href: "/dashboard/my-attendance",
+    icon: "ClipboardCheck",
+    roles: PARENT_PORTAL_ROLES,
   },
   {
     label: "Fees",
     href: "/dashboard/fees",
     icon: "IndianRupee",
-    roles: [...ADMIN_ROLES, "ACCOUNTANT", "STUDENT", "PARENT"],
+    roles: [...ADMIN_ROLES, "ACCOUNTANT"],
+  },
+  {
+    label: "My Fees",
+    href: "/dashboard/my-fees",
+    icon: "IndianRupee",
+    roles: PARENT_PORTAL_ROLES,
   },
   {
     label: "Accounting",
@@ -73,13 +99,31 @@ export const navigation: NavItem[] = [
     label: "Exams",
     href: "/dashboard/exams",
     icon: "FileText",
-    roles: [...ADMIN_ROLES, "TEACHER", "STUDENT", "PARENT"],
+    roles: [...ADMIN_ROLES, "TEACHER"],
+  },
+  {
+    label: "My Exams",
+    href: "/dashboard/my-exams",
+    icon: "FileText",
+    roles: PARENT_PORTAL_ROLES,
   },
   {
     label: "Timetable",
     href: "/dashboard/timetable",
     icon: "Calendar",
     roles: [...ADMIN_ROLES, "TEACHER", "STUDENT", "PARENT"],
+  },
+  {
+    label: "Homework",
+    href: "/dashboard/homework",
+    icon: "BookOpen",
+    roles: [...ADMIN_ROLES, "TEACHER"],
+  },
+  {
+    label: "My Homework",
+    href: "/dashboard/my-homework",
+    icon: "BookOpen",
+    roles: PARENT_PORTAL_ROLES,
   },
   {
     label: "Library",
@@ -127,6 +171,12 @@ export const navigation: NavItem[] = [
     label: "Reports",
     href: "/dashboard/reports",
     icon: "BarChart3",
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: "Audit Log",
+    href: "/dashboard/audit-log",
+    icon: "History",
     roles: ADMIN_ROLES,
   },
   {

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { getNavForRole } from "@/lib/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import * as Icons from "lucide-react";
-import { LucideIcon } from "lucide-react";
+import { LucideIcon, Circle } from "lucide-react";
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -17,7 +17,13 @@ export default function Sidebar() {
   const navItems = getNavForRole(user.role);
 
   const getIcon = (iconName: string): LucideIcon => {
-    return (Icons as Record<string, LucideIcon>)[iconName] || Icons.Circle;
+    // `lucide-react`'s namespace export includes some non-icon members
+    // (e.g. `icons`, type helpers) whose types don't cleanly overlap
+    // with `Record<string, LucideIcon>` on newer versions of the
+    // package - narrow through `unknown` first rather than fighting the
+    // exact shape, since this is just a runtime string->component lookup.
+    const icon = (Icons as unknown as Record<string, LucideIcon | undefined>)[iconName];
+    return icon || Circle;
   };
 
   return (

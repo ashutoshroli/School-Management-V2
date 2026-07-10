@@ -29,7 +29,18 @@ const limiter = rateLimit({
 app.use("/api/auth", limiter);
 
 // Body parsing
-app.use(express.json({ limit: "10mb" }));
+// The `verify` hook stashes the raw request body on `req.rawBody` before
+// it's parsed to JSON - the Razorpay webhook handler needs the exact raw
+// bytes to compute/verify the HMAC signature; re-serializing the parsed
+// JSON would not reliably reproduce the original byte sequence.
+app.use(
+  express.json({
+    limit: "10mb",
+    verify: (req, _res, buf) => {
+      (req as any).rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 

@@ -133,11 +133,46 @@ After seeding:
 | 7 | Reports, Analytics, Multi-branch Dashboard | Done |
 | 8 | Production Deployment (Hostinger VPS) | Pending |
 
+| 9 | Online payments (Razorpay checkout + webhook), PDF receipts/ID cards/report cards | Done |
+| 10 | File uploads (student/staff documents, avatars) | Done |
+| 11 | Parent/Student self-service portal (fees, attendance, homework, exams) | Done |
+| 12 | Notifications (real email, SMS/WhatsApp stubs, in-app) | Done |
+| 13 | Automated tests (Jest) + CI (GitHub Actions) | Done |
+| 14 | Public online admission form + inquiry pipeline, Audit log viewer | Done |
+
 > Note: "Done" means the backend API and a corresponding frontend page
 > exist and are functional for local/dev use. It does not imply the
-> module has been through a full security/production-readiness review -
-> see open issues in the repository for known gaps (e.g. automated tests
-> and CI are not yet set up).
+> module has been through a full production-readiness review beyond
+> what's covered by the automated tests described below - see "Known
+> limitations" for gaps that are intentionally out of scope for now.
+
+### Known limitations / stubs (by design)
+
+- **SMS/WhatsApp notifications** are stub providers that log what would
+  be sent (see `backend/src/services/notification/{sms,whatsapp}Provider.ts`) -
+  no real gateway credentials are wired up. Email (SMTP) is real.
+  Swapping in a real SMS/WhatsApp provider only requires editing those
+  two files.
+- **Notification "read" state** isn't tracked server-side (the schema's
+  `Notification.status` field tracks delivery, not read/unread) - the
+  frontend bell approximates "unread" via a client-side last-seen
+  timestamp.
+- **Certificate generation** (Transfer Certificate, Bonafide, etc. via
+  `certificate.controller.ts`) is still a placeholder that stores a
+  fake PDF URL - only the fee-receipt/ID-card/report-card PDFs (added
+  as part of this work) generate real PDFs.
+- File uploads are stored on local disk by default (see
+  `backend/src/services/storage.service.ts`'s `StorageProvider`
+  interface) - swap in an S3/GCS-backed implementation for production
+  multi-instance deployments.
+
+## Public Pages
+
+- `/admission` - public "Apply for Admission" inquiry form (no login
+  required). Submissions land in Dashboard > Admissions for staff
+  follow-up; converting an inquiry into an actual enrolled student is
+  still done via the regular (staff-only) admission flow under
+  Dashboard > Students.
 
 ## Roles
 
@@ -192,7 +227,33 @@ Additional route groups are mounted for the modules below - see
 | /academics | Student attendance, timetable, exams, homework, promotion |
 | /facilities | Library, inventory, transport, hostel |
 | /communication | Notices, messages, certificates |
-| /reports | Dashboards, multi-branch summary, analytics |
+| /reports | Dashboards, multi-branch summary, analytics, audit log |
+| /parent | Parent/student self-service (linked children, dashboard summary) |
+| /admission | Public admission inquiry form (no auth) + staff review |
+
+## Testing & CI
+
+```bash
+cd backend
+npm test              # run the Jest suite once
+npm run test:coverage # with coverage report
+```
+
+Tests cover the security-critical branch/student access-control helpers
+(`utils/branchScope.ts`, `utils/studentAccess.ts`), the fee-payment
+validators, the core atomic payment-recording logic in
+`services/feePayment.service.ts`, and a handful of HTTP-level smoke
+tests against the real Express app.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR to
+`main`:
+- **backend job**: generates the Prisma client, typechecks, runs the
+  Jest suite, and builds.
+- **frontend job**: typechecks and runs `next build`.
+
+No live database is required for CI - the tests either mock Prisma
+directly or exercise routes that fail before any DB query happens
+(e.g. authentication checks).
 
 ## License
 

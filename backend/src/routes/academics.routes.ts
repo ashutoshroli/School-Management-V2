@@ -3,6 +3,7 @@ import { UserRole } from "@prisma/client";
 import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory } from "../controllers/studentAttendance.controller";
 import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } from "../controllers/timetable.controller";
 import { createExam, getExams, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
+import { getReportCardPdf } from "../controllers/document.controller";
 import { createHomework, getHomeworks, submitHomework, getSubmissions } from "../controllers/homework.controller";
 import { bulkPromote } from "../controllers/promotion.controller";
 import { authenticate, authorize } from "../middleware/auth";
@@ -15,6 +16,8 @@ const TEACHERS = [...ADMIN, UserRole.TEACHER];
 router.post("/attendance/mark", authenticate, authorize(...TEACHERS), markStudentAttendance);
 router.post("/attendance/card-tap", studentCardTap); // Device auth via API key
 router.get("/attendance/class", authenticate, authorize(...TEACHERS), getClassAttendance);
+// Access control (branch staff OR the student/parent themselves) is
+// enforced inside the controller via canAccessBranch/canAccessStudentRecord.
 router.get("/attendance/student/:studentId", authenticate, getStudentAttendanceHistory);
 
 // Timetable
@@ -28,6 +31,7 @@ router.post("/exams", authenticate, authorize(...ADMIN), createExam);
 router.get("/exams", authenticate, getExams);
 router.post("/exams/marks", authenticate, authorize(...TEACHERS), enterMarks);
 router.get("/exams/:examId/results", authenticate, getExamResults);
+router.get("/exams/:examId/report-card/:studentId", authenticate, getReportCardPdf);
 router.patch("/exams/:id/publish", authenticate, authorize(...ADMIN), togglePublish);
 
 // Homework

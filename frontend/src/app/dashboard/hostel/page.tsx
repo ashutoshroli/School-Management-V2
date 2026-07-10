@@ -97,39 +97,3 @@ export default function HostelPage() {
     </div>
   );
 }
-
-
-              {b.floors?.map((f: any) => (
-                <div key={f.id} className="mb-3">
-                  <p className="text-sm font-medium text-gray-600 mb-2">Floor {f.floorNo}</p>
-                  <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                    {f.rooms?.map((r: any) => (
-                      <div key={r.id} className={`p-2 rounded-lg text-center text-xs border ${r.occupied >= r.capacity ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"}`}>
-                        <p className="font-bold">{r.roomNo}</p>
-                        <p className="text-gray-500">{r.occupied}/{r.capacity}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Add Hostel Building">
-        <form onSubmit={handleCreate} className="space-y-4">
-          <div><label className="block text-sm font-medium mb-1">Building Name *</label>
-            <input className="input-field" value={form.name} onChange={e => setForm({...form, name: e.target.value})} required /></div>
-          <div><label className="block text-sm font-medium mb-1">Type *</label>
-            <select className="input-field" value={form.type} onChange={e => setForm({...form, type: e.target.value})}>
-              <option value="BOYS">Boys</option><option value="GIRLS">Girls</option>
-            </select></div>
-          <div><label className="block text-sm font-medium mb-1">Warden</label>
-            <input className="input-field" value={form.warden} onChange={e => setForm({...form, warden: e.target.value})} /></div>
-          <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Create</button></div>
-        </form>
-      </Modal>
-    </div>
-  );
-}

@@ -1,8 +1,10 @@
 import { Router } from "express";
 import passport from "passport";
 import { login, googleCallback, getProfile, changePassword } from "../controllers/auth.controller";
+import { uploadOwnAvatar } from "../controllers/upload.controller";
 import { authenticate } from "../middleware/auth";
 import { validate } from "../middleware/validate";
+import { uploadAvatar, handleUploadErrors } from "../middleware/upload";
 import { loginSchema, changePasswordSchema } from "../validators/auth.validator";
 
 const router = Router();
@@ -25,5 +27,6 @@ router.get(
 // Protected routes
 router.get("/profile", authenticate, getProfile);
 router.put("/change-password", authenticate, validate(changePasswordSchema), changePassword);
+router.post("/avatar", authenticate, handleUploadErrors(uploadAvatar), uploadOwnAvatar);
 
 export default router;
