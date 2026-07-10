@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { IndianRupee, Search, Receipt } from "lucide-react";
+import { IndianRupee, Search, Receipt, Download } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
+import { payFeeWithRazorpay } from "@/lib/razorpay";
+import { openPdfInNewTab } from "@/lib/pdf";
 
 export default function FeeCollectionPage() {
   const [studentSearch, setStudentSearch] = useState("");
@@ -12,6 +14,7 @@ export default function FeeCollectionPage() {
   const [pendingFees, setPendingFees] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [collecting, setCollecting] = useState(false);
+  const [lastReceipt, setLastReceipt] = useState<{ id: string; receiptNo: string } | null>(null);
   const [payForm, setPayForm] = useState({
     feeAssignmentId: "", amount: "", paymentMode: "CASH",
     transactionId: "", chequeNo: "", bankName: "", remarks: "", waiveLateFee: false,
@@ -37,24 +40,44 @@ export default function FeeCollectionPage() {
     finally { setLoading(false); }
   };
 
+  const refreshPending = async () => {
+    const pRes = await api.get(`/fees/pending/${selectedStudent.id}`);
+    setPendingFees(pRes.data.data || []);
+  };
+
   const handleCollect = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!payForm.feeAssignmentId || !payForm.amount) { alert("Select fee and enter amount"); return; }
     setCollecting(true);
     try {
-      const res = await api.post("/fees/collect", {
-        ...payForm,
-        amount: parseFloat(payForm.amount),
-        studentId: selectedStudent.id,
-        branchId: selectedStudent.branchId,
-      });
-      alert(`Payment collected! Receipt: ${res.data.data.payment.receiptNo}`);
-      // Refresh pending
-      const pRes = await api.get(`/fees/pending/${selectedStudent.id}`);
-      setPendingFees(pRes.data.data || []);
+      if (payForm.paymentMode === "ONLINE_RAZORPAY") {
+        // Online payments go through the Razorpay checkout flow instead
+        // of the direct /fees/collect endpoint - the amount and success
+        // status are determined by the gateway/server, not typed in by
+        // whoever is at this screen.
+        const result = await payFeeWithRazorpay({
+          branchId: selectedStudent.branchId,
+          studentId: selectedStudent.id,
+          feeAssignmentId: payForm.feeAssignmentId,
+          studentName: selectedStudent.user.name,
+        });
+        setLastReceipt({ id: result.payment.id, receiptNo: result.payment.receiptNo });
+      } else {
+        const res = await api.post("/fees/collect", {
+          ...payForm,
+          amount: parseFloat(payForm.amount),
+          studentId: selectedStudent.id,
+          branchId: selectedStudent.branchId,
+        });
+        setLastReceipt({ id: res.data.data.payment.id, receiptNo: res.data.data.payment.receiptNo });
+      }
+      await refreshPending();
       setPayForm({ feeAssignmentId: "", amount: "", paymentMode: "CASH", transactionId: "", chequeNo: "", bankName: "", remarks: "", waiveLateFee: false });
-    } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
-    finally { setCollecting(false); }
+    } catch (err: any) {
+      alert(err.response?.data?.message || err.message || "Failed");
+    } finally {
+      setCollecting(false);
+    }
   };
 
   return (
@@ -88,6 +111,20 @@ export default function FeeCollectionPage() {
           </div>
         )}
       </div>
+
+      {lastReceipt && (
+        <div className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3">
+          <p className="text-sm text-green-700">
+            Payment recorded successfully. Receipt No: <span className="font-mono font-medium">{lastReceipt.receiptNo}</span>
+          </p>
+          <button
+            onClick={() => openPdfInNewTab(`/fees/payments/${lastReceipt.id}/receipt`)}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            <Download className="h-4 w-4" /> Download Receipt
+          </button>
+        </div>
+      )}
 
       {selectedStudent && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -150,11 +187,16 @@ export default function FeeCollectionPage() {
                   <input className="input-field" value={payForm.chequeNo} onChange={(e) => setPayForm({ ...payForm, chequeNo: e.target.value })} />
                 </div>
               )}
-              {payForm.paymentMode !== "CASH" && (
+              {payForm.paymentMode !== "CASH" && payForm.paymentMode !== "ONLINE_RAZORPAY" && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Transaction ID</label>
                   <input className="input-field" value={payForm.transactionId} onChange={(e) => setPayForm({ ...payForm, transactionId: e.target.value })} />
                 </div>
+              )}
+              {payForm.paymentMode === "ONLINE_RAZORPAY" && (
+                <p className="text-xs text-gray-500 bg-blue-50 border border-blue-200 rounded-lg p-2">
+                  Clicking "Collect Payment" will open the Razorpay checkout for Rs {payForm.amount || "0"}. The transaction ID and receipt are recorded automatically once the gateway confirms payment.
+                </p>
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Remarks</label>

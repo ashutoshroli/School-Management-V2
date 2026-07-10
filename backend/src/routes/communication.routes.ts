@@ -3,6 +3,7 @@ import { UserRole } from "@prisma/client";
 import { createNotice, getNotices, deleteNotice, togglePin } from "../controllers/notice.controller";
 import { sendMessage, getConversation, getInbox } from "../controllers/message.controller";
 import { createTemplate, getTemplates, generateCertificate, getGeneratedCertificates } from "../controllers/certificate.controller";
+import { getMyNotifications } from "../controllers/notification.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 
 const router = Router();
@@ -10,6 +11,9 @@ const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
 const STAFF = [...ADMIN, UserRole.TEACHER, UserRole.ACCOUNTANT, UserRole.LIBRARIAN, UserRole.TRANSPORT_MANAGER, UserRole.WARDEN, UserRole.STAFF];
 
 router.use(authenticate);
+
+// === NOTIFICATIONS (self-service) ===
+router.get("/notifications", getMyNotifications);
 
 // === NOTICES ===
 router.post("/notices", authorize(...STAFF), branchAccess, createNotice);

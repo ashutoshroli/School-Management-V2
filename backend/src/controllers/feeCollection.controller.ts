@@ -1,10 +1,11 @@
 import { Response } from "express";
-import { Prisma } from "@prisma/client";
-import { Decimal } from "@prisma/client/runtime/library";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { canAccessBranch } from "../utils/branchScope";
+import { canAccessStudentRecord } from "../utils/studentAccess";
+import { getValidatedFeeAssignment, recordFeePayment, notifyPaymentConfirmation } from "../services/feePayment.service";
+import { logAuditFromRequest } from "../services/auditLog.service";
 
 /**
  * Bulk assign fee structure to all students of a class
@@ -69,7 +70,10 @@ export const getStudentPendingFees = async (req: AuthRequest, res: Response): Pr
 
     const student = await prisma.student.findUnique({ where: { id: studentId }, select: { branchId: true } });
     if (!student) { sendError(res, "Student not found", 404); return; }
-    if (!canAccessBranch(req, student.branchId)) { sendError(res, "Student not found", 404); return; }
+    if (!canAccessBranch(req, student.branchId) && !(await canAccessStudentRecord(req, studentId))) {
+      sendError(res, "Student not found", 404);
+      return;
+    }
 
     const assignments = await prisma.feeAssignment.findMany({
       where: { studentId, status: { in: ["PENDING", "PARTIAL", "OVERDUE"] } },
@@ -139,153 +143,47 @@ export const collectPayment = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    const assignment = await prisma.feeAssignment.findUnique({
-      where: { id: feeAssignmentId },
-      include: { feeStructure: true, student: { select: { branchId: true } } },
-    });
-    if (!assignment) { sendError(res, "Fee assignment not found", 404); return; }
-
-    // Make sure the fee assignment actually belongs to the branch/student passed in.
-    if (assignment.studentId !== studentId || assignment.student.branchId !== branchId) {
-      sendError(res, "Fee assignment does not match the given student/branch", 400);
+    const { assignment, error: assignmentError } = await getValidatedFeeAssignment(feeAssignmentId, studentId, branchId);
+    if (!assignment) {
+      sendError(res, assignmentError || "Fee assignment not found", assignmentError?.includes("match") ? 400 : 404);
       return;
     }
-
-    // Calculate late fee
-    let lateFeeCharged = 0;
-    if (!waiveLateFee) {
-      const struct = assignment.feeStructure;
-      const now = new Date();
-      if (struct.lateFeeType !== "NONE") {
-        const dueDate = new Date(now.getFullYear(), now.getMonth(), struct.dueDay);
-        if (now > dueDate) {
-          const daysLate = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-          if (struct.lateFeeType === "FIXED") {
-            lateFeeCharged = Number(struct.lateFeeValue) * daysLate;
-          } else {
-            const pending = Number(assignment.totalAmount) - Number(assignment.paidAmount) - Number(assignment.discount);
-            lateFeeCharged = (pending * Number(struct.lateFeeValue)) / 100;
-          }
-        }
-      }
-    }
-
-    // Update fee assignment totals
-    const newPaid = Number(assignment.paidAmount) + Number(amount);
-    const newLateFee = Number(assignment.lateFee) + lateFeeCharged;
-    const total = Number(assignment.totalAmount) - Number(assignment.discount) + newLateFee;
-    const newStatus = newPaid >= total ? "PAID" : "PARTIAL";
 
     // SAFETY: payment creation, fee assignment update, and the accounting
     // ledger post must all succeed or all roll back together - otherwise
     // we can end up with a recorded payment that has no matching ledger
     // entry (or vice versa), which is a real reconciliation risk for a
     // financial system.
-    const { payment } = await prisma.$transaction(async (tx) => {
-      // Generate receipt number inside the transaction to reduce (but not
-      // fully eliminate, without a DB sequence) the race window under
-      // concurrent collections for the same branch.
-      const count = await tx.payment.count({ where: { branchId } });
-      const receiptNo = `RCP-${String(count + 1).padStart(6, "0")}`;
+    const { payment, lateFeeCharged, newStatus } = await prisma.$transaction((tx) =>
+      recordFeePayment(tx, assignment, {
+        branchId,
+        studentId,
+        feeAssignmentId,
+        amount: Number(amount),
+        paymentMode,
+        transactionId,
+        chequeNo,
+        chequeDate: chequeDate ? new Date(chequeDate) : null,
+        bankName,
+        remarks,
+        waiveLateFee,
+      })
+    );
 
-      const payment = await tx.payment.create({
-        data: {
-          branchId,
-          studentId,
-          feeAssignmentId,
-          amount,
-          lateFeeCharged,
-          paymentMode,
-          transactionId,
-          chequeNo,
-          chequeDate: chequeDate ? new Date(chequeDate) : null,
-          bankName,
-          receiptNo,
-          remarks,
-          status: "SUCCESS",
-          paidAt: new Date(),
-        },
-      });
+    // Fire-and-forget - a slow/failed notification must never affect
+    // the payment response.
+    const student = await prisma.student.findUnique({ where: { id: studentId }, include: { user: { select: { name: true } } } });
+    if (student) {
+      notifyPaymentConfirmation(studentId, student.user.name, Number(amount), payment.receiptNo);
+    }
 
-      await tx.feeAssignment.update({
-        where: { id: feeAssignmentId },
-        data: {
-          paidAmount: newPaid,
-          lateFee: newLateFee,
-          status: newStatus,
-        },
-      });
-
-      await autoPostToAccounting(tx, branchId, payment.id, Number(amount), paymentMode, receiptNo);
-
-      return { payment };
-    });
+    logAuditFromRequest(req, "CREATE", "payment", payment.id, { newData: payment });
 
     sendSuccess(res, { payment, lateFeeCharged, newStatus }, "Payment collected successfully", 201);
   } catch (error) {
     sendError(res, "Failed to collect payment", 500, (error as Error).message);
   }
 };
-
-/**
- * Auto-post fee payment to accounting ledger.
- * Must be called with a transaction client (`tx`) so it is atomic with the
- * payment/fee-assignment writes in `collectPayment`.
- */
-async function autoPostToAccounting(
-  tx: Prisma.TransactionClient,
-  branchId: string,
-  paymentId: string,
-  amount: number,
-  mode: string,
-  receiptNo: string
-) {
-  // Find Cash/Bank account and Fee Income account
-  const cashAccount = await tx.account.findFirst({
-    where: { branchId, code: mode === "CASH" ? "1001" : "1002" },
-  });
-  const feeIncomeAccount = await tx.account.findFirst({
-    where: { branchId, code: "3001" },
-  });
-
-  if (!cashAccount || !feeIncomeAccount) {
-    // No chart of accounts configured for this branch yet - skip the
-    // ledger post rather than failing the whole payment. Surface this so
-    // ops can fix the missing accounts.
-    throw new Error(
-      `Accounting not configured for branch ${branchId}: missing Cash/Bank (1001/1002) or Fee Income (3001) account`
-    );
-  }
-
-  // Generate voucher number
-  const vCount = await tx.voucher.count({ where: { branchId } });
-  const voucherNo = `V-${String(vCount + 1).padStart(6, "0")}`;
-
-  // Create receipt voucher
-  const voucher = await tx.voucher.create({
-    data: {
-      branchId,
-      voucherNo,
-      type: "RECEIPT",
-      date: new Date(),
-      narration: `Fee collection - Receipt ${receiptNo}`,
-      paymentId,
-      totalAmount: amount,
-      isApproved: true,
-    },
-  });
-
-  // Create voucher entry (Debit Cash/Bank, Credit Fee Income)
-  await tx.voucherEntry.create({
-    data: {
-      voucherId: voucher.id,
-      debitAccountId: cashAccount.id,
-      creditAccountId: feeIncomeAccount.id,
-      amount,
-      narration: `Fee received - ${receiptNo}`,
-    },
-  });
-}
 
 /**
  * Get payment history for a student
@@ -299,7 +197,10 @@ export const getStudentPayments = async (req: AuthRequest, res: Response): Promi
 
     const student = await prisma.student.findUnique({ where: { id: studentId }, select: { branchId: true } });
     if (!student) { sendError(res, "Student not found", 404); return; }
-    if (!canAccessBranch(req, student.branchId)) { sendError(res, "Student not found", 404); return; }
+    if (!canAccessBranch(req, student.branchId) && !(await canAccessStudentRecord(req, studentId))) {
+      sendError(res, "Student not found", 404);
+      return;
+    }
 
     const [payments, total] = await Promise.all([
       prisma.payment.findMany({
@@ -396,6 +297,8 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
 
       return refund;
     });
+
+    logAuditFromRequest(req, "CREATE", "refund", refund.id, { newData: refund, oldData: { payment } });
 
     sendSuccess(res, refund, "Refund processed", 201);
   } catch (error) {

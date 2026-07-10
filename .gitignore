@@ -40,3 +40,8 @@ coverage/
 
 # Misc
 *.tsbuildinfo
+
+# User-uploaded files (student/staff documents, avatars) - saved locally
+# under backend/uploads by default (see UPLOAD_DIR in .env.example).
+# These are runtime data, not source, and should never be committed.
+backend/uploads/

@@ -5,6 +5,8 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { canAccessStudentRecord } from "../utils/studentAccess";
+import { logAuditFromRequest } from "../services/auditLog.service";
 
 /**
  * Generate unique admission number.
@@ -177,6 +179,8 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
       },
     });
 
+    logAuditFromRequest(req, "CREATE", "student", studentId, { newData: fullStudent });
+
     sendSuccess(res, fullStudent, "Student admitted successfully", 201);
   } catch (error) {
     sendError(res, "Failed to create student", 500, (error as Error).message);
@@ -263,9 +267,13 @@ export const getStudentById = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
-    // SECURITY: prevent cross-branch access (IDOR) - only Super Admin or
-    // users belonging to the same branch as this student may view it.
-    if (!canAccessBranch(req, student.branchId)) {
+    // SECURITY: prevent cross-branch access (IDOR) - only branch staff,
+    // Super Admin, or the student/their linked parent may view this
+    // record. (canAccessStudentRecord as a fallback rather than relying
+    // solely on branchId equality - a PARENT's JWT only carries their
+    // *first* child's branchId, which would incorrectly deny access to
+    // a second child in a different branch.)
+    if (!canAccessBranch(req, student.branchId) && !(await canAccessStudentRecord(req, id))) {
       sendError(res, "Student not found", 404);
       return;
     }
@@ -330,6 +338,8 @@ export const updateStudent = async (req: AuthRequest, res: Response): Promise<vo
         data: { ...(name && { name }), ...(phone && { phone }) },
       });
     }
+
+    logAuditFromRequest(req, "UPDATE", "student", id, { oldData: student, newData: updated });
 
     sendSuccess(res, updated, "Student updated");
   } catch (error) {

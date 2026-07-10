@@ -2,9 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { GraduationCap, CreditCard, Users, ArrowLeft, Edit } from "lucide-react";
+import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { openPdfInNewTab } from "@/lib/pdf";
+import { resolveUploadUrl } from "@/lib/uploads";
+import FileUploadButton from "@/components/ui/FileUploadButton";
 
 export default function StudentProfilePage() {
   const params = useParams();
@@ -27,6 +30,21 @@ export default function StudentProfilePage() {
     fetchStudent();
   }, [params.id, router]);
 
+  const refetchStudent = async () => {
+    const res = await api.get(`/students/${params.id}`);
+    setStudent(res.data.data);
+  };
+
+  const handleDeleteDocument = async (docId: string) => {
+    if (!confirm("Delete this document?")) return;
+    try {
+      await api.delete(`/students/${params.id}/documents/${docId}`);
+      await refetchStudent();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to delete document");
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-12">
@@ -47,6 +65,12 @@ export default function StudentProfilePage() {
           <h1 className="text-2xl font-bold text-gray-900">{student.user.name}</h1>
           <p className="text-gray-500">Admission No: {student.admissionNo}</p>
         </div>
+        <button
+          onClick={() => openPdfInNewTab(`/students/${params.id}/id-card`)}
+          className="btn-secondary flex items-center gap-2"
+        >
+          <BadgeCheck className="h-4 w-4" /> ID Card
+        </button>
         <button className="btn-primary flex items-center gap-2">
           <Edit className="h-4 w-4" /> Edit
         </button>
@@ -102,6 +126,45 @@ export default function StudentProfilePage() {
               ))}
               {(!student.parents || student.parents.length === 0) && (
                 <p className="text-sm text-gray-400">No parents linked</p>
+              )}
+            </div>
+          </div>
+
+          {/* Documents */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <FileText className="h-5 w-5 text-blue-600" /> Documents
+              </h3>
+              <div className="flex gap-2">
+                {["photo", "birth_cert", "aadhar", "tc", "marksheet"].map((docType) => (
+                  <FileUploadButton
+                    key={docType}
+                    uploadPath={`/students/${params.id}/documents`}
+                    extraFields={{ type: docType }}
+                    label={docType.replace("_", " ")}
+                    onUploaded={refetchStudent}
+                    className="text-xs px-2 py-1"
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              {student.documents?.map((doc: any) => (
+                <div key={doc.id} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
+                  <div>
+                    <a href={resolveUploadUrl(doc.fileUrl)} target="_blank" rel="noreferrer" className="font-medium text-primary-600 hover:underline">
+                      {doc.name}
+                    </a>
+                    <p className="text-xs text-gray-500">{doc.type.replace("_", " ")} &bull; {formatDate(doc.createdAt)}</p>
+                  </div>
+                  <button onClick={() => handleDeleteDocument(doc.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              {(!student.documents || student.documents.length === 0) && (
+                <p className="text-sm text-gray-400">No documents uploaded yet</p>
               )}
             </div>
           </div>

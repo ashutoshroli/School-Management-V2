@@ -2,6 +2,8 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { canAccessBranch } from "../utils/branchScope";
+import { canAccessStudentRecord } from "../utils/studentAccess";
 
 /**
  * Mark student attendance (teacher marks for a class/section/date)
@@ -106,6 +108,18 @@ export const getClassAttendance = async (req: AuthRequest, res: Response): Promi
 export const getStudentAttendanceHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { studentId } = req.params;
+
+    // SECURITY: this endpoint previously had no access control at all
+    // beyond `authenticate` - any authenticated user could view any
+    // student's attendance history by ID (IDOR). Restrict to branch
+    // staff or the student/parent themselves.
+    const student = await prisma.student.findUnique({ where: { id: studentId }, select: { branchId: true } });
+    if (!student) { sendError(res, "Student not found", 404); return; }
+    if (!canAccessBranch(req, student.branchId) && !(await canAccessStudentRecord(req, studentId))) {
+      sendError(res, "Student not found", 404);
+      return;
+    }
+
     const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
     const year = parseInt(req.query.year as string) || new Date().getFullYear();
 

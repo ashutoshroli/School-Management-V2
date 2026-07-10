@@ -68,6 +68,7 @@ model Branch {
   libraryBooks    LibraryBook[]
   inventoryItems  InventoryItem[]
   devices         AttendanceDevice[]
+  admissionInquiries AdmissionInquiry[]
 }
 
 
@@ -1396,4 +1397,47 @@ model AuditLog {
 
   @@index([userId, module])
   @@index([entityId, module])
+}
+
+// ============================================
+// SECTION 23: PUBLIC ADMISSION INQUIRIES
+// ============================================
+
+// Submissions from the public (no-auth) online admission enquiry form.
+// Deliberately kept separate from Student/User - a form submission is
+// just an *inquiry* until a Branch Admin reviews it and (manually)
+// converts it into a real admission via the existing createStudent
+// flow, which is the only path that creates a User/Student/Parent
+// record. This keeps the public-facing write surface minimal (a single
+// narrow insert) and avoids ever letting an anonymous request create a
+// real login-capable account.
+model AdmissionInquiry {
+  id              String                 @id @default(cuid())
+  branchId        String
+  studentName     String
+  dateOfBirth     DateTime
+  gender          Gender
+  classAppliedFor String
+  parentName      String
+  parentEmail     String
+  parentPhone     String
+  address         String?
+  previousSchool  String?
+  message         String?
+  status          AdmissionInquiryStatus @default(NEW)
+  reviewedBy      String?
+  reviewNotes     String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId, status])
+}
+
+enum AdmissionInquiryStatus {
+  NEW
+  CONTACTED
+  ADMITTED
+  REJECTED
 }

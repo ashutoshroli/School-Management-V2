@@ -1,0 +1,69 @@
+import multer from "multer";
+import { Request, Response, NextFunction } from "express";
+import { config } from "../config";
+import { sendError } from "../utils/response";
+
+// Documents (photo/ID proofs etc) vs avatars have different allowed
+// types - documents may reasonably be a scanned PDF, avatars must be an
+// image (they get rendered inline, e.g. on the ID card / profile UI).
+const DOCUMENT_MIME_TYPES = new Set([
+  "image/jpeg", "image/png", "image/webp", "application/pdf",
+]);
+const AVATAR_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+const memoryStorage = multer.memoryStorage();
+
+const fileFilterFor = (allowed: Set<string>) => (
+  _req: Request,
+  file: Express.Multer.File,
+  cb: multer.FileFilterCallback
+) => {
+  if (allowed.has(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error(`Unsupported file type: ${file.mimetype}`));
+  }
+};
+
+/** Single-file upload middleware for student/staff documents (field name: "file"). */
+export const uploadDocument = multer({
+  storage: memoryStorage,
+  limits: { fileSize: config.upload.maxSize },
+  fileFilter: fileFilterFor(DOCUMENT_MIME_TYPES),
+}).single("file");
+
+/** Single-file upload middleware for avatars/photos (field name: "file"). */
+export const uploadAvatar = multer({
+  storage: memoryStorage,
+  limits: { fileSize: config.upload.maxSize },
+  fileFilter: fileFilterFor(AVATAR_MIME_TYPES),
+}).single("file");
+
+type MulterSingleMiddleware = (req: Request, res: Response, callback: (err: unknown) => void) => void;
+
+/**
+ * Wraps a multer middleware (the result of `.single("file")`) so its
+ * errors (file too large, wrong type, missing file, etc) go through our
+ * standard sendError() JSON shape instead of multer's default behaviour
+ * of calling next(err) with a raw MulterError that would otherwise fall
+ * through to the generic error handler with a less specific message.
+ */
+export const handleUploadErrors = (uploadMiddleware: MulterSingleMiddleware) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    uploadMiddleware(req, res, (err: unknown) => {
+      if (!err) {
+        next();
+        return;
+      }
+      if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          sendError(res, `File too large. Maximum size is ${Math.round(config.upload.maxSize / (1024 * 1024))}MB`, 400);
+          return;
+        }
+        sendError(res, `Upload error: ${err.message}`, 400);
+        return;
+      }
+      sendError(res, (err as Error).message || "Upload failed", 400);
+    });
+  };
+};

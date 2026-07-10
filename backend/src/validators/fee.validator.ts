@@ -36,3 +36,22 @@ export const bulkAssignFeesSchema = z.object({
     sectionId: z.string().optional(),
   }),
 });
+
+export const createRazorpayOrderSchema = z.object({
+  body: z.object({
+    branchId: z.string().min(1, "branchId is required"),
+    studentId: z.string().min(1, "studentId is required"),
+    feeAssignmentId: z.string().min(1, "feeAssignmentId is required"),
+  }),
+});
+
+export const verifyRazorpayPaymentSchema = z.object({
+  body: z.object({
+    branchId: z.string().min(1, "branchId is required"),
+    studentId: z.string().min(1, "studentId is required"),
+    feeAssignmentId: z.string().min(1, "feeAssignmentId is required"),
+    razorpay_order_id: z.string().min(1, "razorpay_order_id is required"),
+    razorpay_payment_id: z.string().min(1, "razorpay_payment_id is required"),
+    razorpay_signature: z.string().min(1, "razorpay_signature is required"),
+  }),
+});

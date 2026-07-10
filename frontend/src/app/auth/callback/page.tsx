@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import api from "@/lib/api";
 
-export default function AuthCallbackPage() {
+function AuthCallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setAuth } = useAuth();
@@ -41,5 +41,30 @@ export default function AuthCallbackPage() {
         <p className="mt-4 text-gray-600">Authenticating...</p>
       </div>
     </div>
+  );
+}
+
+/**
+ * `useSearchParams()` requires a Suspense boundary in Next.js App Router
+ * (it opts the enclosing tree out of static rendering) - without this
+ * wrapper, `next build` fails to prerender this route entirely. The
+ * fallback UI is intentionally identical to the real "Authenticating..."
+ * state, since the actual searchParams read resolves essentially
+ * instantly on the client.
+ */
+export default function AuthCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full mx-auto"></div>
+            <p className="mt-4 text-gray-600">Authenticating...</p>
+          </div>
+        </div>
+      }
+    >
+      <AuthCallbackInner />
+    </Suspense>
   );
 }

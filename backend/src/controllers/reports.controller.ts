@@ -1,7 +1,7 @@
 import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
-import { sendSuccess, sendError } from "../utils/response";
+import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
@@ -170,6 +170,66 @@ export const getAcademicAnalytics = async (req: AuthRequest, res: Response): Pro
 
     sendSuccess(res, analytics, "Academic analytics fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Audit log (SUPER_ADMIN / BRANCH_ADMIN)
+ *
+ * Note: AuditLog rows don't carry a branchId of their own (the model
+ * only has userId/module/entityId - see schema) - branch scoping for a
+ * BRANCH_ADMIN is approximated by only showing entries created by
+ * users who belong to their branch (via the User->Staff/Student
+ * relation), which is not a perfect boundary (e.g. a SUPER_ADMIN's
+ * actions on a specific branch would still only show up for another
+ * SUPER_ADMIN) but avoids leaking a Branch Admin's view into other
+ * branches' activity for the common case.
+ */
+export const getAuditLog = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const skip = (page - 1) * limit;
+    const module = req.query.module as string | undefined;
+    const action = req.query.action as string | undefined;
+
+    const where: any = {};
+    if (module) where.module = module;
+    if (action) where.action = action;
+
+    if (req.user!.role !== "SUPER_ADMIN") {
+      const branchId = resolveBranchId(req);
+      const [staffUserIds, studentUserIds] = await Promise.all([
+        prisma.staff.findMany({ where: { branchId }, select: { userId: true } }),
+        prisma.student.findMany({ where: { branchId }, select: { userId: true } }),
+      ]);
+      where.userId = { in: [...staffUserIds.map((s) => s.userId), ...studentUserIds.map((s) => s.userId), req.user!.userId] };
+    }
+
+    const [logs, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.auditLog.count({ where }),
+    ]);
+
+    // Attach a friendly user name/email for display without requiring
+    // the frontend to make N follow-up requests.
+    const userIds = [...new Set(logs.map((l) => l.userId))];
+    const users = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true, email: true, role: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    const enriched = logs.map((log) => ({ ...log, user: userMap.get(log.userId) || null }));
+
+    sendPaginated(res, enriched, total, page, limit, "Audit log fetched");
+  } catch (error) {
+    sendError(res, "Failed", 500, (error as Error).message);
+  }
 };
 
 /**

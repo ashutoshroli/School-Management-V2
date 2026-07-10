@@ -55,7 +55,16 @@ passport.use(
           });
         }
 
-        return done(null, user);
+        // Note: `done()` here carries the raw Prisma `User` row (id,
+        // email, role, ...), not our JWT `JwtPayload` shape - it's a
+        // distinct, transient "OAuth profile" concept that only exists
+        // between this callback and googleCallback() in
+        // auth.controller.ts (which already reads it via `req.user as
+        // any` and builds the real JwtPayload/JWT from it). Cast here
+        // rather than reshaping Express.User, since JwtPayload is what
+        // every *authenticated* request's `req.user` actually is once
+        // the `authenticate` middleware has run.
+        return done(null, user as any);
       } catch (error) {
         return done(error as Error, undefined);
       }

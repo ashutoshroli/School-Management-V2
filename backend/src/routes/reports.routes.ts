@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { getDashboardStats, getMultiBranchSummary, getAttendanceAnalytics, getAcademicAnalytics, getHRAnalytics } from "../controllers/reports.controller";
+import { getDashboardStats, getMultiBranchSummary, getAttendanceAnalytics, getAcademicAnalytics, getHRAnalytics, getAuditLog } from "../controllers/reports.controller";
 import { authenticate, authorize } from "../middleware/auth";
 
 const router = Router();
@@ -13,5 +13,6 @@ router.get("/multi-branch", authorize(UserRole.SUPER_ADMIN), getMultiBranchSumma
 router.get("/attendance-analytics", authorize(...ADMIN), getAttendanceAnalytics);
 router.get("/academic-analytics", authorize(...ADMIN), getAcademicAnalytics);
 router.get("/hr-analytics", authorize(...ADMIN), getHRAnalytics);
+router.get("/audit-log", authorize(...ADMIN), getAuditLog);
 
 export default router;
