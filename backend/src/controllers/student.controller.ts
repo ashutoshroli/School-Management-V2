@@ -1,16 +1,22 @@
 import { Response } from "express";
-import { UserRole } from "@prisma/client";
+import { Prisma, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
- * Generate unique admission number
+ * Generate unique admission number.
+ * Accepts an optional transaction client so the count read happens
+ * consistently with the student.create() that follows it.
  */
-const generateAdmissionNo = async (branchId: string): Promise<string> => {
-  const branch = await prisma.branch.findUnique({ where: { id: branchId } });
-  const count = await prisma.student.count({ where: { branchId } });
+const generateAdmissionNo = async (
+  branchId: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma
+): Promise<string> => {
+  const branch = await client.branch.findUnique({ where: { id: branchId } });
+  const count = await client.student.count({ where: { branchId } });
   const prefix = branch?.code?.slice(0, 4) || "STD";
   return `${prefix}-${String(count + 1).padStart(5, "0")}`;
 };
@@ -30,116 +36,133 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
       motherName, motherEmail, motherPhone, motherOccupation,
     } = req.body;
 
-    // Generate admission number
-    const admissionNo = await generateAdmissionNo(branchId);
-
-    // Create user account for student
-    const studentUser = await prisma.user.create({
-      data: {
-        email,
-        name,
-        phone,
-        role: UserRole.STUDENT,
-        organizationId: req.user!.organizationId || undefined,
-        isActive: true,
-      },
-    });
-
-    // Create student record
-    const student = await prisma.student.create({
-      data: {
-        userId: studentUser.id,
-        branchId,
-        admissionNo,
-        classId,
-        sectionId,
-        dateOfBirth: new Date(dateOfBirth),
-        gender,
-        bloodGroup,
-        religion,
-        caste,
-        category,
-        nationality: nationality || "Indian",
-        motherTongue,
-        address,
-        city,
-        state,
-        pincode,
-        previousSchool,
-        cardId,
-        admissionDate: new Date(),
-        isActive: true,
-      },
-    });
-
-    // Create Parent accounts (Father)
-    if (fatherEmail) {
-      let fatherUser = await prisma.user.findUnique({ where: { email: fatherEmail } });
-      if (!fatherUser) {
-        fatherUser = await prisma.user.create({
-          data: {
-            email: fatherEmail,
-            name: fatherName || "Father",
-            phone: fatherPhone,
-            role: UserRole.PARENT,
-            organizationId: req.user!.organizationId || undefined,
-            isActive: true,
-          },
-        });
-      }
-
-      let parent = await prisma.parent.findUnique({ where: { userId: fatherUser.id } });
-      if (!parent) {
-        parent = await prisma.parent.create({
-          data: {
-            userId: fatherUser.id,
-            relation: "FATHER",
-            occupation: fatherOccupation,
-          },
-        });
-      }
-
-      // Link parent to student
-      await prisma.studentParent.create({
-        data: { studentId: student.id, parentId: parent.id },
-      });
+    // SECURITY: Branch Admins may only admit students into their own branch.
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
     }
 
-    // Create Parent accounts (Mother)
-    if (motherEmail) {
-      let motherUser = await prisma.user.findUnique({ where: { email: motherEmail } });
-      if (!motherUser) {
-        motherUser = await prisma.user.create({
-          data: {
-            email: motherEmail,
-            name: motherName || "Mother",
-            phone: motherPhone,
-            role: UserRole.PARENT,
-            organizationId: req.user!.organizationId || undefined,
-            isActive: true,
-          },
-        });
-      }
+    // SAFETY: admission creates a User + Student + (optionally) two more
+    // Users/Parents + StudentParent links across several awaited calls.
+    // Without a transaction, a failure partway through (e.g. mother's
+    // record) would leave an orphaned User/Student with no parent link
+    // and no student-facing account cleanup. Wrap the whole admission in
+    // a single transaction so it's all-or-nothing.
+    const studentId = await prisma.$transaction(async (tx) => {
+      // Generate admission number inside the transaction so the count
+      // read is consistent with the student.create() below.
+      const admissionNo = await generateAdmissionNo(branchId, tx);
 
-      let parent = await prisma.parent.findUnique({ where: { userId: motherUser.id } });
-      if (!parent) {
-        parent = await prisma.parent.create({
-          data: {
-            userId: motherUser.id,
-            relation: "MOTHER",
-            occupation: motherOccupation,
-          },
-        });
-      }
-
-      await prisma.studentParent.create({
-        data: { studentId: student.id, parentId: parent.id },
+      // Create user account for student
+      const studentUser = await tx.user.create({
+        data: {
+          email,
+          name,
+          phone,
+          role: UserRole.STUDENT,
+          organizationId: req.user!.organizationId || undefined,
+          isActive: true,
+        },
       });
-    }
+
+      // Create student record
+      const student = await tx.student.create({
+        data: {
+          userId: studentUser.id,
+          branchId,
+          admissionNo,
+          classId,
+          sectionId,
+          dateOfBirth: new Date(dateOfBirth),
+          gender,
+          bloodGroup,
+          religion,
+          caste,
+          category,
+          nationality: nationality || "Indian",
+          motherTongue,
+          address,
+          city,
+          state,
+          pincode,
+          previousSchool,
+          cardId,
+          admissionDate: new Date(),
+          isActive: true,
+        },
+      });
+
+      // Create Parent accounts (Father)
+      if (fatherEmail) {
+        let fatherUser = await tx.user.findUnique({ where: { email: fatherEmail } });
+        if (!fatherUser) {
+          fatherUser = await tx.user.create({
+            data: {
+              email: fatherEmail,
+              name: fatherName || "Father",
+              phone: fatherPhone,
+              role: UserRole.PARENT,
+              organizationId: req.user!.organizationId || undefined,
+              isActive: true,
+            },
+          });
+        }
+
+        let parent = await tx.parent.findUnique({ where: { userId: fatherUser.id } });
+        if (!parent) {
+          parent = await tx.parent.create({
+            data: {
+              userId: fatherUser.id,
+              relation: "FATHER",
+              occupation: fatherOccupation,
+            },
+          });
+        }
+
+        // Link parent to student
+        await tx.studentParent.create({
+          data: { studentId: student.id, parentId: parent.id },
+        });
+      }
+
+      // Create Parent accounts (Mother)
+      if (motherEmail) {
+        let motherUser = await tx.user.findUnique({ where: { email: motherEmail } });
+        if (!motherUser) {
+          motherUser = await tx.user.create({
+            data: {
+              email: motherEmail,
+              name: motherName || "Mother",
+              phone: motherPhone,
+              role: UserRole.PARENT,
+              organizationId: req.user!.organizationId || undefined,
+              isActive: true,
+            },
+          });
+        }
+
+        let parent = await tx.parent.findUnique({ where: { userId: motherUser.id } });
+        if (!parent) {
+          parent = await tx.parent.create({
+            data: {
+              userId: motherUser.id,
+              relation: "MOTHER",
+              occupation: motherOccupation,
+            },
+          });
+        }
+
+        await tx.studentParent.create({
+          data: { studentId: student.id, parentId: parent.id },
+        });
+      }
+
+      return student.id;
+    });
 
     // Fetch complete student with relations
     const fullStudent = await prisma.student.findUnique({
-      where: { id: student.id },
+      where: { id: studentId },
       include: {
         user: { select: { name: true, email: true, phone: true } },
         class: { select: { name: true } },
@@ -168,7 +191,7 @@ export const getStudents = async (req: AuthRequest, res: Response): Promise<void
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 25;
     const skip = (page - 1) * limit;
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const classId = req.query.classId as string;
     const sectionId = req.query.sectionId as string;
     const search = req.query.search as string;
@@ -240,6 +263,13 @@ export const getStudentById = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
+    // SECURITY: prevent cross-branch access (IDOR) - only Super Admin or
+    // users belonging to the same branch as this student may view it.
+    if (!canAccessBranch(req, student.branchId)) {
+      sendError(res, "Student not found", 404);
+      return;
+    }
+
     sendSuccess(res, student, "Student profile fetched");
   } catch (error) {
     sendError(res, "Failed to fetch student", 500, (error as Error).message);
@@ -260,6 +290,11 @@ export const updateStudent = async (req: AuthRequest, res: Response): Promise<vo
 
     const student = await prisma.student.findUnique({ where: { id } });
     if (!student) {
+      sendError(res, "Student not found", 404);
+      return;
+    }
+
+    if (!canAccessBranch(req, student.branchId)) {
       sendError(res, "Student not found", 404);
       return;
     }

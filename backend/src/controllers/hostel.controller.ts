@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 export const createBuilding = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -13,7 +14,7 @@ export const createBuilding = async (req: AuthRequest, res: Response): Promise<v
 
 export const getBuildings = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const buildings = await prisma.hostelBuilding.findMany({
       where: { branchId }, include: { floors: { include: { rooms: true } } }, orderBy: { name: "asc" },
     });
@@ -66,7 +67,7 @@ export const deallocateRoom = async (req: AuthRequest, res: Response): Promise<v
 
 export const getOccupancy = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const buildings = await prisma.hostelBuilding.findMany({
       where: { branchId },
       include: { floors: { include: { rooms: { include: { allocations: { where: { endDate: null }, include: { student: { include: { user: { select: { name: true } } } } } } } } } } },

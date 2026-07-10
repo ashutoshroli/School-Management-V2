@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create academic year
@@ -9,6 +10,11 @@ import { sendSuccess, sendError } from "../utils/response";
 export const createAcademicYear = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { branchId, name, startDate, endDate } = req.body;
+
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
 
     // Check uniqueness
     const existing = await prisma.academicYear.findUnique({
@@ -40,7 +46,7 @@ export const createAcademicYear = async (req: AuthRequest, res: Response): Promi
  */
 export const getAcademicYears = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
 
     if (!branchId) {
       sendError(res, "Branch ID required", 400);
@@ -71,6 +77,11 @@ export const setActiveYear = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    if (!canAccessBranch(req, year.branchId)) {
+      sendError(res, "Academic year not found", 404);
+      return;
+    }
+
     // Deactivate all others for same branch
     await prisma.academicYear.updateMany({
       where: { branchId: year.branchId },
@@ -96,6 +107,16 @@ export const updateAcademicYear = async (req: AuthRequest, res: Response): Promi
   try {
     const { id } = req.params;
     const { name, startDate, endDate } = req.body;
+
+    const existing = await prisma.academicYear.findUnique({ where: { id } });
+    if (!existing) {
+      sendError(res, "Academic year not found", 404);
+      return;
+    }
+    if (!canAccessBranch(req, existing.branchId)) {
+      sendError(res, "Academic year not found", 404);
+      return;
+    }
 
     const updated = await prisma.academicYear.update({
       where: { id },

@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Mark staff attendance (manual - admin/HR marks)
@@ -147,7 +148,7 @@ export const getAttendanceCalendar = async (req: AuthRequest, res: Response): Pr
 export const getDateAttendance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const date = req.query.date as string;
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
 
     if (!date || !branchId) { sendError(res, "Date and branchId required", 400); return; }
 

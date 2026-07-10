@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Get leave types
@@ -58,7 +59,7 @@ export const getLeaveApplications = async (req: AuthRequest, res: Response): Pro
   try {
     const staffId = req.query.staffId as string;
     const status = req.query.status as string;
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
 
     const where: any = {};
     if (staffId) where.staffId = staffId;

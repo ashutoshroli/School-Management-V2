@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create staff member
@@ -16,6 +17,12 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
       joiningDate, bankAccount, bankName, ifscCode, panNumber,
       aadharNumber, address, city, state, pincode, cardId, role,
     } = req.body;
+
+    // SECURITY: Branch Admins may only create staff for their own branch.
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
 
     // Check email uniqueness
     const existingUser = await prisma.user.findUnique({ where: { email } });
@@ -95,7 +102,7 @@ export const getStaffList = async (req: AuthRequest, res: Response): Promise<voi
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 25;
     const skip = (page - 1) * limit;
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const type = req.query.type as string; // TEACHING | NON_TEACHING
     const department = req.query.department as string;
     const search = req.query.search as string;
@@ -156,6 +163,12 @@ export const getStaffById = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
+    // SECURITY: prevent cross-branch access (IDOR)
+    if (!canAccessBranch(req, staff.branchId)) {
+      sendError(res, "Staff not found", 404);
+      return;
+    }
+
     sendSuccess(res, staff, "Staff profile fetched");
   } catch (error) {
     sendError(res, "Failed to fetch staff", 500, (error as Error).message);
@@ -176,6 +189,11 @@ export const updateStaff = async (req: AuthRequest, res: Response): Promise<void
 
     const staff = await prisma.staff.findUnique({ where: { id } });
     if (!staff) {
+      sendError(res, "Staff not found", 404);
+      return;
+    }
+
+    if (!canAccessBranch(req, staff.branchId)) {
       sendError(res, "Staff not found", 404);
       return;
     }

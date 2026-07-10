@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 export const addBook = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -15,7 +16,7 @@ export const addBook = async (req: AuthRequest, res: Response): Promise<void> =>
 
 export const getBooks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const search = req.query.search as string;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 25;
@@ -71,7 +72,7 @@ export const returnBook = async (req: AuthRequest, res: Response): Promise<void>
 export const getIssuedBooks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const status = req.query.status as string || "ISSUED";
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
 
     const issues = await prisma.libraryIssue.findMany({
       where: { status: status as any, book: { branchId } },

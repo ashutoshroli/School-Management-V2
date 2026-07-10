@@ -5,6 +5,7 @@ import { GraduationCap, Plus, Search, Eye, Filter } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import DataTable from "@/components/ui/DataTable";
+import ErrorBanner from "@/components/ui/ErrorBanner";
 
 interface Student {
   id: string;
@@ -24,18 +25,21 @@ export default function StudentsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [classFilter, setClassFilter] = useState("");
   const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchStudents = async () => {
     try {
       setLoading(true);
+      setError(null);
       const params: any = { page, limit: 25 };
       if (search) params.search = search;
       if (classFilter) params.classId = classFilter;
       const res = await api.get("/students", { params });
       setStudents(res.data.data || []);
       setTotalPages(res.data.pagination?.totalPages || 1);
-    } catch (err) {
-      console.error("Failed to fetch students");
+    } catch (err: any) {
+      console.error("Failed to fetch students", err);
+      setError(err.response?.data?.message || "Failed to load students. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -113,6 +117,8 @@ export default function StudentsPage() {
           </select>
         </div>
       </div>
+
+      {error && <ErrorBanner message={error} onRetry={fetchStudents} />}
 
       {/* Table */}
       <div className="card">

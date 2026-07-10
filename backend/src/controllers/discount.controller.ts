@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { canAccessBranch } from "../utils/branchScope";
 
 /**
  * Assign discount to student
@@ -9,6 +10,10 @@ import { sendSuccess, sendError } from "../utils/response";
 export const assignDiscount = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { studentId, type, name, value, isPercent } = req.body;
+
+    const student = await prisma.student.findUnique({ where: { id: studentId }, select: { branchId: true } });
+    if (!student) { sendError(res, "Student not found", 404); return; }
+    if (!canAccessBranch(req, student.branchId)) { sendError(res, "Student not found", 404); return; }
 
     const discount = await prisma.studentDiscount.create({
       data: { studentId, type, name, value, isPercent: isPercent || false, isActive: true },
@@ -45,8 +50,9 @@ export const toggleDiscount = async (req: AuthRequest, res: Response): Promise<v
   try {
     const { id } = req.params;
 
-    const discount = await prisma.studentDiscount.findUnique({ where: { id } });
+    const discount = await prisma.studentDiscount.findUnique({ where: { id }, include: { student: { select: { branchId: true } } } });
     if (!discount) { sendError(res, "Discount not found", 404); return; }
+    if (!canAccessBranch(req, discount.student.branchId)) { sendError(res, "Discount not found", 404); return; }
 
     const updated = await prisma.studentDiscount.update({
       where: { id },
@@ -65,6 +71,9 @@ export const toggleDiscount = async (req: AuthRequest, res: Response): Promise<v
 export const deleteDiscount = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+    const discount = await prisma.studentDiscount.findUnique({ where: { id }, include: { student: { select: { branchId: true } } } });
+    if (!discount) { sendError(res, "Discount not found", 404); return; }
+    if (!canAccessBranch(req, discount.student.branchId)) { sendError(res, "Discount not found", 404); return; }
     await prisma.studentDiscount.delete({ where: { id } });
     sendSuccess(res, null, "Discount removed");
   } catch (error) {

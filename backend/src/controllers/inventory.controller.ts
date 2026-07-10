@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 export const addItem = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -13,7 +14,7 @@ export const addItem = async (req: AuthRequest, res: Response): Promise<void> =>
 
 export const getItems = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const items = await prisma.inventoryItem.findMany({ where: { branchId }, orderBy: { name: "asc" }, include: { _count: { select: { purchases: true, issues: true } } } });
     sendSuccess(res, items, "Items fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
@@ -47,7 +48,7 @@ export const issueStock = async (req: AuthRequest, res: Response): Promise<void>
 
 export const getLowStockAlerts = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const items = await prisma.inventoryItem.findMany({
       where: { branchId, currentStock: { lte: prisma.inventoryItem.fields.minStock } },
     });

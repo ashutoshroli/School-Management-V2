@@ -5,6 +5,7 @@ import { Building2, Plus, Edit, Users, GraduationCap } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
+import ErrorBanner from "@/components/ui/ErrorBanner";
 
 interface Branch {
   id: string;
@@ -26,13 +27,17 @@ export default function BranchesPage() {
     name: "", code: "", address: "", city: "", state: "", pincode: "", phone: "", email: "",
   });
 
+  const [error, setError] = useState<string | null>(null);
+
   const fetchBranches = async () => {
     try {
       setLoading(true);
+      setError(null);
       const res = await api.get("/branches");
       setBranches(res.data.data || []);
-    } catch (err) {
-      console.error("Failed to fetch branches");
+    } catch (err: any) {
+      console.error("Failed to fetch branches", err);
+      setError(err.response?.data?.message || "Failed to load branches. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -123,6 +128,8 @@ export default function BranchesPage() {
           <Plus className="h-4 w-4" /> Add Branch
         </button>
       </div>
+
+      {error && <ErrorBanner message={error} onRetry={fetchBranches} />}
 
       <div className="card">
         <DataTable columns={columns} data={branches} loading={loading} emptyMessage="No branches found" />

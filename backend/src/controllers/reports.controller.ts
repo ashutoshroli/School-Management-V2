@@ -2,13 +2,14 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Admin Dashboard stats
  */
 export const getDashboardStats = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const where = branchId ? { branchId } : {};
 
     const [totalStudents, totalStaff, totalClasses] = await Promise.all([
@@ -110,7 +111,7 @@ export const getMultiBranchSummary = async (req: AuthRequest, res: Response): Pr
  */
 export const getAttendanceAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
     const year = parseInt(req.query.year as string) || new Date().getFullYear();
 
@@ -141,7 +142,7 @@ export const getAttendanceAnalytics = async (req: AuthRequest, res: Response): P
  */
 export const getAcademicAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
 
     const classes = await prisma.class.findMany({ where: { branchId }, orderBy: { numericOrder: "asc" } });
 
@@ -176,7 +177,7 @@ export const getAcademicAnalytics = async (req: AuthRequest, res: Response): Pro
  */
 export const getHRAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
     const year = parseInt(req.query.year as string) || new Date().getFullYear();
 

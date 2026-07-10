@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Calendar, Plus, Check } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import ErrorBanner from "@/components/ui/ErrorBanner";
 import { formatDate } from "@/lib/utils";
 
 interface AcademicYear {
@@ -20,13 +21,17 @@ export default function AcademicYearsPage() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ name: "", startDate: "", endDate: "", branchId: "" });
 
+  const [error, setError] = useState<string | null>(null);
+
   const fetchYears = async () => {
     try {
       setLoading(true);
+      setError(null);
       const res = await api.get("/academic-years");
       setYears(res.data.data || []);
-    } catch (err) {
-      console.error("Failed to fetch");
+    } catch (err: any) {
+      console.error("Failed to fetch academic years", err);
+      setError(err.response?.data?.message || "Failed to load academic years. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -68,6 +73,8 @@ export default function AcademicYearsPage() {
           <Plus className="h-4 w-4" /> Add Year
         </button>
       </div>
+
+      {error && <ErrorBanner message={error} onRetry={fetchYears} />}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {loading ? (
