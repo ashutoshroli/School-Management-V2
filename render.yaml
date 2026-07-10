@@ -1,0 +1,44 @@
+# Render "Blueprint" for a trial/demo deployment of the backend API.
+#
+# Usage: Render Dashboard > New > Blueprint > point at this repo. Render
+# will read this file and create the service below automatically. You
+# still need to set the *secret* env vars (marked sync: false) manually
+# in the Render dashboard after the service is created - see
+# DEPLOY.md for the full list and where to get each value.
+#
+# This does NOT provision a database - use a free Neon/Supabase Postgres
+# instance (see DEPLOY.md) and paste its connection string into
+# DATABASE_URL.
+services:
+  - type: web
+    name: school-erp-backend
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: bash backend/scripts/build.sh
+    startCommand: node backend/dist/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render sets its own PORT env var automatically for web services -
+      # config/index.ts already reads process.env.PORT, so nothing to
+      # configure here.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: FRONTEND_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: UPLOAD_DIR
+        value: ./uploads
+      - key: MAX_FILE_SIZE
+        value: "10485760"
