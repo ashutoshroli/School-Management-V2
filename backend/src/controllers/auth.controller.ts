@@ -43,12 +43,38 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       data: { lastLogin: new Date() },
     });
 
+    // SUPER_ADMIN has no linked Staff record (they're not staff at any
+    // one branch, by design), so they have no branchId of their own.
+    // Every branch-scoped list/report endpoint (Academic Years,
+    // Classes, Accounting Reports, Dashboard, etc.) requires a
+    // resolvable branchId though - without this, those pages fail with
+    // "Branch ID required" for a Super Admin on a deployment where
+    // there's no UI to pick a branch. Default to the school's first
+    // active branch so those pages work out of the box; a Super Admin
+    // can still target a different branch explicitly via `?branchId=`
+    // on any endpoint (see utils/branchScope.ts's resolveBranchId).
+    //
+    // Scoped to SUPER_ADMIN only - other roles (Branch Admin,
+    // Accountant, Teacher, ...) are expected to have a real Staff
+    // record with its own branchId; silently defaulting a branch for
+    // them if that's ever missing would be a data problem worth
+    // surfacing, not papering over with implicit branch access.
+    let branchId = user.staff?.branchId || undefined;
+    if (!branchId && user.role === UserRole.SUPER_ADMIN) {
+      const defaultBranch = await prisma.branch.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      });
+      branchId = defaultBranch?.id;
+    }
+
     const payload: JwtPayload = {
       userId: user.id,
       email: user.email,
       role: user.role,
       organizationId: user.organizationId || undefined,
-      branchId: user.staff?.branchId || undefined,
+      branchId,
     };
 
     const token = generateToken(payload);
@@ -94,6 +120,18 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
     } else {
       const staff = await prisma.staff.findUnique({ where: { userId: user.id } });
       branchId = staff?.branchId;
+    }
+
+    // Same reasoning as the email/password login() above: a SUPER_ADMIN
+    // has no Staff record, so default them to the school's first active
+    // branch rather than leaving branch-scoped pages broken.
+    if (!branchId && user.role === UserRole.SUPER_ADMIN) {
+      const defaultBranch = await prisma.branch.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      });
+      branchId = defaultBranch?.id;
     }
 
     const payload: JwtPayload = {
