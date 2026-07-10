@@ -1,0 +1,191 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { GraduationCap } from "lucide-react";
+import api from "@/lib/api";
+
+export default function NewAdmissionPage() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [sections, setSections] = useState<any[]>([]);
+  const [form, setForm] = useState({
+    name: "", email: "", phone: "", dateOfBirth: "", gender: "MALE",
+    bloodGroup: "", religion: "", caste: "", category: "General",
+    nationality: "Indian", motherTongue: "", address: "", city: "",
+    state: "", pincode: "", previousSchool: "", cardId: "",
+    classId: "", sectionId: "", branchId: "",
+    fatherName: "", fatherEmail: "", fatherPhone: "", fatherOccupation: "",
+    motherName: "", motherEmail: "", motherPhone: "", motherOccupation: "",
+  });
+
+  useEffect(() => {
+    api.get("/classes").then((res) => setClasses(res.data.data || []));
+  }, []);
+
+  useEffect(() => {
+    if (form.classId) {
+      const cls = classes.find((c) => c.id === form.classId);
+      setSections(cls?.sections || []);
+    }
+  }, [form.classId, classes]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await api.post("/students", form);
+      alert("Student admitted successfully!");
+      router.push("/dashboard/students");
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Admission failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const setField = (field: string, value: string) => setForm((p) => ({ ...p, [field]: value }));
+
+  return (
+    <div className="max-w-4xl">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <GraduationCap className="h-6 w-6 text-primary-600" /> New Student Admission
+        </h1>
+        <p className="text-gray-500 mt-1">Fill all required details for admission</p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Student Info */}
+        <div className="card">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800">Student Information</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+              <input className="input-field" value={form.name} onChange={(e) => setField("name", e.target.value)} required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+              <input type="email" className="input-field" value={form.email} onChange={(e) => setField("email", e.target.value)} required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+              <input className="input-field" value={form.phone} onChange={(e) => setField("phone", e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth *</label>
+              <input type="date" className="input-field" value={form.dateOfBirth} onChange={(e) => setField("dateOfBirth", e.target.value)} required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Gender *</label>
+              <select className="input-field" value={form.gender} onChange={(e) => setField("gender", e.target.value)} required>
+                <option value="MALE">Male</option>
+                <option value="FEMALE">Female</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Blood Group</label>
+              <select className="input-field" value={form.bloodGroup} onChange={(e) => setField("bloodGroup", e.target.value)}>
+                <option value="">Select</option>
+                {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((bg) => (
+                  <option key={bg} value={bg}>{bg}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+              <select className="input-field" value={form.category} onChange={(e) => setField("category", e.target.value)}>
+                {["General", "OBC", "SC", "ST", "EWS"].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Religion</label>
+              <input className="input-field" value={form.religion} onChange={(e) => setField("religion", e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">RFID Card ID</label>
+              <input className="input-field" placeholder="Scan or enter card UID" value={form.cardId} onChange={(e) => setField("cardId", e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        {/* Class Assignment */}
+        <div className="card">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800">Class Assignment</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Class *</label>
+              <select className="input-field" value={form.classId} onChange={(e) => setField("classId", e.target.value)} required>
+                <option value="">Select Class</option>
+                {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Section *</label>
+              <select className="input-field" value={form.sectionId} onChange={(e) => setField("sectionId", e.target.value)} required>
+                <option value="">Select Section</option>
+                {sections.map((s: any) => <option key={s.id} value={s.id}>Section {s.name}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Address */}
+        <div className="card">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800">Address</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+              <textarea className="input-field" rows={2} value={form.address} onChange={(e) => setField("address", e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
+              <input className="input-field" value={form.city} onChange={(e) => setField("city", e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
+              <input className="input-field" value={form.state} onChange={(e) => setField("state", e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pincode</label>
+              <input className="input-field" value={form.pincode} onChange={(e) => setField("pincode", e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        {/* Parent Info */}
+        <div className="card">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800">Parent / Guardian Details</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Father */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-gray-700 border-b pb-1">Father</h4>
+              <input className="input-field" placeholder="Father's Name" value={form.fatherName} onChange={(e) => setField("fatherName", e.target.value)} />
+              <input className="input-field" type="email" placeholder="Father's Email (Google Login)" value={form.fatherEmail} onChange={(e) => setField("fatherEmail", e.target.value)} />
+              <input className="input-field" placeholder="Phone" value={form.fatherPhone} onChange={(e) => setField("fatherPhone", e.target.value)} />
+              <input className="input-field" placeholder="Occupation" value={form.fatherOccupation} onChange={(e) => setField("fatherOccupation", e.target.value)} />
+            </div>
+            {/* Mother */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-gray-700 border-b pb-1">Mother</h4>
+              <input className="input-field" placeholder="Mother's Name" value={form.motherName} onChange={(e) => setField("motherName", e.target.value)} />
+              <input className="input-field" type="email" placeholder="Mother's Email (Google Login)" value={form.motherEmail} onChange={(e) => setField("motherEmail", e.target.value)} />
+              <input className="input-field" placeholder="Phone" value={form.motherPhone} onChange={(e) => setField("motherPhone", e.target.value)} />
+              <input className="input-field" placeholder="Occupation" value={form.motherOccupation} onChange={(e) => setField("motherOccupation", e.target.value)} />
+            </div>
+          </div>
+        </div>
+
+        {/* Submit */}
+        <div className="flex justify-end gap-3">
+          <button type="button" onClick={() => router.back()} className="btn-secondary">Cancel</button>
+          <button type="submit" disabled={loading} className="btn-primary">
+            {loading ? "Admitting..." : "Submit Admission"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}

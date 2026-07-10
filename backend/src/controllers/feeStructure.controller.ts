@@ -1,0 +1,130 @@
+import { Response } from "express";
+import prisma from "../config/database";
+import { AuthRequest } from "../types";
+import { sendSuccess, sendError } from "../utils/response";
+
+/**
+ * Create fee structure (class-wise, with frequency & late fee rules)
+ */
+export const createFeeStructure = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const {
+      branchId, academicYearId, classId, feeCategoryId,
+      amount, frequency, dueDay, lateFeeType, lateFeeValue,
+      installments, // optional: [{installmentNo, amount, dueDate}]
+    } = req.body;
+
+    // Check uniqueness
+    const existing = await prisma.feeStructure.findUnique({
+      where: { branchId_academicYearId_classId_feeCategoryId: { branchId, academicYearId, classId, feeCategoryId } },
+    });
+    if (existing) { sendError(res, "Fee structure already exists for this class + category + year", 400); return; }
+
+    const structure = await prisma.feeStructure.create({
+      data: {
+        branchId, academicYearId, classId, feeCategoryId,
+        amount, frequency, dueDay: dueDay || 10,
+        lateFeeType: lateFeeType || "NONE",
+        lateFeeValue: lateFeeValue || 0,
+        isActive: true,
+      },
+    });
+
+    // Create installments if provided
+    if (installments && installments.length > 0) {
+      await prisma.feeInstallment.createMany({
+        data: installments.map((inst: any) => ({
+          feeStructureId: structure.id,
+          installmentNo: inst.installmentNo,
+          amount: inst.amount,
+          dueDate: new Date(inst.dueDate),
+        })),
+      });
+    }
+
+    const full = await prisma.feeStructure.findUnique({
+      where: { id: structure.id },
+      include: { feeCategory: true, class: true, installments: true },
+    });
+
+    sendSuccess(res, full, "Fee structure created", 201);
+  } catch (error) {
+    sendError(res, "Failed to create fee structure", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Get fee structures (filterable by branch, class, year, category)
+ */
+export const getFeeStructures = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = req.query.branchId as string || req.user!.branchId;
+    const classId = req.query.classId as string;
+    const academicYearId = req.query.academicYearId as string;
+
+    const where: any = {};
+    if (branchId) where.branchId = branchId;
+    if (classId) where.classId = classId;
+    if (academicYearId) where.academicYearId = academicYearId;
+
+    const structures = await prisma.feeStructure.findMany({
+      where,
+      include: {
+        feeCategory: { select: { name: true, code: true } },
+        class: { select: { name: true } },
+        academicYear: { select: { name: true } },
+        installments: { orderBy: { installmentNo: "asc" } },
+      },
+      orderBy: [{ class: { numericOrder: "asc" } }, { feeCategory: { name: "asc" } }],
+    });
+
+    sendSuccess(res, structures, "Fee structures fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch fee structures", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Update fee structure
+ */
+export const updateFeeStructure = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { amount, frequency, dueDay, lateFeeType, lateFeeValue, isActive } = req.body;
+
+    const updated = await prisma.feeStructure.update({
+      where: { id },
+      data: {
+        ...(amount !== undefined && { amount }),
+        ...(frequency && { frequency }),
+        ...(dueDay !== undefined && { dueDay }),
+        ...(lateFeeType && { lateFeeType }),
+        ...(lateFeeValue !== undefined && { lateFeeValue }),
+        ...(isActive !== undefined && { isActive }),
+      },
+    });
+
+    sendSuccess(res, updated, "Fee structure updated");
+  } catch (error) {
+    sendError(res, "Failed to update fee structure", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Delete fee structure (only if no assignments)
+ */
+export const deleteFeeStructure = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const count = await prisma.feeAssignment.count({ where: { feeStructureId: id } });
+    if (count > 0) { sendError(res, `Cannot delete: ${count} students have this fee assigned`, 400); return; }
+
+    await prisma.feeInstallment.deleteMany({ where: { feeStructureId: id } });
+    await prisma.feeStructure.delete({ where: { id } });
+
+    sendSuccess(res, null, "Fee structure deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete fee structure", 500, (error as Error).message);
+  }
+};
