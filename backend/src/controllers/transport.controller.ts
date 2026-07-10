@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 export const createRoute = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -13,7 +14,7 @@ export const createRoute = async (req: AuthRequest, res: Response): Promise<void
 
 export const getRoutes = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const routes = await prisma.transportRoute.findMany({
       where: { branchId }, include: { stops: { orderBy: { order: "asc" } }, _count: { select: { allocations: true } } }, orderBy: { name: "asc" },
     });
@@ -43,7 +44,7 @@ export const allocateStudent = async (req: AuthRequest, res: Response): Promise<
 
 export const getVehicles = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const vehicles = await prisma.vehicle.findMany({ where: { branchId }, orderBy: { vehicleNo: "asc" } });
     sendSuccess(res, vehicles, "Vehicles fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }

@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 // ==================== CLASS ====================
 
@@ -29,7 +30,7 @@ export const createClass = async (req: AuthRequest, res: Response): Promise<void
 
 export const getClasses = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     if (!branchId) {
       sendError(res, "Branch ID required", 400);
       return;
@@ -111,7 +112,7 @@ export const createSection = async (req: AuthRequest, res: Response): Promise<vo
 export const getSections = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const classId = req.query.classId as string;
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
 
     const where: any = {};
     if (classId) where.classId = classId;
@@ -192,7 +193,7 @@ export const createSubject = async (req: AuthRequest, res: Response): Promise<vo
 
 export const getSubjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     if (!branchId) {
       sendError(res, "Branch ID required", 400);
       return;

@@ -5,7 +5,9 @@ import { createFeeStructure, getFeeStructures, updateFeeStructure, deleteFeeStru
 import { bulkAssignFees, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund } from "../controllers/feeCollection.controller";
 import { assignDiscount, getStudentDiscounts, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
 import { getCollectionDayBook, getDefaultersList, getClassWiseSummary } from "../controllers/feeReports.controller";
-import { authenticate, authorize } from "../middleware/auth";
+import { authenticate, authorize, branchAccess } from "../middleware/auth";
+import { validate } from "../middleware/validate";
+import { collectPaymentSchema, createRefundSchema, bulkAssignFeesSchema } from "../validators/fee.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -15,27 +17,27 @@ router.use(authenticate);
 
 // Fee Categories
 router.get("/categories", getFeeCategories);
-router.post("/categories", authorize(...ADMIN), createFeeCategory);
+router.post("/categories", authorize(...ADMIN), branchAccess, createFeeCategory);
 router.put("/categories/:id", authorize(...ADMIN), updateFeeCategory);
 router.patch("/categories/:id/toggle", authorize(...ADMIN), toggleFeeCategory);
 
 // Fee Structure
 router.get("/structures", authorize(...FINANCE), getFeeStructures);
-router.post("/structures", authorize(...ADMIN), createFeeStructure);
+router.post("/structures", authorize(...ADMIN), branchAccess, createFeeStructure);
 router.put("/structures/:id", authorize(...ADMIN), updateFeeStructure);
 router.delete("/structures/:id", authorize(...ADMIN), deleteFeeStructure);
 
 // Fee Assignment
-router.post("/assign/bulk", authorize(...ADMIN), bulkAssignFees);
+router.post("/assign/bulk", authorize(...ADMIN), validate(bulkAssignFeesSchema), bulkAssignFees);
 
 // Fee Collection
 router.get("/pending/:studentId", authorize(...FINANCE), getStudentPendingFees);
-router.post("/collect", authorize(...FINANCE), collectPayment);
+router.post("/collect", authorize(...FINANCE), branchAccess, validate(collectPaymentSchema), collectPayment);
 router.get("/payments/:studentId", authorize(...FINANCE), getStudentPayments);
 router.patch("/waive-late-fee/:id", authorize(...ADMIN), waiveLateFee);
 
 // Refund
-router.post("/refund", authorize(...ADMIN), createRefund);
+router.post("/refund", authorize(...ADMIN), validate(createRefundSchema), createRefund);
 
 // Discounts
 router.get("/discounts/:studentId", authorize(...FINANCE), getStudentDiscounts);

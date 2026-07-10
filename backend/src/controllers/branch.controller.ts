@@ -99,6 +99,12 @@ export const getBranchById = async (req: AuthRequest, res: Response): Promise<vo
   try {
     const { id } = req.params;
 
+    // SECURITY: Branch Admins can only ever look up their own branch.
+    if (req.user!.role !== UserRole.SUPER_ADMIN && id !== req.user!.branchId) {
+      sendError(res, "Branch not found", 404);
+      return;
+    }
+
     const branch = await prisma.branch.findUnique({
       where: { id },
       include: {

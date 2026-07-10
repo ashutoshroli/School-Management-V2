@@ -123,14 +123,21 @@ After seeding:
 | Phase | Modules | Status |
 |-------|---------|--------|
 | 0 | Foundation (Schema, Auth, Layout) | Done |
-| 1 | Students, Staff, Classes, Sections | Pending |
-| 2 | Fees + Full Accounting (Ledger) | Pending |
-| 3 | HR: Attendance, Leave, Payroll (PF/ESI/TDS) | Pending |
-| 4 | Student Attendance (Card-tap + Manual), Exams, Timetable | Pending |
-| 5 | Library, Inventory, Transport, Hostel | Pending |
-| 6 | Communication (SMS/WhatsApp/Email), Certificates | Pending |
-| 7 | Reports, Analytics, Multi-branch Dashboard | Pending |
+| 1 | Students, Staff, Classes, Sections | Done |
+| 2 | Fees + Full Accounting (Ledger) | Done |
+| 3 | HR: Attendance, Leave, Payroll (PF/ESI/TDS) | Done |
+| 4 | Student Attendance (Card-tap + Manual), Exams, Timetable | Done |
+| 5 | Library, Inventory, Transport, Hostel | Done |
+| 6 | Communication (Notices, Messages), Certificates | Done |
+| 6b | SMS/WhatsApp/Email delivery integrations | Pending |
+| 7 | Reports, Analytics, Multi-branch Dashboard | Done |
 | 8 | Production Deployment (Hostinger VPS) | Pending |
+
+> Note: "Done" means the backend API and a corresponding frontend page
+> exist and are functional for local/dev use. It does not imply the
+> module has been through a full security/production-readiness review -
+> see open issues in the repository for known gaps (e.g. automated tests
+> and CI are not yet set up).
 
 ## Roles
 
@@ -168,7 +175,24 @@ Base URL: `http://localhost:5000/api`
 | GET | /auth/profile | Get current user (protected) |
 | PUT | /auth/change-password | Change password (protected) |
 
-*More endpoints will be added per phase.*
+Additional route groups are mounted for the modules below - see
+`backend/src/routes/index.ts` for the full mount list and each
+`*.routes.ts` file for the exact endpoints:
+
+| Prefix | Covers |
+|--------|--------|
+| /branches | Branch (campus) management |
+| /academic-years | Academic year/session management |
+| /classes | Classes, sections, subjects |
+| /students | Student admissions & profiles |
+| /staff | Staff (HR) records |
+| /fees | Fee categories, structures, collection, refunds, discounts |
+| /accounting | Chart of accounts, vouchers, ledger, trial balance, P&L, balance sheet |
+| /hr | Staff attendance, leave, payroll |
+| /academics | Student attendance, timetable, exams, homework, promotion |
+| /facilities | Library, inventory, transport, hostel |
+| /communication | Notices, messages, certificates |
+| /reports | Dashboards, multi-branch summary, analytics |
 
 ## License
 

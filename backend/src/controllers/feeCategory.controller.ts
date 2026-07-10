@@ -2,13 +2,14 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Get all fee categories for a branch (system + custom)
  */
 export const getFeeCategories = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     if (!branchId) { sendError(res, "Branch ID required", 400); return; }
 
     const categories = await prisma.feeCategory.findMany({
@@ -28,6 +29,11 @@ export const getFeeCategories = async (req: AuthRequest, res: Response): Promise
 export const createFeeCategory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { branchId, name, code } = req.body;
+
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
 
     const existing = await prisma.feeCategory.findUnique({
       where: { branchId_code: { branchId, code } },
@@ -54,6 +60,7 @@ export const updateFeeCategory = async (req: AuthRequest, res: Response): Promis
 
     const category = await prisma.feeCategory.findUnique({ where: { id } });
     if (!category) { sendError(res, "Category not found", 404); return; }
+    if (!canAccessBranch(req, category.branchId)) { sendError(res, "Category not found", 404); return; }
 
     const updated = await prisma.feeCategory.update({
       where: { id },
@@ -75,6 +82,7 @@ export const toggleFeeCategory = async (req: AuthRequest, res: Response): Promis
 
     const category = await prisma.feeCategory.findUnique({ where: { id } });
     if (!category) { sendError(res, "Category not found", 404); return; }
+    if (!canAccessBranch(req, category.branchId)) { sendError(res, "Category not found", 404); return; }
 
     const updated = await prisma.feeCategory.update({
       where: { id },

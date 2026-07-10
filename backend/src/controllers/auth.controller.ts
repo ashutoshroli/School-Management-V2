@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import { UserRole } from "@prisma/client";
 import prisma from "../config/database";
+import { config } from "../config";
 import { generateToken } from "../utils/jwt";
 import { sendSuccess, sendError } from "../utils/response";
 import { AuthRequest, JwtPayload } from "../types";
@@ -106,8 +107,7 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
     const token = generateToken(payload);
 
     // Redirect to frontend with token
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-    res.redirect(`${frontendUrl}/auth/callback?token=${token}`);
+    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
   } catch (error) {
     sendError(res, "Google auth failed", 500, (error as Error).message);
   }

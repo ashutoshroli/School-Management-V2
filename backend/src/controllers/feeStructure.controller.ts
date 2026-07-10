@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create fee structure (class-wise, with frequency & late fee rules)
@@ -13,6 +14,11 @@ export const createFeeStructure = async (req: AuthRequest, res: Response): Promi
       amount, frequency, dueDay, lateFeeType, lateFeeValue,
       installments, // optional: [{installmentNo, amount, dueDate}]
     } = req.body;
+
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
 
     // Check uniqueness
     const existing = await prisma.feeStructure.findUnique({
@@ -58,7 +64,7 @@ export const createFeeStructure = async (req: AuthRequest, res: Response): Promi
  */
 export const getFeeStructures = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const classId = req.query.classId as string;
     const academicYearId = req.query.academicYearId as string;
 
@@ -91,6 +97,10 @@ export const updateFeeStructure = async (req: AuthRequest, res: Response): Promi
   try {
     const { id } = req.params;
     const { amount, frequency, dueDay, lateFeeType, lateFeeValue, isActive } = req.body;
+
+    const existing = await prisma.feeStructure.findUnique({ where: { id } });
+    if (!existing) { sendError(res, "Fee structure not found", 404); return; }
+    if (!canAccessBranch(req, existing.branchId)) { sendError(res, "Fee structure not found", 404); return; }
 
     const updated = await prisma.feeStructure.update({
       where: { id },

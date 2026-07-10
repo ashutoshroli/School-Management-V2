@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { School, Plus, Edit, Trash2, BookOpen, Users } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import ErrorBanner from "@/components/ui/ErrorBanner";
 
 interface Section {
   id: string;
@@ -29,13 +30,17 @@ export default function ClassesPage() {
   const [classForm, setClassForm] = useState({ name: "", numericOrder: 0, branchId: "" });
   const [sectionForm, setSectionForm] = useState({ name: "", capacity: 40, branchId: "", classId: "" });
 
+  const [error, setError] = useState<string | null>(null);
+
   const fetchClasses = async () => {
     try {
       setLoading(true);
+      setError(null);
       const res = await api.get("/classes");
       setClasses(res.data.data || []);
-    } catch (err) {
-      console.error("Failed to fetch classes");
+    } catch (err: any) {
+      console.error("Failed to fetch classes", err);
+      setError(err.response?.data?.message || "Failed to load classes. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -100,6 +105,8 @@ export default function ClassesPage() {
           <Plus className="h-4 w-4" /> Add Class
         </button>
       </div>
+
+      {error && <ErrorBanner message={error} onRetry={fetchClasses} />}
 
       {loading ? (
         <div className="flex justify-center py-12">

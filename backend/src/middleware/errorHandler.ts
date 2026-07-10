@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from "express";
+import { Prisma } from "@prisma/client";
 import { sendError } from "../utils/response";
+import { config } from "../config";
 
 export class AppError extends Error {
   statusCode: number;
@@ -19,23 +21,34 @@ export const errorHandler = (
   res: Response,
   _next: NextFunction
 ): void => {
-  console.error("Error:", err.message);
+  // Log full detail server-side regardless of environment; only the
+  // response body is sanitized for the client.
+  console.error("Error:", err);
 
   if (err instanceof AppError) {
     sendError(res, err.message, err.statusCode);
     return;
   }
 
-  // Prisma errors
-  if (err.name === "PrismaClientKnownRequestError") {
-    sendError(res, "Database error", 400, err.message);
+  // Prisma errors - use `instanceof` (not a string comparison against
+  // `err.name`) so this doesn't silently break if error classes are
+  // renamed/minified. Prisma messages can include table/column/query
+  // detail, so only surface them in development.
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    sendError(
+      res,
+      "Database error",
+      400,
+      config.nodeEnv === "development" ? err.message : undefined
+    );
     return;
   }
 
-  // Default server error
+  // Default server error - never leak the raw error message to the
+  // client in non-development environments.
   sendError(
     res,
-    process.env.NODE_ENV === "development" ? err.message : "Internal server error",
+    config.nodeEnv === "development" ? err.message : "Internal server error",
     500
   );
 };

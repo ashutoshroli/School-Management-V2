@@ -5,6 +5,7 @@ import { Users, Plus, Search, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
+import ErrorBanner from "@/components/ui/ErrorBanner";
 
 interface StaffMember {
   id: string;
@@ -32,17 +33,21 @@ export default function StaffPage() {
     panNumber: "", aadharNumber: "", cardId: "", role: "",
   });
 
+  const [error, setError] = useState<string | null>(null);
+
   const fetchStaff = async () => {
     try {
       setLoading(true);
+      setError(null);
       const params: any = { page, limit: 25 };
       if (search) params.search = search;
       if (typeFilter) params.type = typeFilter;
       const res = await api.get("/staff", { params });
       setStaff(res.data.data || []);
       setTotalPages(res.data.pagination?.totalPages || 1);
-    } catch (err) {
-      console.error("Failed to fetch staff");
+    } catch (err: any) {
+      console.error("Failed to fetch staff", err);
+      setError(err.response?.data?.message || "Failed to load staff. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -121,6 +126,8 @@ export default function StaffPage() {
           </select>
         </div>
       </div>
+
+      {error && <ErrorBanner message={error} onRetry={fetchStaff} />}
 
       <div className="card">
         <DataTable columns={columns} data={staff} loading={loading} page={page} totalPages={totalPages} onPageChange={setPage} emptyMessage="No staff found" />

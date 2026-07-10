@@ -2,13 +2,14 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Fee Collection Day Book (date-wise payment list)
  */
 export const getCollectionDayBook = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const from = req.query.from as string;
     const to = req.query.to as string;
 
@@ -47,7 +48,7 @@ export const getCollectionDayBook = async (req: AuthRequest, res: Response): Pro
  */
 export const getDefaultersList = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     const classId = req.query.classId as string;
 
     if (!branchId) { sendError(res, "Branch ID required", 400); return; }
@@ -92,7 +93,7 @@ export const getDefaultersList = async (req: AuthRequest, res: Response): Promis
  */
 export const getClassWiseSummary = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
     if (!branchId) { sendError(res, "Branch ID required", 400); return; }
 
     const classes = await prisma.class.findMany({

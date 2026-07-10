@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create/Update salary structure for staff
@@ -138,7 +139,7 @@ export const getPayslips = async (req: AuthRequest, res: Response): Promise<void
   try {
     const month = parseInt(req.query.month as string);
     const year = parseInt(req.query.year as string);
-    const branchId = req.query.branchId as string || req.user!.branchId;
+    const branchId = resolveBranchId(req);
 
     const payslips = await prisma.payslip.findMany({
       where: { month, year, staff: { branchId } },
