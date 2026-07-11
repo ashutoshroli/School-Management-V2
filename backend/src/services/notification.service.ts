@@ -5,6 +5,7 @@ import { sendSms } from "./notification/smsProvider";
 import { sendWhatsapp } from "./notification/whatsappProvider";
 import { sendPushToMany } from "./notification/pushProvider";
 import { genericNotificationEmail, EmailTemplateResult } from "./notification/emailTemplates";
+import { logger } from "../config/logger";
 
 export interface NotifyParams {
   userId: string;
@@ -91,7 +92,11 @@ export const notify = async ({
           data: { status: "SENT", sentAt: new Date() },
         });
       } catch (error) {
-        console.error(`Notification delivery failed (channel=${channel}, userId=${userId}):`, (error as Error).message);
+        logger.error("Notification delivery failed", {
+          channel,
+          userId,
+          errorMessage: (error as Error).message,
+        });
         await prisma.notification.update({
           where: { id: record.id },
           data: { status: "FAILED" },

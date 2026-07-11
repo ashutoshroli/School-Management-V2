@@ -71,4 +71,10 @@ export const config = {
     // with "\n" escapes and unescape at load time.
     privateKey: (process.env.FCM_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
   },
+  sentry: {
+    // Optional error tracking (Phase 1 - Monitoring). Leave unset to
+    // disable entirely - see config/sentry.ts's isSentryConfigured().
+    dsn: process.env.SENTRY_DSN || "",
+    tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || "0.1"),
+  },
 };
