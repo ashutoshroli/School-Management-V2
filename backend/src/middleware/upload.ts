@@ -11,6 +11,16 @@ const DOCUMENT_MIME_TYPES = new Set([
 ]);
 const AVATAR_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
+// Certificate/document templates are always Word (.docx) files - this
+// is the standard OOXML MIME type. Some browsers/OSes report a generic
+// "application/octet-stream" for .docx instead of the correct type, so
+// the route-level file-extension check in template.controller.ts backs
+// this up (multer's fileFilter only sees the MIME type, not the bytes).
+const DOCX_MIME_TYPES = new Set([
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/octet-stream",
+]);
+
 const memoryStorage = multer.memoryStorage();
 
 const fileFilterFor = (allowed: Set<string>) => (
@@ -37,6 +47,13 @@ export const uploadAvatar = multer({
   storage: memoryStorage,
   limits: { fileSize: config.upload.maxSize },
   fileFilter: fileFilterFor(AVATAR_MIME_TYPES),
+}).single("file");
+
+/** Single-file upload middleware for DOCX certificate/document templates (field name: "file"). */
+export const uploadTemplate = multer({
+  storage: memoryStorage,
+  limits: { fileSize: config.upload.maxSize },
+  fileFilter: fileFilterFor(DOCX_MIME_TYPES),
 }).single("file");
 
 type MulterSingleMiddleware = (req: Request, res: Response, callback: (err: unknown) => void) => void;

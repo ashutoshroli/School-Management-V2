@@ -174,6 +174,12 @@ export const navigation: NavItem[] = [
     roles: ADMIN_ROLES,
   },
   {
+    label: "Templates",
+    href: "/dashboard/templates",
+    icon: "FileStack",
+    roles: ADMIN_ROLES,
+  },
+  {
     label: "Reports",
     href: "/dashboard/reports",
     icon: "BarChart3",

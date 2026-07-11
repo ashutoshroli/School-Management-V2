@@ -14,6 +14,7 @@ import communicationRoutes from "./communication.routes";
 import reportsRoutes from "./reports.routes";
 import parentRoutes from "./parent.routes";
 import admissionRoutes from "./admission.routes";
+import templateRoutes from "./template.routes";
 
 const router = Router();
 
@@ -43,6 +44,7 @@ router.use("/communication", communicationRoutes);
 router.use("/reports", reportsRoutes);
 router.use("/parent", parentRoutes);
 router.use("/admission", admissionRoutes);
+router.use("/templates", templateRoutes);
 
 // router.use("/attendance", attendanceRoutes); // Phase 4
 // router.use("/exams", examRoutes);            // Phase 4
