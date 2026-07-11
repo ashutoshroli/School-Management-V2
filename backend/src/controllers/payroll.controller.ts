@@ -13,58 +13,267 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+interface SalaryTemplateInput {
+  basic: number | string;
+  da?: number | string;
+  hra?: number | string;
+  ta?: number | string;
+  specialAllow?: number | string;
+  medicalAllow?: number | string;
+  otherAllow?: number | string;
+  professionalTax?: number | string;
+  otherDeduction?: number | string;
+  taxRegime?: "OLD" | "NEW";
+}
+
+/**
+ * PF/ESI/TDS/gross/net calculation, shared by upsertSalaryStructure
+ * (single staff) and the bulk assignment endpoints below - extracted
+ * so a "salary template" (basic + allowances + regime) always produces
+ * identical computed figures regardless of whether it's applied to
+ * one staff member or a hundred at once. ESI eligibility (gross <=
+ * 21000) and the TDS slabs both only ever depend on the template's own
+ * numbers, never on anything staff-specific, so recomputing this once
+ * per staff member in bulk still yields exactly the same result as
+ * calling this once per staff member individually - just without an
+ * N+1 round trip to get there.
+ */
+const calculateSalaryStructure = (input: SalaryTemplateInput) => {
+  const basic = Number(input.basic);
+  const da = Number(input.da || 0);
+  const hra = Number(input.hra || 0);
+  const ta = Number(input.ta || 0);
+  const specialAllow = Number(input.specialAllow || 0);
+  const medicalAllow = Number(input.medicalAllow || 0);
+  const otherAllow = Number(input.otherAllow || 0);
+  const professionalTax = Number(input.professionalTax || 0);
+  const otherDeduction = Number(input.otherDeduction || 0);
+  const taxRegime = input.taxRegime || "NEW";
+
+  // Auto-calculate PF & ESI
+  const basicDa = basic + da;
+  const pfEmployee = Math.round(basicDa * 0.12); // 12% of basic+DA
+  const pfEmployer = Math.round(basicDa * 0.12);
+  const gross = basic + da + hra + ta + specialAllow + medicalAllow + otherAllow;
+
+  // ESI: applicable if gross <= 21000
+  let esiEmployee = 0, esiEmployer = 0;
+  if (gross <= 21000) {
+    esiEmployee = Math.round(gross * 0.0075); // 0.75%
+    esiEmployer = Math.round(gross * 0.0325); // 3.25%
+  }
+
+  // TDS: simplified monthly calculation (annual projected / 12)
+  const annualGross = gross * 12;
+  const standardDeduction = 50000;
+  const taxableIncome = annualGross - standardDeduction - (pfEmployee * 12);
+  let annualTds = 0;
+
+  if (taxRegime === "NEW") {
+    // New regime FY 2025-26 slabs
+    if (taxableIncome > 1500000) annualTds = (taxableIncome - 1500000) * 0.30 + 150000;
+    else if (taxableIncome > 1200000) annualTds = (taxableIncome - 1200000) * 0.20 + 90000;
+    else if (taxableIncome > 900000) annualTds = (taxableIncome - 900000) * 0.15 + 45000;
+    else if (taxableIncome > 600000) annualTds = (taxableIncome - 600000) * 0.10 + 15000;
+    else if (taxableIncome > 300000) annualTds = (taxableIncome - 300000) * 0.05;
+  } else {
+    // Old regime
+    if (taxableIncome > 1000000) annualTds = (taxableIncome - 1000000) * 0.30 + 112500;
+    else if (taxableIncome > 500000) annualTds = (taxableIncome - 500000) * 0.20 + 12500;
+    else if (taxableIncome > 250000) annualTds = (taxableIncome - 250000) * 0.05;
+  }
+  const monthlyTds = Math.round(annualTds / 12);
+
+  const totalDeductions = pfEmployee + esiEmployee + monthlyTds + professionalTax + otherDeduction;
+  const netSalary = gross - totalDeductions;
+
+  return {
+    basic, da, hra, ta, specialAllow, medicalAllow, otherAllow,
+    pfEmployee, pfEmployer, esiEmployee, esiEmployer,
+    professionalTax, tds: monthlyTds, otherDeduction,
+    grossSalary: gross, netSalary, taxRegime,
+  };
+};
+
 /**
  * Create/Update salary structure for staff
  */
 export const upsertSalaryStructure = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { staffId, basic, da, hra, ta, specialAllow, medicalAllow, otherAllow, professionalTax, otherDeduction, taxRegime } = req.body;
-
-    // Auto-calculate PF & ESI
-    const basicDa = Number(basic) + Number(da || 0);
-    const pfEmployee = Math.round(basicDa * 0.12); // 12% of basic+DA
-    const pfEmployer = Math.round(basicDa * 0.12);
-    const gross = Number(basic) + Number(da || 0) + Number(hra || 0) + Number(ta || 0) + Number(specialAllow || 0) + Number(medicalAllow || 0) + Number(otherAllow || 0);
-
-    // ESI: applicable if gross <= 21000
-    let esiEmployee = 0, esiEmployer = 0;
-    if (gross <= 21000) {
-      esiEmployee = Math.round(gross * 0.0075); // 0.75%
-      esiEmployer = Math.round(gross * 0.0325); // 3.25%
-    }
-
-    // TDS: simplified monthly calculation (annual projected / 12)
-    const annualGross = gross * 12;
-    const standardDeduction = 50000;
-    const taxableIncome = annualGross - standardDeduction - (pfEmployee * 12);
-    let annualTds = 0;
-
-    if (taxRegime === "NEW") {
-      // New regime FY 2025-26 slabs
-      if (taxableIncome > 1500000) annualTds = (taxableIncome - 1500000) * 0.30 + 150000;
-      else if (taxableIncome > 1200000) annualTds = (taxableIncome - 1200000) * 0.20 + 90000;
-      else if (taxableIncome > 900000) annualTds = (taxableIncome - 900000) * 0.15 + 45000;
-      else if (taxableIncome > 600000) annualTds = (taxableIncome - 600000) * 0.10 + 15000;
-      else if (taxableIncome > 300000) annualTds = (taxableIncome - 300000) * 0.05;
-    } else {
-      // Old regime
-      if (taxableIncome > 1000000) annualTds = (taxableIncome - 1000000) * 0.30 + 112500;
-      else if (taxableIncome > 500000) annualTds = (taxableIncome - 500000) * 0.20 + 12500;
-      else if (taxableIncome > 250000) annualTds = (taxableIncome - 250000) * 0.05;
-    }
-    const monthlyTds = Math.round(annualTds / 12);
-
-    const totalDeductions = pfEmployee + esiEmployee + monthlyTds + Number(professionalTax || 0) + Number(otherDeduction || 0);
-    const netSalary = gross - totalDeductions;
+    const { staffId } = req.body;
+    const calculated = calculateSalaryStructure(req.body);
 
     const structure = await prisma.salaryStructure.upsert({
       where: { staffId },
-      update: { basic, da: da || 0, hra: hra || 0, ta: ta || 0, specialAllow: specialAllow || 0, medicalAllow: medicalAllow || 0, otherAllow: otherAllow || 0, pfEmployee, pfEmployer, esiEmployee, esiEmployer, professionalTax: professionalTax || 0, tds: monthlyTds, otherDeduction: otherDeduction || 0, grossSalary: gross, netSalary, taxRegime: taxRegime || "NEW" },
-      create: { staffId, basic, da: da || 0, hra: hra || 0, ta: ta || 0, specialAllow: specialAllow || 0, medicalAllow: medicalAllow || 0, otherAllow: otherAllow || 0, pfEmployee, pfEmployer, esiEmployee, esiEmployer, professionalTax: professionalTax || 0, tds: monthlyTds, otherDeduction: otherDeduction || 0, grossSalary: gross, netSalary, taxRegime: taxRegime || "NEW" },
+      update: calculated,
+      create: { staffId, ...calculated },
     });
 
     sendSuccess(res, structure, "Salary structure saved");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Bulk-assign a salary structure "template" (basic + allowances +
+ * deductions + tax regime) to every ACTIVE staff member in the branch
+ * matching the given filters (type/department/designation) - the
+ * payroll counterpart to bulkAssignFees for students. Every matched
+ * staff member receives the exact same template; PF/ESI/TDS/gross/net
+ * are computed per staff member via calculateSalaryStructure (see its
+ * doc comment for why this is safe to do in bulk).
+ *
+ * Staff who already have a salary structure are SKIPPED by default -
+ * pass `overwriteExisting: true` to instead update theirs to the new
+ * template too, mirroring the skip-vs-explicit-overwrite convention
+ * used across this codebase's other bulk-assignment endpoints.
+ *
+ * Uses one bulk updateMany (for staff being overwritten) + one bulk
+ * createMany (for staff getting a structure for the first time)
+ * rather than a per-staff upsert loop - safe here specifically because
+ * every matched staff member is getting IDENTICAL data, so there's
+ * nothing that varies row-to-row for updateMany to lose.
+ */
+export const bulkAssignSalaryStructure = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { department, designation, type, overwriteExisting, ...template } = req.body;
+
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
+
+    const where: any = { branchId, isActive: true };
+    if (type) where.type = type;
+    if (department) where.department = department;
+    if (designation) where.designation = designation;
+
+    const staffList = await prisma.staff.findMany({ where, select: { id: true } });
+    if (staffList.length === 0) {
+      sendSuccess(res, { created: 0, updated: 0, skipped: 0, total: 0 }, "No staff matched the given filters");
+      return;
+    }
+
+    const staffIds = staffList.map((s) => s.id);
+    const existing = await prisma.salaryStructure.findMany({
+      where: { staffId: { in: staffIds } },
+      select: { staffId: true },
+    });
+    const existingIds = existing.map((e) => e.staffId);
+    const existingSet = new Set(existingIds);
+    const newIds = staffIds.filter((id) => !existingSet.has(id));
+
+    const calculated = calculateSalaryStructure(template);
+
+    let updated = 0;
+    if (overwriteExisting && existingIds.length > 0) {
+      const result = await prisma.salaryStructure.updateMany({
+        where: { staffId: { in: existingIds } },
+        data: calculated,
+      });
+      updated = result.count;
+    }
+
+    let created = 0;
+    if (newIds.length > 0) {
+      const result = await prisma.salaryStructure.createMany({
+        data: newIds.map((staffId) => ({ staffId, ...calculated })),
+      });
+      created = result.count;
+    }
+
+    const skipped = overwriteExisting ? 0 : existingIds.length;
+
+    sendSuccess(
+      res,
+      { created, updated, skipped, total: staffIds.length },
+      `Salary structure assigned to ${created + updated} staff member(s)` +
+        (skipped > 0 ? ` (${skipped} skipped - already have a salary structure)` : "")
+    );
+  } catch (error) {
+    sendError(res, "Failed to bulk-assign salary structure", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Assign a salary structure template to a specific, hand-picked list
+ * of staffIds - the counterpart to bulkAssignSalaryStructure above
+ * (which targets an entire department/designation/type). Used when
+ * only some staff should get this template - e.g. a raise for a named
+ * subset, or onboarding a new batch of hires who share a starting salary.
+ */
+export const assignSalaryStructureToStaff = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { staffIds, overwriteExisting, ...template } = req.body;
+
+    if (!Array.isArray(staffIds) || staffIds.length === 0) {
+      sendError(res, "staffIds must be a non-empty array", 400);
+      return;
+    }
+
+    // Look up every requested staff member in one query - both to
+    // validate they exist and to enforce branch access below (a
+    // Branch Admin could otherwise smuggle in a staffId belonging to
+    // a different branch - IDOR).
+    const staffList = await prisma.staff.findMany({
+      where: { id: { in: staffIds } },
+      select: { id: true, branchId: true },
+    });
+
+    const foundIds = new Set(staffList.map((s) => s.id));
+    const notFound = staffIds.filter((id: string) => !foundIds.has(id));
+    if (notFound.length > 0) {
+      sendError(res, `${notFound.length} staff member(s) in this list were not found`, 404);
+      return;
+    }
+    const inaccessible = staffList.some((s) => !canAccessBranch(req, s.branchId));
+    if (inaccessible) {
+      sendError(res, "One or more staff members are not in a branch you can access", 403);
+      return;
+    }
+
+    const existing = await prisma.salaryStructure.findMany({
+      where: { staffId: { in: staffIds } },
+      select: { staffId: true },
+    });
+    const existingIds = existing.map((e) => e.staffId);
+    const existingSet = new Set(existingIds);
+    const newIds = staffIds.filter((id: string) => !existingSet.has(id));
+
+    const calculated = calculateSalaryStructure(template);
+
+    let updated = 0;
+    if (overwriteExisting && existingIds.length > 0) {
+      const result = await prisma.salaryStructure.updateMany({
+        where: { staffId: { in: existingIds } },
+        data: calculated,
+      });
+      updated = result.count;
+    }
+
+    let created = 0;
+    if (newIds.length > 0) {
+      const result = await prisma.salaryStructure.createMany({
+        data: newIds.map((staffId: string) => ({ staffId, ...calculated })),
+      });
+      created = result.count;
+    }
+
+    const skipped = overwriteExisting ? 0 : existingIds.length;
+
+    sendSuccess(
+      res,
+      { created, updated, skipped, total: staffIds.length },
+      `Salary structure assigned to ${created + updated} staff member(s)` +
+        (skipped > 0 ? ` (${skipped} skipped - already have a salary structure)` : "")
+    );
+  } catch (error) {
+    sendError(res, "Failed to assign salary structure", 500, (error as Error).message);
+  }
 };
 
 /**

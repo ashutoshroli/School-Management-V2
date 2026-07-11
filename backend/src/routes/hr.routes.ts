@@ -2,12 +2,12 @@ import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCalendar, getDateAttendance } from "../controllers/staffAttendance.controller";
 import { getLeaveTypes, applyLeave, getLeaveApplications, updateLeaveStatus, getLeaveBalance } from "../controllers/leave.controller";
-import { upsertSalaryStructure, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
+import { upsertSalaryStructure, bulkAssignSalaryStructure, assignSalaryStructureToStaff, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { markStaffAttendanceSchema, bulkMarkStaffAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
 import { applyLeaveSchema, updateLeaveStatusSchema } from "../validators/leave.validator";
-import { upsertSalaryStructureSchema, runPayrollSchema } from "../validators/payroll.validator";
+import { upsertSalaryStructureSchema, bulkAssignSalaryStructureSchema, assignSalaryStructureToStaffSchema, runPayrollSchema } from "../validators/payroll.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -29,6 +29,8 @@ router.get("/leave/balance/:staffId", authenticate, getLeaveBalance);
 
 // ===== PAYROLL =====
 router.post("/salary-structure", authenticate, authorize(...ADMIN), validate(upsertSalaryStructureSchema), upsertSalaryStructure);
+router.post("/salary-structure/bulk", authenticate, authorize(...ADMIN), validate(bulkAssignSalaryStructureSchema), bulkAssignSalaryStructure);
+router.post("/salary-structure/staff", authenticate, authorize(...ADMIN), validate(assignSalaryStructureToStaffSchema), assignSalaryStructureToStaff);
 router.get("/salary-structure/:staffId", authenticate, getSalaryStructure);
 router.post("/payroll/run", authenticate, authorize(...ADMIN), validate(runPayrollSchema), runPayroll);
 router.get("/payroll/payslips", authenticate, authorize(...ADMIN), getPayslips);

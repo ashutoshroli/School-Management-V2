@@ -20,6 +20,44 @@ export const upsertSalaryStructureSchema = z.object({
   }),
 });
 
+/**
+ * Shared "salary template" fields for both bulk-assignment endpoints
+ * below - same shape as upsertSalaryStructureSchema minus staffId
+ * (which each endpoint supplies differently: filters vs. an explicit list).
+ */
+const salaryTemplateFields = {
+  basic: money,
+  da: money.optional(),
+  hra: money.optional(),
+  ta: money.optional(),
+  specialAllow: money.optional(),
+  medicalAllow: money.optional(),
+  otherAllow: money.optional(),
+  professionalTax: money.optional(),
+  otherDeduction: money.optional(),
+  taxRegime: z.enum(["OLD", "NEW"]).optional(),
+  // If true, staff who already have a salary structure get it
+  // overwritten with this template too, instead of being skipped.
+  overwriteExisting: z.boolean().optional(),
+};
+
+export const bulkAssignSalaryStructureSchema = z.object({
+  body: z.object({
+    branchId: z.string().optional(),
+    type: z.enum(["TEACHING", "NON_TEACHING"]).optional(),
+    department: z.string().optional(),
+    designation: z.string().optional(),
+    ...salaryTemplateFields,
+  }),
+});
+
+export const assignSalaryStructureToStaffSchema = z.object({
+  body: z.object({
+    staffIds: z.array(z.string().min(1)).min(1, "staffIds must be a non-empty array"),
+    ...salaryTemplateFields,
+  }),
+});
+
 export const runPayrollSchema = z.object({
   body: z.object({
     branchId: z.string().optional(),
