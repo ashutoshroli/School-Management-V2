@@ -12,28 +12,29 @@ import { toAttendanceDateOnly } from "../utils/attendanceDate";
 /**
  * Mark student attendance (teacher marks for a class/section/date)
  *
- * BUG FIX: this used to be a non-atomic "check-then-act" loop -
- * `findUnique` then `create`-or-`update`, one record at a time, with
- * no transaction. Two real problems fell out of that:
- *   1. Race condition: if the same "Save All" request was double-fired
- *      (slow network -> user clicks again, or a retry), the second
- *      request's `create()` for a record the first request had just
- *      inserted would violate the `[studentId, date, period]` unique
- *      constraint and throw - the whole request failed with a generic
- *      500 "Failed", even though most/all of the records had actually
- *      already been saved by the first request. This is the most
- *      likely cause of "unable to save attendance" reports: it looks
- *      like total failure, but is actually "already saved, don't panic".
- *   2. Partial failure with no rollback: if record #15 of 40 threw for
- *      ANY reason (bad status enum value, etc), records #1-14 were
- *      already committed to the database but the response still came
- *      back as a 500 error - the class teacher has no way to tell
- *      which students got saved and which didn't from that response.
+ * BUG FIX HISTORY:
+ *   1. This used to be a non-atomic "check-then-act" loop -
+ *      `findUnique` then `create`-or-`update`, one record at a time,
+ *      with no transaction, which could fail on a retried/double-fired
+ *      request.
+ *   2. That was "fixed" by switching to `upsert()` against the
+ *      `[studentId, date, period]` compound unique key - but `period`
+ *      is NULLABLE, and Prisma's `upsert`/`update` `where` clause
+ *      (the "extendedWhereUnique" feature) has a long-standing,
+ *      well-documented limitation with compound unique constraints
+ *      that include a nullable column: see prisma/prisma#3197 and
+ *      #16880. In practice this made `upsert()` throw on EVERY call
+ *      for day-wise attendance (period: null), not just on a retry -
+ *      i.e. attendance could never be saved at all, which matches the
+ *      "unable to save attendance" report exactly (immediate failure,
+ *      not just on re-submission).
  *
- * Fixed by using `upsert` (atomic per-record: create-or-update in one
- * DB round trip, never throws on a duplicate) for every record inside
- * a single `$transaction`, so the whole batch either fully succeeds or
- * fully rolls back - no more "half saved, reported as failed".
+ * Fixed properly this time: avoid the nullable-field compound unique
+ * `where` entirely. Look up any existing record with a plain
+ * `findFirst` (which has no such limitation), then explicitly
+ * `create()` or `update()` by its real `id`. Every record in the batch
+ * is still wrapped in one `$transaction` so the whole save is
+ * all-or-nothing.
  */
 export const markStudentAttendance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -65,34 +66,37 @@ export const markStudentAttendance = async (req: AuthRequest, res: Response): Pr
     const attendanceDate = new Date(date);
     const attendancePeriod = period || null;
 
-    // Determine created-vs-updated counts up front (a single query)
-    // purely for the response message - the actual writes below use
-    // upsert regardless, so this split has no effect on correctness.
     const studentIds = records.map((r: any) => r.studentId);
+    // Plain findMany, filtering by `period` with a regular equality
+    // check (works fine for null via Prisma's query engine - it's
+    // specifically the unique-constraint-based `where` in
+    // upsert/update that's broken for nullable compound keys, not
+    // ordinary filtering).
     const existingRecords = await prisma.studentAttendance.findMany({
       where: { studentId: { in: studentIds }, date: attendanceDate, period: attendancePeriod },
-      select: { studentId: true },
+      select: { id: true, studentId: true },
     });
-    const existingIds = new Set(existingRecords.map((r) => r.studentId));
-    const created = records.filter((r: any) => !existingIds.has(r.studentId)).length;
-    const updated = records.length - created;
+    const existingByStudentId = new Map(existingRecords.map((r) => [r.studentId, r.id]));
+    const created = records.length - existingByStudentId.size;
+    const updated = existingByStudentId.size;
 
     await prisma.$transaction(
-      records.map((rec: any) =>
-        prisma.studentAttendance.upsert({
-          where: { studentId_date_period: { studentId: rec.studentId, date: attendanceDate, period: attendancePeriod } },
-          update: { status: rec.status },
-          create: {
-            studentId: rec.studentId,
-            sectionId,
-            date: attendanceDate,
-            status: rec.status,
-            period: attendancePeriod,
-            source: "MANUAL",
-            markedBy: req.user!.userId,
-          },
-        })
-      )
+      records.map((rec: any) => {
+        const existingId = existingByStudentId.get(rec.studentId);
+        return existingId
+          ? prisma.studentAttendance.update({ where: { id: existingId }, data: { status: rec.status } })
+          : prisma.studentAttendance.create({
+              data: {
+                studentId: rec.studentId,
+                sectionId,
+                date: attendanceDate,
+                status: rec.status,
+                period: attendancePeriod,
+                source: "MANUAL",
+                markedBy: req.user!.userId,
+              },
+            });
+      })
     );
 
     sendSuccess(res, { created, updated }, `Attendance saved: ${created} new, ${updated} updated`);

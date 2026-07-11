@@ -183,9 +183,11 @@ describe("studentAttendance.controller - markStudentAttendance", () => {
     (prisma.section.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-1" });
     (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([]);
     // Mirror the real $transaction(array-of-promises) call shape used
-    // by markStudentAttendance - resolve every upsert call it was given.
+    // by markStudentAttendance - resolve every create/update call it
+    // was given.
     (prisma.$transaction as jest.Mock).mockImplementation(async (ops: any[]) => Promise.all(ops));
-    (prisma.studentAttendance.upsert as jest.Mock).mockResolvedValue({ id: "att-1" });
+    (prisma.studentAttendance.create as jest.Mock).mockResolvedValue({ id: "att-1" });
+    (prisma.studentAttendance.update as jest.Mock).mockResolvedValue({ id: "att-1" });
   });
 
   it("returns 400 when sectionId or date is missing", async () => {
@@ -239,12 +241,17 @@ describe("studentAttendance.controller - markStudentAttendance", () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  // BUG FIX regression guard: the whole point of switching to
-  // upsert-in-a-transaction is that this call never throws on a
-  // duplicate key, unlike the old find-then-create/update loop which
-  // would blow up the entire request if the same record had already
-  // been saved by an earlier (e.g. retried) request.
-  it("BUG FIX: saves every record via upsert inside a single transaction, and never calls create/update/findUnique directly", async () => {
+  // BUG FIX regression guard: `upsert()` against the
+  // [studentId, date, period] compound unique key was ITSELF the bug -
+  // Prisma's extendedWhereUnique doesn't reliably support nullable
+  // fields (period is nullable) in a unique `where` clause (see
+  // prisma/prisma#3197, #16880), so upsert() threw on every call for
+  // day-wise (period: null) attendance, not just on a retry. The fix
+  // avoids that compound-unique `where` entirely: look up via a plain
+  // findMany/findFirst (no such limitation), then explicitly
+  // create()/update() by real id. This test locks in that
+  // create/update is used and upsert() is never called again.
+  it("BUG FIX: saves every record via explicit create/update (never upsert against the nullable-period unique key) inside a single transaction", async () => {
     const req = makeAttendanceReq();
     const res = makeMockRes();
 
@@ -252,21 +259,45 @@ describe("studentAttendance.controller - markStudentAttendance", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(prisma.studentAttendance.upsert).toHaveBeenCalledTimes(2);
-    expect(prisma.studentAttendance.create).not.toHaveBeenCalled();
+    expect(prisma.studentAttendance.upsert).not.toHaveBeenCalled();
+    // Both records are new here (findMany mock resolves to []), so both
+    // go through create().
+    expect(prisma.studentAttendance.create).toHaveBeenCalledTimes(2);
     expect(prisma.studentAttendance.update).not.toHaveBeenCalled();
 
-    expect(prisma.studentAttendance.upsert).toHaveBeenCalledWith(
+    expect(prisma.studentAttendance.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { studentId_date_period: { studentId: "student-1", date: new Date("2024-03-15"), period: null } },
-        update: { status: "PRESENT" },
-        create: expect.objectContaining({ studentId: "student-1", status: "PRESENT", source: "MANUAL", markedBy: "teacher-1" }),
+        data: expect.objectContaining({
+          studentId: "student-1",
+          date: new Date("2024-03-15"),
+          period: null,
+          status: "PRESENT",
+          source: "MANUAL",
+          markedBy: "teacher-1",
+        }),
       })
     );
   });
 
+  it("updates an existing record by its real id instead of upserting against the nullable-period compound key", async () => {
+    (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([
+      { id: "existing-att-1", studentId: "student-1" },
+    ]);
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(prisma.studentAttendance.update).toHaveBeenCalledWith({
+      where: { id: "existing-att-1" },
+      data: { status: "PRESENT" },
+    });
+    expect(prisma.studentAttendance.create).toHaveBeenCalledTimes(1); // only student-2 is new
+    expect(prisma.studentAttendance.upsert).not.toHaveBeenCalled();
+  });
+
   it("reports accurate created/updated counts based on which records already existed", async () => {
-    (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([{ studentId: "student-1" }]);
+    (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([{ id: "att-existing", studentId: "student-1" }]);
     const req = makeAttendanceReq();
     const res = makeMockRes();
 
@@ -279,12 +310,12 @@ describe("studentAttendance.controller - markStudentAttendance", () => {
 
   it("still succeeds (transactionally) even if this exact batch was already saved by a prior request", async () => {
     // Simulates re-submitting the same "Save All" click twice - every
-    // record already exists from the first request. The old
-    // find-then-create code would have thrown a unique-constraint
-    // error attempting to `create()` again; upsert just updates.
+    // record already exists from the first request. This must update
+    // by real id (never throw), unlike a unique-constraint-based
+    // upsert() which was itself broken for this nullable-period model.
     (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([
-      { studentId: "student-1" },
-      { studentId: "student-2" },
+      { id: "att-1", studentId: "student-1" },
+      { id: "att-2", studentId: "student-2" },
     ]);
     const req = makeAttendanceReq();
     const res = makeMockRes();
@@ -293,5 +324,7 @@ describe("studentAttendance.controller - markStudentAttendance", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: { created: 0, updated: 2 } }));
+    expect(prisma.studentAttendance.update).toHaveBeenCalledTimes(2);
+    expect(prisma.studentAttendance.create).not.toHaveBeenCalled();
   });
 });
