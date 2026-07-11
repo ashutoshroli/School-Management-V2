@@ -23,15 +23,25 @@ export default function TimetablePage() {
     setSectionId("");
   }, [classId, classes]);
 
+  const [error, setError] = useState("");
+
   const fetchTimetable = async () => {
     if (!sectionId || !classId) return;
     setLoading(true);
+    setError("");
+    setTimetable(null);
     try {
       const years = await api.get("/academic-years");
       const activeYear = years.data.data?.find((y: any) => y.isActive);
-      const res = await api.post("/academics/timetable", { sectionId, classId, academicYearId: activeYear?.id });
+      if (!activeYear) {
+        setError("No active academic year found. Set an academic year as active first (Dashboard > Academic Years).");
+        return;
+      }
+      const res = await api.post("/academics/timetable", { sectionId, classId, academicYearId: activeYear.id });
       setTimetable(res.data.data);
-    } catch {} finally { setLoading(false); }
+    } catch (err: any) {
+      setError(err.response?.data?.message || "Failed to load timetable");
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { if (sectionId) fetchTimetable(); }, [sectionId]);
@@ -56,6 +66,10 @@ export default function TimetablePage() {
           {sections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div>

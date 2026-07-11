@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import {
-  getAccounts, createAccount, updateAccount,
-  createVoucher, approveVoucher,
+  getAccounts, createAccount, updateAccount, deleteAccount,
+  createVoucher, approveVoucher, deleteVoucher,
   getDayBook, getLedger, getTrialBalance,
   getProfitAndLoss, getBalanceSheet,
 } from "../controllers/accounting.controller";
@@ -20,10 +20,12 @@ router.use(authenticate);
 router.get("/accounts", authorize(...FINANCE), getAccounts);
 router.post("/accounts", authorize(...ADMIN), branchAccess, validate(createAccountSchema), createAccount);
 router.put("/accounts/:id", authorize(...ADMIN), updateAccount);
+router.delete("/accounts/:id", authorize(...ADMIN), deleteAccount);
 
 // Voucher Entry
 router.post("/vouchers", authorize(...FINANCE), branchAccess, validate(createVoucherSchema), createVoucher);
 router.patch("/vouchers/:id/approve", authorize(...ADMIN), approveVoucher);
+router.delete("/vouchers/:id", authorize(...ADMIN), deleteVoucher);
 
 // Day Book
 router.get("/daybook", authorize(...FINANCE), getDayBook);

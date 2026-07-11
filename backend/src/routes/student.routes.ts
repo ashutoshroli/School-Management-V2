@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { createStudent, getStudents, getStudentById, updateStudent } from "../controllers/student.controller";
+import { createStudent, getStudents, getStudentById, updateStudent, deleteStudent } from "../controllers/student.controller";
 import { getStudentIdCardPdf, getClassIdCardsBatchPdf } from "../controllers/document.controller";
 import { uploadStudentDocument, deleteStudentDocument } from "../controllers/upload.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
@@ -23,6 +23,7 @@ router.get("/id-cards/batch", authorize(...ADMIN, UserRole.TEACHER), getClassIdC
 router.get("/:id", getStudentById);
 router.get("/:id/id-card", getStudentIdCardPdf);
 router.put("/:id", authorize(...ADMIN), validate(updateStudentSchema), updateStudent);
+router.delete("/:id", authorize(...ADMIN), deleteStudent);
 
 // Documents (photo, birth certificate, TC, etc). Upload/delete restricted
 // to branch admin staff; the student/parent can only view via

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Tag, Plus, ToggleLeft, ToggleRight } from "lucide-react";
+import { Tag, Plus, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -46,6 +46,14 @@ export default function FeeCategoriesPage() {
     fetch();
   };
 
+  const deleteCategory = async (id: string, name: string) => {
+    if (!confirm(`Delete fee category "${name}"?`)) return;
+    try {
+      await api.delete(`/fees/categories/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this category"); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -74,9 +82,16 @@ export default function FeeCategoriesPage() {
                   {!cat.isSystem && <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full">Custom</span>}
                 </div>
               </div>
-              <button onClick={() => toggle(cat.id)} className="p-1" title={cat.isActive ? "Deactivate" : "Activate"}>
-                {cat.isActive ? <ToggleRight className="h-6 w-6 text-green-600" /> : <ToggleLeft className="h-6 w-6 text-gray-400" />}
-              </button>
+              <div className="flex items-center gap-1">
+                <button onClick={() => toggle(cat.id)} className="p-1" title={cat.isActive ? "Deactivate" : "Activate"}>
+                  {cat.isActive ? <ToggleRight className="h-6 w-6 text-green-600" /> : <ToggleLeft className="h-6 w-6 text-gray-400" />}
+                </button>
+                {!cat.isSystem && (
+                  <button onClick={() => deleteCategory(cat.id, cat.name)} className="p-1" title="Delete">
+                    <Trash2 className="h-4 w-4 text-red-500" />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

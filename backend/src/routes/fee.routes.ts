@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { getFeeCategories, createFeeCategory, updateFeeCategory, toggleFeeCategory } from "../controllers/feeCategory.controller";
+import { getFeeCategories, createFeeCategory, updateFeeCategory, toggleFeeCategory, deleteFeeCategory } from "../controllers/feeCategory.controller";
 import { createFeeStructure, getFeeStructures, updateFeeStructure, deleteFeeStructure } from "../controllers/feeStructure.controller";
 import { bulkAssignFees, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund, sendFeeRemindersHandler } from "../controllers/feeCollection.controller";
 import { createRazorpayOrder, verifyRazorpayPayment, razorpayWebhook } from "../controllers/payment.controller";
@@ -31,6 +31,7 @@ router.get("/categories", getFeeCategories);
 router.post("/categories", authorize(...ADMIN), branchAccess, createFeeCategory);
 router.put("/categories/:id", authorize(...ADMIN), updateFeeCategory);
 router.patch("/categories/:id/toggle", authorize(...ADMIN), toggleFeeCategory);
+router.delete("/categories/:id", authorize(...ADMIN), deleteFeeCategory);
 
 // Fee Structure
 router.get("/structures", authorize(...FINANCE), getFeeStructures);

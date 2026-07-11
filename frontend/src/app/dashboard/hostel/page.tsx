@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Home, Plus } from "lucide-react";
+import { Home, Plus, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -24,6 +24,14 @@ export default function HostelPage() {
     e.preventDefault();
     try { await api.post("/facilities/hostel/buildings", form); setShowModal(false); fetch(); }
     catch (err: any) { alert(err.response?.data?.message || "Failed"); }
+  };
+
+  const deleteBuilding = async (id: string, name: string) => {
+    if (!confirm(`Delete building "${name}"? This will remove all its floors and rooms.`)) return;
+    try {
+      await api.delete(`/facilities/hostel/buildings/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this building"); }
   };
 
   return (
@@ -54,9 +62,14 @@ export default function HostelPage() {
                     {b.type} | Warden: {b.warden || "Not assigned"}
                   </p>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${b.type === "BOYS" ? "bg-blue-100 text-blue-700" : "bg-pink-100 text-pink-700"}`}>
-                  {b.type}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${b.type === "BOYS" ? "bg-blue-100 text-blue-700" : "bg-pink-100 text-pink-700"}`}>
+                    {b.type}
+                  </span>
+                  <button onClick={() => deleteBuilding(b.id, b.name)} title="Delete Building" className="text-red-400 hover:text-red-600">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
 
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Bus, Plus, MapPin } from "lucide-react";
+import { Bus, Plus, MapPin, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -33,6 +33,22 @@ export default function TransportPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };
 
+  const deleteRoute = async (id: string, name: string) => {
+    if (!confirm(`Delete route "${name}"?`)) return;
+    try {
+      await api.delete(`/facilities/transport/routes/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this route"); }
+  };
+
+  const deleteVehicle = async (id: string, vehicleNo: string) => {
+    if (!confirm(`Delete vehicle "${vehicleNo}"?`)) return;
+    try {
+      await api.delete(`/facilities/transport/vehicles/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this vehicle"); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -45,7 +61,12 @@ export default function TransportPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
             {routes.map(r => (
               <div key={r.id} className="card">
-                <h3 className="font-semibold text-gray-900 mb-2">{r.name}</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-semibold text-gray-900">{r.name}</h3>
+                  <button onClick={() => deleteRoute(r.id, r.name)} title="Delete Route" className="text-red-400 hover:text-red-600">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
                 <div className="flex items-center gap-2 text-sm text-gray-500 mb-2"><MapPin className="h-4 w-4" /> {r.startPoint} → {r.endPoint}</div>
                 <div className="flex justify-between text-sm">
                   <span className="text-green-700 font-medium">{formatCurrency(r.monthlyFee)}/month</span>
@@ -64,10 +85,15 @@ export default function TransportPage() {
             <div className="card"><h3 className="font-semibold mb-3">Vehicles ({vehicles.length})</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {vehicles.map(v => (
-                  <div key={v.id} className="bg-gray-50 p-3 rounded-lg text-sm">
-                    <p className="font-medium">{v.vehicleNo}</p>
-                    <p className="text-xs text-gray-500">{v.type} | Capacity: {v.capacity}</p>
-                    {v.driverName && <p className="text-xs text-gray-400">Driver: {v.driverName}</p>}
+                  <div key={v.id} className="bg-gray-50 p-3 rounded-lg text-sm flex items-start justify-between">
+                    <div>
+                      <p className="font-medium">{v.vehicleNo}</p>
+                      <p className="text-xs text-gray-500">{v.type} | Capacity: {v.capacity}</p>
+                      {v.driverName && <p className="text-xs text-gray-400">Driver: {v.driverName}</p>}
+                    </div>
+                    <button onClick={() => deleteVehicle(v.id, v.vehicleNo)} title="Delete Vehicle" className="text-red-400 hover:text-red-600">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>

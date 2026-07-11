@@ -102,3 +102,30 @@ export const toggleFeeCategory = async (req: AuthRequest, res: Response): Promis
     sendError(res, "Failed to toggle category", 500, (error as Error).message);
   }
 };
+
+/**
+ * Delete a fee category. Blocked for system-defined categories (these
+ * back built-in flows and must always exist) and if any fee structures
+ * still reference it.
+ */
+export const deleteFeeCategory = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const category = await prisma.feeCategory.findUnique({ where: { id } });
+    if (!category) { sendError(res, "Category not found", 404); return; }
+    if (!canAccessBranch(req, category.branchId)) { sendError(res, "Category not found", 404); return; }
+    if (category.isSystem) { sendError(res, "Cannot delete a system-defined fee category", 400); return; }
+
+    const structureCount = await prisma.feeStructure.count({ where: { feeCategoryId: id } });
+    if (structureCount > 0) {
+      sendError(res, `Cannot delete: ${structureCount} fee structure(s) use this category. Remove those first.`, 400);
+      return;
+    }
+
+    await prisma.feeCategory.delete({ where: { id } });
+    sendSuccess(res, null, "Fee category deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete fee category", 500, (error as Error).message);
+  }
+};

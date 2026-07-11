@@ -10,6 +10,18 @@ export const createExam = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const { academicYearId, classId, name, type, startDate, endDate } = req.body;
 
+    // BUG FIX: Exam.academicYearId/classId are required (non-nullable)
+    // relations, but the frontend's "Academic Year" field wasn't marked
+    // required - leaving it blank sent "" and Prisma rejected it as an
+    // invalid foreign key, surfacing as a generic "Failed" 500 with no
+    // hint of which field was the problem. Now marked required in the
+    // UI (see exams/page.tsx) with a clear 400 here as a server-side
+    // backstop.
+    if (!academicYearId || !classId || !name) {
+      sendError(res, "academicYearId, classId, and name are required", 400);
+      return;
+    }
+
     const exam = await prisma.exam.create({
       data: { academicYearId, classId, name, type, startDate: startDate ? new Date(startDate) : null, endDate: endDate ? new Date(endDate) : null },
     });

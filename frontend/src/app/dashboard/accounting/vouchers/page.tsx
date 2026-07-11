@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileText, Plus } from "lucide-react";
+import { FileText, Plus, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -38,6 +38,14 @@ export default function VouchersPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };
 
+  const deleteVoucher = async (id: string, voucherNo: string) => {
+    if (!confirm(`Delete voucher "${voucherNo}"?`)) return;
+    try {
+      await api.delete(`/accounting/vouchers/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this voucher"); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -54,7 +62,7 @@ export default function VouchersPage() {
             <thead><tr className="border-b bg-gray-50">
               <th className="px-4 py-3 text-left">Date</th><th className="px-4 py-3 text-left">Voucher No</th>
               <th className="px-4 py-3 text-left">Type</th><th className="px-4 py-3 text-left">Narration</th>
-              <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3 text-right">Amount</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-center">Actions</th>
             </tr></thead>
             <tbody>
               {vouchers.map((v) => (
@@ -64,9 +72,16 @@ export default function VouchersPage() {
                   <td className="px-4 py-3 text-gray-600">{v.narration || "-"}</td>
                   <td className="px-4 py-3 text-right font-medium">{formatCurrency(v.totalAmount)}</td>
                   <td className="px-4 py-3">{v.isApproved ? <span className="text-green-600 text-xs">Approved</span> : <span className="text-yellow-600 text-xs">Pending</span>}</td>
+                  <td className="px-4 py-3 text-center">
+                    {!v.isApproved && (
+                      <button onClick={() => deleteVoucher(v.id, v.voucherNo)} title="Delete" className="text-red-500 hover:text-red-700">
+                        <Trash2 className="h-4 w-4 inline" />
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
-              {vouchers.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">No vouchers</td></tr>}
+              {vouchers.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-500">No vouchers</td></tr>}
             </tbody>
           </table>
         </div>

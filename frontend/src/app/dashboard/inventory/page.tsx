@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Package, Plus, AlertTriangle } from "lucide-react";
+import { Package, Plus, AlertTriangle, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -29,6 +29,14 @@ export default function InventoryPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };
 
+  const deleteItem = async (id: string, name: string) => {
+    if (!confirm(`Delete item "${name}"? This will also remove its purchase/issue history.`)) return;
+    try {
+      await api.delete(`/facilities/inventory/items/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this item"); }
+  };
+
   const openModal = (type: "item" | "purchase" | "issue") => {
     setModalType(type);
     // Note: branchId is deliberately NOT part of this form - the
@@ -54,13 +62,14 @@ export default function InventoryPage() {
         <div className="card overflow-x-auto">
           <table className="w-full text-sm"><thead><tr className="border-b bg-gray-50">
             <th className="px-4 py-3 text-left">Item</th><th className="px-4 py-3 text-left">Category</th>
-            <th className="px-4 py-3 text-center">Stock</th><th className="px-4 py-3 text-center">Min</th><th className="px-4 py-3 text-center">Status</th>
+            <th className="px-4 py-3 text-center">Stock</th><th className="px-4 py-3 text-center">Min</th><th className="px-4 py-3 text-center">Status</th><th className="px-4 py-3 text-center">Actions</th>
           </tr></thead><tbody>
             {items.map(i => (<tr key={i.id} className="border-b">
               <td className="px-4 py-3 font-medium">{i.name}</td><td className="px-4 py-3 text-xs">{i.category}</td>
               <td className="px-4 py-3 text-center font-bold">{i.currentStock} {i.unit}</td>
               <td className="px-4 py-3 text-center text-gray-500">{i.minStock}</td>
               <td className="px-4 py-3 text-center">{i.currentStock <= i.minStock ? <span className="text-red-600 flex items-center justify-center gap-1"><AlertTriangle className="h-3 w-3" /> Low</span> : <span className="text-green-600">OK</span>}</td>
+              <td className="px-4 py-3 text-center"><button onClick={() => deleteItem(i.id, i.name)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button></td>
             </tr>))}
           </tbody></table>
         </div>

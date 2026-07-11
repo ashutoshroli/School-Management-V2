@@ -86,3 +86,44 @@ export const addVehicle = async (req: AuthRequest, res: Response): Promise<void>
     sendSuccess(res, vehicle, "Vehicle added", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
+
+/**
+ * Delete a vehicle. Removes its route assignments first (a join table,
+ * safe to clear) - the vehicle itself has no student-facing dependents.
+ */
+export const deleteVehicle = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const vehicle = await prisma.vehicle.findUnique({ where: { id } });
+    if (!vehicle) { sendError(res, "Vehicle not found", 404); return; }
+    if (!canAccessBranch(req, vehicle.branchId)) { sendError(res, "Vehicle not found", 404); return; }
+
+    await prisma.vehicleRoute.deleteMany({ where: { vehicleId: id } });
+    await prisma.vehicle.delete({ where: { id } });
+    sendSuccess(res, null, "Vehicle deleted");
+  } catch (error) { sendError(res, "Failed to delete vehicle", 500, (error as Error).message); }
+};
+
+/**
+ * Delete a transport route. Blocked if any student is currently
+ * allocated to it - reassign/remove those allocations first.
+ */
+export const deleteRoute = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const route = await prisma.transportRoute.findUnique({ where: { id } });
+    if (!route) { sendError(res, "Route not found", 404); return; }
+    if (!canAccessBranch(req, route.branchId)) { sendError(res, "Route not found", 404); return; }
+
+    const allocationCount = await prisma.transportAllocation.count({ where: { routeId: id } });
+    if (allocationCount > 0) {
+      sendError(res, `Cannot delete: ${allocationCount} student(s) are allocated to this route. Reassign them first.`, 400);
+      return;
+    }
+
+    await prisma.transportStop.deleteMany({ where: { routeId: id } });
+    await prisma.vehicleRoute.deleteMany({ where: { routeId: id } });
+    await prisma.transportRoute.delete({ where: { id } });
+    sendSuccess(res, null, "Route deleted");
+  } catch (error) { sendError(res, "Failed to delete route", 500, (error as Error).message); }
+};

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, Plus, Check } from "lucide-react";
+import { Calendar, Plus, Check, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import ErrorBanner from "@/components/ui/ErrorBanner";
@@ -65,6 +65,16 @@ export default function AcademicYearsPage() {
     }
   };
 
+  const deleteYear = async (id: string, name: string) => {
+    if (!confirm(`Delete academic year "${name}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/academic-years/${id}`);
+      fetchYears();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Cannot delete this academic year");
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -93,9 +103,14 @@ export default function AcademicYearsPage() {
             <div key={year.id} className={`card border-2 ${year.isActive ? "border-green-400" : "border-gray-100"}`}>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold text-gray-900">{year.name}</h3>
-                {year.isActive && (
-                  <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">Active</span>
-                )}
+                <div className="flex items-center gap-2">
+                  {year.isActive && (
+                    <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">Active</span>
+                  )}
+                  <button onClick={() => deleteYear(year.id, year.name)} title="Delete" className="text-red-400 hover:text-red-600">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
               <p className="text-sm text-gray-500">
                 {formatDate(year.startDate)} — {formatDate(year.endDate)}

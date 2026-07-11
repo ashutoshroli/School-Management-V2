@@ -5,6 +5,7 @@ import {
   getAcademicYears,
   setActiveYear,
   updateAcademicYear,
+  deleteAcademicYear,
 } from "../controllers/academicYear.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 
@@ -16,5 +17,6 @@ router.post("/", authorize(UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN), branchA
 router.get("/", getAcademicYears);
 router.put("/:id", authorize(UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN), updateAcademicYear);
 router.patch("/:id/activate", authorize(UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN), setActiveYear);
+router.delete("/:id", authorize(UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN), deleteAcademicYear);
 
 export default router;

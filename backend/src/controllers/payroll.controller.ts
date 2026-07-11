@@ -2,7 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
-import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, formatMoney } from "../services/pdf.service";
 import { renderTemplateToPdf } from "../services/templateRenderer.service";
 import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
@@ -82,7 +82,26 @@ export const getSalaryStructure = async (req: AuthRequest, res: Response): Promi
  */
 export const runPayroll = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { month, year, branchId } = req.body;
+    const { month, year } = req.body;
+
+    // BUG FIX: the frontend used to hardcode `branchId: ""` on this
+    // request (unlike every other "create" form, which simply omits
+    // branchId and lets the server resolve it). Because this handler
+    // read `branchId` straight off req.body and used it directly in a
+    // `where: { branchId }` filter, an empty string matched ZERO staff
+    // for every branch - the request still returned 200 "Payroll run:
+    // 0 payslips generated", so it silently did nothing instead of
+    // erroring, on every single run. Resolve it the same way every
+    // other create/list endpoint does instead of trusting the body.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
 
     const staffList = await prisma.staff.findMany({
       where: { branchId, isActive: true, salaryStructure: { isNot: null } },

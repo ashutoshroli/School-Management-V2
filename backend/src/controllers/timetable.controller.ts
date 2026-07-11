@@ -10,6 +10,22 @@ export const getOrCreateTimetable = async (req: AuthRequest, res: Response): Pro
   try {
     const { sectionId, classId, academicYearId } = req.body;
 
+    // BUG FIX: Timetable.academicYearId is a required (non-nullable)
+    // relation - if the caller has no academic year marked "active"
+    // yet, the frontend sent `academicYearId: undefined`, Prisma threw
+    // a foreign-key/validation error, and the frontend's `catch {}`
+    // block swallowed it completely (no alert, nothing) - the page
+    // just silently showed "No timetable found" forever, with zero
+    // indication of why. Return a clear, actionable 400 instead.
+    if (!sectionId || !classId) {
+      sendError(res, "sectionId and classId are required", 400);
+      return;
+    }
+    if (!academicYearId) {
+      sendError(res, "No active academic year found. Set an academic year as active first (Dashboard > Academic Years).", 400);
+      return;
+    }
+
     let timetable = await prisma.timetable.findUnique({ where: { sectionId } });
     if (!timetable) {
       timetable = await prisma.timetable.create({

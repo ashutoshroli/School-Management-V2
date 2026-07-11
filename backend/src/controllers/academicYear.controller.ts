@@ -143,3 +143,34 @@ export const updateAcademicYear = async (req: AuthRequest, res: Response): Promi
     sendError(res, "Failed to update academic year", 500, (error as Error).message);
   }
 };
+
+/**
+ * Delete an academic year. Blocked if any fee structures, exams, or
+ * timetables reference it - those are financial/academic records that
+ * must be removed individually first, so deleting a year can never
+ * silently orphan them.
+ */
+export const deleteAcademicYear = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const year = await prisma.academicYear.findUnique({ where: { id } });
+    if (!year) { sendError(res, "Academic year not found", 404); return; }
+    if (!canAccessBranch(req, year.branchId)) { sendError(res, "Academic year not found", 404); return; }
+
+    const [feeStructureCount, examCount, timetableCount] = await Promise.all([
+      prisma.feeStructure.count({ where: { academicYearId: id } }),
+      prisma.exam.count({ where: { academicYearId: id } }),
+      prisma.timetable.count({ where: { academicYearId: id } }),
+    ]);
+    if (feeStructureCount > 0 || examCount > 0 || timetableCount > 0) {
+      sendError(res, `Cannot delete: this academic year has ${feeStructureCount} fee structure(s), ${examCount} exam(s), and ${timetableCount} timetable(s) linked to it. Remove those first.`, 400);
+      return;
+    }
+
+    await prisma.academicYear.delete({ where: { id } });
+    sendSuccess(res, null, "Academic year deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete academic year", 500, (error as Error).message);
+  }
+};

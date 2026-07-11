@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BookOpen, Plus, Search, RotateCcw } from "lucide-react";
+import { BookOpen, Plus, Search, RotateCcw, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
@@ -47,6 +47,14 @@ export default function LibraryPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };
 
+  const deleteBook = async (id: string, title: string) => {
+    if (!confirm(`Delete book "${title}"?`)) return;
+    try {
+      await api.delete(`/facilities/library/books/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this book"); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -68,9 +76,10 @@ export default function LibraryPage() {
           <div className="card overflow-x-auto">
             <table className="w-full text-sm"><thead><tr className="border-b bg-gray-50">
               <th className="px-4 py-3 text-left">Title</th><th className="px-4 py-3 text-left">Author</th>
-              <th className="px-4 py-3 text-left">Category</th><th className="px-4 py-3 text-center">Available</th><th className="px-4 py-3 text-center">Total</th>
+              <th className="px-4 py-3 text-left">Category</th><th className="px-4 py-3 text-center">Available</th><th className="px-4 py-3 text-center">Total</th><th className="px-4 py-3 text-center">Actions</th>
             </tr></thead><tbody>
-              {books.map(b => (<tr key={b.id} className="border-b"><td className="px-4 py-3 font-medium">{b.title}</td><td className="px-4 py-3">{b.author}</td><td className="px-4 py-3 text-xs">{b.category || "-"}</td><td className="px-4 py-3 text-center font-bold text-green-700">{b.availableCopies}</td><td className="px-4 py-3 text-center">{b.totalCopies}</td></tr>))}
+              {books.map(b => (<tr key={b.id} className="border-b"><td className="px-4 py-3 font-medium">{b.title}</td><td className="px-4 py-3">{b.author}</td><td className="px-4 py-3 text-xs">{b.category || "-"}</td><td className="px-4 py-3 text-center font-bold text-green-700">{b.availableCopies}</td><td className="px-4 py-3 text-center">{b.totalCopies}</td>
+                <td className="px-4 py-3 text-center"><button onClick={() => deleteBook(b.id, b.title)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button></td></tr>))}
             </tbody></table>
           </div>
         ) : (

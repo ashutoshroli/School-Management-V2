@@ -304,3 +304,50 @@ export const updateStaff = async (req: AuthRequest, res: Response): Promise<void
     sendError(res, "Failed to update staff", 500, (error as Error).message);
   }
 };
+
+/**
+ * Permanently delete a staff member and their linked User account.
+ *
+ * Blocked if the staff member has any Payslip history - a payslip is
+ * financial/payroll record-keeping that must never disappear (an
+ * accountant may need to reference it long after the person has left);
+ * deactivate the staff record instead (PUT .../:id with isActive:
+ * false, already supported by updateStaff) rather than deleting it.
+ *
+ * Otherwise, deletes every lightweight dependent row first (documents,
+ * subject-teacher assignments, salary structure, attendance, leave
+ * applications) and clears any class-teacher assignment, all inside one
+ * transaction so a failure partway through can't leave an orphaned
+ * User with no Staff record.
+ */
+export const deleteStaff = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const staff = await prisma.staff.findUnique({ where: { id } });
+    if (!staff) { sendError(res, "Staff not found", 404); return; }
+    if (!canAccessBranch(req, staff.branchId)) { sendError(res, "Staff not found", 404); return; }
+
+    const payslipCount = await prisma.payslip.count({ where: { staffId: id } });
+    if (payslipCount > 0) {
+      sendError(res, `Cannot delete: this staff member has ${payslipCount} payslip record(s). Deactivate them instead (edit > set inactive).`, 400);
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.section.updateMany({ where: { classTeacherId: id }, data: { classTeacherId: null } });
+      await tx.timetableSlot.updateMany({ where: { teacherId: id }, data: { teacherId: null } });
+      await tx.staffDocument.deleteMany({ where: { staffId: id } });
+      await tx.subjectTeacher.deleteMany({ where: { staffId: id } });
+      await tx.staffAttendance.deleteMany({ where: { staffId: id } });
+      await tx.leaveApplication.deleteMany({ where: { staffId: id } });
+      await tx.salaryStructure.deleteMany({ where: { staffId: id } });
+      await tx.staff.delete({ where: { id } });
+      await tx.user.delete({ where: { id: staff.userId } });
+    });
+
+    sendSuccess(res, null, "Staff deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete staff", 500, (error as Error).message);
+  }
+};

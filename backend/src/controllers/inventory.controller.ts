@@ -39,11 +39,22 @@ export const getItems = async (req: AuthRequest, res: Response): Promise<void> =
 export const purchaseStock = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { itemId, vendor, quantity, rate, billNo, billDate } = req.body;
-    const totalCost = quantity * rate;
+    // Guard against NaN: the frontend parseInt/parseFloat's these
+    // fields with no fallback - if either is cleared after being
+    // filled, `quantity * rate` becomes NaN, which Prisma rejects for
+    // the Decimal `totalCost` column with a raw type error (generic
+    // 500 "Failed"). Reject explicitly with a clear message instead.
+    const qty = Number(quantity);
+    const unitRate = Number(rate);
+    if (!itemId || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitRate) || unitRate < 0) {
+      sendError(res, "itemId, a positive quantity, and a valid rate are required", 400);
+      return;
+    }
+    const totalCost = qty * unitRate;
     const purchase = await prisma.inventoryPurchase.create({
-      data: { itemId, vendor, quantity, rate, totalCost, billNo, billDate: billDate ? new Date(billDate) : null },
+      data: { itemId, vendor, quantity: qty, rate: unitRate, totalCost, billNo, billDate: billDate ? new Date(billDate) : null },
     });
-    await prisma.inventoryItem.update({ where: { id: itemId }, data: { currentStock: { increment: quantity } } });
+    await prisma.inventoryItem.update({ where: { id: itemId }, data: { currentStock: { increment: qty } } });
     sendSuccess(res, purchase, "Stock purchased", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
@@ -60,6 +71,30 @@ export const issueStock = async (req: AuthRequest, res: Response): Promise<void>
     await prisma.inventoryItem.update({ where: { id: itemId }, data: { currentStock: { decrement: quantity } } });
     sendSuccess(res, issue, "Stock issued", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Delete an inventory item. Purchase/issue history is deleted along
+ * with it (unlike fee/staff records, this is operational stock
+ * bookkeeping, not statutory financial record-keeping - a school
+ * removing a discontinued item's history entirely is a reasonable and
+ * expected action, not a compliance risk).
+ */
+export const deleteItem = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const item = await prisma.inventoryItem.findUnique({ where: { id } });
+    if (!item) { sendError(res, "Item not found", 404); return; }
+    if (!canAccessBranch(req, item.branchId)) { sendError(res, "Item not found", 404); return; }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.inventoryPurchase.deleteMany({ where: { itemId: id } });
+      await tx.inventoryIssue.deleteMany({ where: { itemId: id } });
+      await tx.inventoryItem.delete({ where: { id } });
+    });
+
+    sendSuccess(res, null, "Item deleted");
+  } catch (error) { sendError(res, "Failed to delete item", 500, (error as Error).message); }
 };
 
 export const getLowStockAlerts = async (req: AuthRequest, res: Response): Promise<void> => {

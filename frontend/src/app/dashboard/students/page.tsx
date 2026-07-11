@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { GraduationCap, Plus, Search, Eye, Filter, BadgeCheck } from "lucide-react";
+import { GraduationCap, Plus, Search, Eye, Filter, BadgeCheck, Trash2 } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import DataTable from "@/components/ui/DataTable";
@@ -56,6 +56,16 @@ export default function StudentsPage() {
   useEffect(() => { fetchClasses(); }, []);
   useEffect(() => { fetchStudents(); }, [page, search, classFilter]);
 
+  const deleteStudentRecord = async (id: string, name: string) => {
+    if (!confirm(`Delete student "${name}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/students/${id}`);
+      fetchStudents();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Cannot delete this student");
+    }
+  };
+
   const columns = [
     { key: "admissionNo", label: "Adm. No", render: (s: Student) => <span className="font-mono text-xs">{s.admissionNo}</span> },
     { key: "name", label: "Student Name", render: (s: Student) => <span className="font-medium">{s.user.name}</span> },
@@ -73,9 +83,14 @@ export default function StudentsPage() {
     {
       key: "actions", label: "",
       render: (s: Student) => (
-        <Link href={`/dashboard/students/${s.id}`} className="p-1 rounded hover:bg-gray-100 inline-block">
-          <Eye className="h-4 w-4 text-primary-600" />
-        </Link>
+        <div className="flex items-center gap-1">
+          <Link href={`/dashboard/students/${s.id}`} className="p-1 rounded hover:bg-gray-100 inline-block">
+            <Eye className="h-4 w-4 text-primary-600" />
+          </Link>
+          <button onClick={() => deleteStudentRecord(s.id, s.user.name)} title="Delete Student" className="p-1 rounded hover:bg-gray-100">
+            <Trash2 className="h-4 w-4 text-red-500" />
+          </button>
+        </div>
       ),
     },
   ];

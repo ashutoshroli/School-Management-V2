@@ -397,3 +397,81 @@ export const updateStudent = async (req: AuthRequest, res: Response): Promise<vo
     sendError(res, "Failed to update student", 500, (error as Error).message);
   }
 };
+
+/**
+ * Permanently delete a student and their linked User account (and
+ * their linked Parent accounts, if those parents have no other
+ * children).
+ *
+ * Blocked if the student has any Payment history - a fee payment is
+ * financial record-keeping that must never disappear; deactivate the
+ * student instead (PUT .../:id with isActive: false, already supported
+ * by updateStudent) rather than deleting it. Also blocked if a library
+ * book is currently ISSUED to them (return it first) so stock counts
+ * don't get corrupted.
+ *
+ * Otherwise, deletes every dependent row first, all inside one
+ * transaction so a failure partway through can't leave an orphaned
+ * User with no Student record.
+ */
+export const deleteStudent = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const student = await prisma.student.findUnique({ where: { id } });
+    if (!student) { sendError(res, "Student not found", 404); return; }
+    if (!canAccessBranch(req, student.branchId)) { sendError(res, "Student not found", 404); return; }
+
+    const paymentCount = await prisma.payment.count({ where: { studentId: id } });
+    if (paymentCount > 0) {
+      sendError(res, `Cannot delete: this student has ${paymentCount} fee payment record(s). Deactivate them instead (edit > set inactive).`, 400);
+      return;
+    }
+
+    const activeIssueCount = await prisma.libraryIssue.count({ where: { studentId: id, status: "ISSUED" } });
+    if (activeIssueCount > 0) {
+      sendError(res, `Cannot delete: this student currently has ${activeIssueCount} library book(s) issued. Return them first.`, 400);
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const parentLinks = await tx.studentParent.findMany({ where: { studentId: id } });
+
+      await tx.studentDocument.deleteMany({ where: { studentId: id } });
+      await tx.studentAttendance.deleteMany({ where: { studentId: id } });
+      await tx.homeworkSubmission.deleteMany({ where: { studentId: id } });
+      await tx.libraryIssue.deleteMany({ where: { studentId: id } });
+      await tx.transportAllocation.deleteMany({ where: { studentId: id } });
+      await tx.hostelAllocation.deleteMany({ where: { studentId: id } });
+      await tx.promotion.deleteMany({ where: { studentId: id } });
+      await tx.studentDiscount.deleteMany({ where: { studentId: id } });
+      await tx.feeAssignment.deleteMany({ where: { studentId: id } });
+      await tx.mark.deleteMany({ where: { studentId: id } });
+      await tx.generatedCertificate.deleteMany({ where: { studentId: id } });
+      await tx.studentParent.deleteMany({ where: { studentId: id } });
+      await tx.student.delete({ where: { id } });
+      await tx.user.delete({ where: { id: student.userId } });
+
+      // Clean up any parent account that now has zero remaining
+      // children - a parent record with no linked students left is
+      // just dead weight (and its User can never log into anything
+      // useful again).
+      for (const link of parentLinks) {
+        const remainingChildren = await tx.studentParent.count({ where: { parentId: link.parentId } });
+        if (remainingChildren === 0) {
+          const parent = await tx.parent.findUnique({ where: { id: link.parentId } });
+          if (parent) {
+            await tx.parent.delete({ where: { id: parent.id } });
+            await tx.user.delete({ where: { id: parent.userId } });
+          }
+        }
+      }
+    });
+
+    logAuditFromRequest(req, "DELETE", "student", id, { oldData: student });
+
+    sendSuccess(res, null, "Student deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete student", 500, (error as Error).message);
+  }
+};

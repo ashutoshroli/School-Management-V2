@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import {
-  createBranch, getBranches, getBranchById, updateBranch,
+  createBranch, getBranches, getBranchById, updateBranch, deleteBranch,
   createBranchAdmin, getBranchAdmins, setBranchAdminStatus,
 } from "../controllers/branch.controller";
 import { authenticate, authorize } from "../middleware/auth";
@@ -27,5 +27,6 @@ router.patch("/admins/:staffId/status", authorize(UserRole.SUPER_ADMIN), validat
 
 router.get("/:id", authorize(UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN), getBranchById);
 router.put("/:id", authorize(UserRole.SUPER_ADMIN), validate(updateBranchSchema), updateBranch);
+router.delete("/:id", authorize(UserRole.SUPER_ADMIN), deleteBranch);
 
 export default router;

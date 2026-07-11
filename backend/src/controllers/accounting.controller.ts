@@ -75,6 +75,43 @@ export const updateAccount = async (req: AuthRequest, res: Response): Promise<vo
   }
 };
 
+/**
+ * Delete a chart-of-accounts account. Blocked for system-defined
+ * accounts (these back built-in flows and must always exist), if it
+ * has any child accounts (remove/reparent those first), and if any
+ * voucher entry has ever debited or credited it (ledger history must
+ * never disappear).
+ */
+export const deleteAccount = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const account = await prisma.account.findUnique({ where: { id } });
+    if (!account) { sendError(res, "Account not found", 404); return; }
+    if (!canAccessBranch(req, account.branchId)) { sendError(res, "Account not found", 404); return; }
+    if (account.isSystem) { sendError(res, "Cannot delete a system-defined account", 400); return; }
+
+    const childCount = await prisma.account.count({ where: { parentId: id } });
+    if (childCount > 0) {
+      sendError(res, `Cannot delete: ${childCount} child account(s) exist under this account. Remove/reassign those first.`, 400);
+      return;
+    }
+
+    const entryCount = await prisma.voucherEntry.count({
+      where: { OR: [{ debitAccountId: id }, { creditAccountId: id }] },
+    });
+    if (entryCount > 0) {
+      sendError(res, `Cannot delete: this account has ${entryCount} ledger entry/entries. Deactivate it instead (edit > set inactive).`, 400);
+      return;
+    }
+
+    await prisma.account.delete({ where: { id } });
+    sendSuccess(res, null, "Account deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete account", 500, (error as Error).message);
+  }
+};
+
 // ==================== VOUCHER ENTRY ====================
 
 export const createVoucher = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -169,6 +206,42 @@ export const approveVoucher = async (req: AuthRequest, res: Response): Promise<v
     sendSuccess(res, updated, "Voucher approved");
   } catch (error) {
     sendError(res, "Failed to approve voucher", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Delete a voucher (and its entries). Blocked once approved - an
+ * approved voucher has already been posted to the ledger and reports
+ * (trial balance, P&L, balance sheet) may already reflect it, so
+ * un-approving/deleting it after the fact would silently corrupt
+ * financial history. Blocked if it's linked to a fee Payment (an
+ * auto-posted voucher must be removed by reversing/refunding the
+ * payment, not by deleting the ledger side directly).
+ */
+export const deleteVoucher = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const voucher = await prisma.voucher.findUnique({ where: { id } });
+    if (!voucher) { sendError(res, "Voucher not found", 404); return; }
+    if (!canAccessBranch(req, voucher.branchId)) { sendError(res, "Voucher not found", 404); return; }
+    if (voucher.isApproved) {
+      sendError(res, "Cannot delete an approved voucher - it has already been posted to the ledger", 400);
+      return;
+    }
+    if (voucher.paymentId) {
+      sendError(res, "Cannot delete a voucher that was auto-posted from a fee payment", 400);
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.voucherEntry.deleteMany({ where: { voucherId: id } });
+      await tx.voucher.delete({ where: { id } });
+    });
+
+    sendSuccess(res, null, "Voucher deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete voucher", 500, (error as Error).message);
   }
 };
 

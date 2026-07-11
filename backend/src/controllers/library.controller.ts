@@ -85,6 +85,30 @@ export const returnBook = async (req: AuthRequest, res: Response): Promise<void>
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 
+/**
+ * Delete a library book. Blocked if any copies are currently issued
+ * (return them first) so stock/availability bookkeeping never breaks.
+ */
+export const deleteBook = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const book = await prisma.libraryBook.findUnique({ where: { id } });
+    if (!book) { sendError(res, "Book not found", 404); return; }
+    if (!canAccessBranch(req, book.branchId)) { sendError(res, "Book not found", 404); return; }
+
+    const activeIssueCount = await prisma.libraryIssue.count({ where: { bookId: id, status: "ISSUED" } });
+    if (activeIssueCount > 0) {
+      sendError(res, `Cannot delete: ${activeIssueCount} copy/copies of this book are currently issued. Return them first.`, 400);
+      return;
+    }
+
+    await prisma.libraryIssue.deleteMany({ where: { bookId: id } });
+    await prisma.libraryBook.delete({ where: { id } });
+    sendSuccess(res, null, "Book deleted");
+  } catch (error) { sendError(res, "Failed to delete book", 500, (error as Error).message); }
+};
+
 export const getIssuedBooks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const status = req.query.status as string || "ISSUED";

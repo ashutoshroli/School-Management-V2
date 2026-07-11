@@ -27,7 +27,7 @@ export default function PayrollPage() {
     if (!confirm(`Run payroll for ${month}/${year}? This will generate payslips for all staff with salary structure.`)) return;
     setRunning(true);
     try {
-      const res = await api.post("/hr/payroll/run", { month, year, branchId: "" });
+      const res = await api.post("/hr/payroll/run", { month, year });
       alert(res.data.message);
       fetchPayslips();
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }

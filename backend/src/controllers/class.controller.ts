@@ -34,8 +34,15 @@ export const createClass = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
+    // Guard against NaN: the frontend does `parseInt(e.target.value)`
+    // on the numericOrder field with no fallback - if that input is
+    // ever cleared, `parseInt("")` is NaN, which Prisma rejects for an
+    // Int column with a raw type error (generic 500 "Failed to create
+    // class"). Default to 0 instead of trusting an unparseable value.
+    const safeNumericOrder = Number.isFinite(Number(numericOrder)) ? Number(numericOrder) : 0;
+
     const cls = await prisma.class.create({
-      data: { branchId, name, numericOrder },
+      data: { branchId, name, numericOrder: safeNumericOrder },
     });
 
     sendSuccess(res, cls, "Class created", 201);

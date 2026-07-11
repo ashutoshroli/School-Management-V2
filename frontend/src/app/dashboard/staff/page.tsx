@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Users, Plus, Search, Eye, BadgeCheck } from "lucide-react";
+import { Users, Plus, Search, Eye, BadgeCheck, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
@@ -77,6 +77,16 @@ export default function StaffPage() {
 
   const setField = (field: string, value: string) => setForm((p) => ({ ...p, [field]: value }));
 
+  const deleteStaffMember = async (id: string, name: string) => {
+    if (!confirm(`Delete staff member "${name}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/staff/${id}`);
+      fetchStaff();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Cannot delete this staff member");
+    }
+  };
+
   const columns = [
     { key: "empId", label: "Emp. ID", render: (s: StaffMember) => <span className="font-mono text-xs">{s.employeeId}</span> },
     { key: "name", label: "Name", render: (s: StaffMember) => <span className="font-medium">{s.user.name}</span> },
@@ -102,13 +112,22 @@ export default function StaffPage() {
     {
       key: "actions", label: "",
       render: (s: StaffMember) => (
-        <button
-          onClick={() => openPdfInNewTab(`/staff/${s.id}/id-card`)}
-          title="Download ID Card"
-          className="p-1 rounded hover:bg-gray-100 inline-block"
-        >
-          <BadgeCheck className="h-4 w-4 text-primary-600" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => openPdfInNewTab(`/staff/${s.id}/id-card`)}
+            title="Download ID Card"
+            className="p-1 rounded hover:bg-gray-100"
+          >
+            <BadgeCheck className="h-4 w-4 text-primary-600" />
+          </button>
+          <button
+            onClick={() => deleteStaffMember(s.id, s.user.name)}
+            title="Delete Staff"
+            className="p-1 rounded hover:bg-gray-100"
+          >
+            <Trash2 className="h-4 w-4 text-red-500" />
+          </button>
+        </div>
       ),
     },
   ];

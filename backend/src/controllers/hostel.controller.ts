@@ -81,6 +81,42 @@ export const deallocateRoom = async (req: AuthRequest, res: Response): Promise<v
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 
+/**
+ * Delete a hostel building. Blocked if any room in any of its floors
+ * currently has an active allocation (a student living there) -
+ * deallocate first.
+ */
+export const deleteBuilding = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const building = await prisma.hostelBuilding.findUnique({ where: { id } });
+    if (!building) { sendError(res, "Building not found", 404); return; }
+    if (!canAccessBranch(req, building.branchId)) { sendError(res, "Building not found", 404); return; }
+
+    const activeAllocationCount = await prisma.hostelAllocation.count({
+      where: { endDate: null, room: { floor: { buildingId: id } } },
+    });
+    if (activeAllocationCount > 0) {
+      sendError(res, `Cannot delete: ${activeAllocationCount} student(s) currently reside in this building. Deallocate them first.`, 400);
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const floors = await tx.hostelFloor.findMany({ where: { buildingId: id }, select: { id: true } });
+      const floorIds = floors.map((f) => f.id);
+      const rooms = await tx.hostelRoom.findMany({ where: { floorId: { in: floorIds } }, select: { id: true } });
+      const roomIds = rooms.map((r) => r.id);
+
+      await tx.hostelAllocation.deleteMany({ where: { roomId: { in: roomIds } } });
+      await tx.hostelRoom.deleteMany({ where: { floorId: { in: floorIds } } });
+      await tx.hostelFloor.deleteMany({ where: { buildingId: id } });
+      await tx.hostelBuilding.delete({ where: { id } });
+    });
+
+    sendSuccess(res, null, "Building deleted");
+  } catch (error) { sendError(res, "Failed to delete building", 500, (error as Error).message); }
+};
+
 export const getOccupancy = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);

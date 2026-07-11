@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BookOpen, Plus } from "lucide-react";
+import { BookOpen, Plus, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -40,6 +40,14 @@ export default function ChartOfAccountsPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };
 
+  const deleteAccount = async (id: string, name: string) => {
+    if (!confirm(`Delete account "${name}"?`)) return;
+    try {
+      await api.delete(`/accounting/accounts/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this account"); }
+  };
+
   const grouped = {
     ASSET: accounts.filter(a => a.type === "ASSET"),
     LIABILITY: accounts.filter(a => a.type === "LIABILITY"),
@@ -70,7 +78,13 @@ export default function ChartOfAccountsPage() {
                 {accs.map((a) => (
                   <div key={a.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg">
                     <div><span className="font-medium text-sm">{a.name}</span><span className="text-xs text-gray-400 ml-2">{a.code}</span></div>
-                    {a.isSystem && <span className="text-xs text-gray-400">system</span>}
+                    {a.isSystem ? (
+                      <span className="text-xs text-gray-400">system</span>
+                    ) : (
+                      <button onClick={() => deleteAccount(a.id, a.name)} title="Delete" className="text-red-400 hover:text-red-600">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

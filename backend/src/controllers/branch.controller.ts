@@ -152,6 +152,42 @@ export const updateBranch = async (req: AuthRequest, res: Response): Promise<voi
 };
 
 /**
+ * SUPER_ADMIN only. Permanently deletes a branch.
+ *
+ * Blocked if the branch has ANY students or staff at all - a branch
+ * with real people/history in it should be deactivated (PUT .../:id
+ * with isActive: false, already supported by updateBranch), never
+ * deleted, since that data (fee payments, attendance, exam results,
+ * etc) must be preserved. This intentionally does NOT attempt a
+ * cascading delete of a branch's entire history - that's an
+ * unrecoverable, extremely destructive operation this endpoint refuses
+ * to perform; an empty/never-used branch is the only case a hard
+ * delete is safe for.
+ */
+export const deleteBranch = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const branch = await prisma.branch.findUnique({ where: { id } });
+    if (!branch) { sendError(res, "Branch not found", 404); return; }
+
+    const [studentCount, staffCount] = await Promise.all([
+      prisma.student.count({ where: { branchId: id } }),
+      prisma.staff.count({ where: { branchId: id } }),
+    ]);
+    if (studentCount > 0 || staffCount > 0) {
+      sendError(res, `Cannot delete: this branch has ${studentCount} student(s) and ${staffCount} staff member(s). Deactivate it instead (edit > set inactive).`, 400);
+      return;
+    }
+
+    await prisma.branch.delete({ where: { id } });
+    sendSuccess(res, null, "Branch deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete branch", 500, (error as Error).message);
+  }
+};
+
+/**
  * SUPER_ADMIN only. Creates a Branch Admin account and assigns them to
  * a specific branch in one step - this is how a Super Admin hands a
  * branch off to be self-managed day-to-day.

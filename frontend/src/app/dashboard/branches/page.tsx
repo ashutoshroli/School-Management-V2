@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Building2, Plus, Edit, Users, GraduationCap } from "lucide-react";
+import { Building2, Plus, Edit, Users, GraduationCap, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
@@ -62,6 +62,16 @@ export default function BranchesPage() {
     }
   };
 
+  const deleteBranchRecord = async (id: string, name: string) => {
+    if (!confirm(`Delete branch "${name}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/branches/${id}`);
+      fetchBranches();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Cannot delete this branch");
+    }
+  };
+
   const openEdit = (branch: Branch) => {
     setEditBranch(branch);
     setForm({
@@ -108,9 +118,14 @@ export default function BranchesPage() {
       key: "actions",
       label: "Actions",
       render: (b: Branch) => (
-        <button onClick={() => openEdit(b)} className="p-1 rounded hover:bg-gray-100">
-          <Edit className="h-4 w-4 text-gray-600" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={() => openEdit(b)} className="p-1 rounded hover:bg-gray-100" title="Edit">
+            <Edit className="h-4 w-4 text-gray-600" />
+          </button>
+          <button onClick={() => deleteBranchRecord(b.id, b.name)} className="p-1 rounded hover:bg-gray-100" title="Delete">
+            <Trash2 className="h-4 w-4 text-red-500" />
+          </button>
+        </div>
       ),
     },
   ];

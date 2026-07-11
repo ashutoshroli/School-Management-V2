@@ -96,8 +96,8 @@ export default function ExamsPage() {
               <select className="input-field" value={form.classId} onChange={e => setForm({...form, classId: e.target.value})} required>
                 <option value="">Select</option>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
-            <div><label className="block text-sm font-medium mb-1">Academic Year</label>
-              <select className="input-field" value={form.academicYearId} onChange={e => setForm({...form, academicYearId: e.target.value})}>
+            <div><label className="block text-sm font-medium mb-1">Academic Year *</label>
+              <select className="input-field" value={form.academicYearId} onChange={e => setForm({...form, academicYearId: e.target.value})} required>
                 <option value="">Select</option>{years.map(y => <option key={y.id} value={y.id}>{y.name}</option>)}
               </select></div>
             <div><label className="block text-sm font-medium mb-1">Start Date</label>
