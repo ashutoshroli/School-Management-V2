@@ -72,10 +72,15 @@ function AssignFeesContent() {
   // already be allocated to the route (see
   // assignTransportFeeToStudents's doc comment on the backend).
   const [transportSearch, setTransportSearch] = useState("");
+  const [transportClassId, setTransportClassId] = useState("");
+  const [transportSectionId, setTransportSectionId] = useState("");
   const [transportSearchResults, setTransportSearchResults] = useState<StudentOption[]>([]);
   const [transportSearchLoading, setTransportSearchLoading] = useState(false);
   const [selectedTransportStudentIds, setSelectedTransportStudentIds] = useState<Set<string>>(new Set());
   const [assigningTransportStudents, setAssigningTransportStudents] = useState(false);
+
+  const transportSelectedClass = classes.find((c: any) => c.id === transportClassId) || null;
+  const transportClassSections = transportSelectedClass?.sections || [];
 
   const selectedRoute = routes.find((r) => r.id === selectedRouteId) || null;
 
@@ -135,16 +140,46 @@ function AssignFeesContent() {
   useEffect(() => {
     setTransportResult(null);
     setTransportSearch("");
+    setTransportClassId("");
+    setTransportSectionId("");
     setTransportSearchResults([]);
     setSelectedTransportStudentIds(new Set());
     setTransportMode("route");
   }, [selectedRouteId]);
 
+  // Class filter clears the section filter (same as the class-fee
+  // tab) since sections belong to a specific class.
+  useEffect(() => {
+    setTransportSectionId("");
+  }, [transportClassId]);
+
+  // Re-run the search automatically when the class/section filter
+  // changes (matches the class-fee tab's behavior on sectionId) - but
+  // only once a class has actually been picked, otherwise every
+  // keystroke-free page load would fire a search for "no filters" at
+  // all.
+  useEffect(() => {
+    if (transportClassId) searchTransportStudents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transportClassId, transportSectionId]);
+
   const searchTransportStudents = async () => {
-    if (!transportSearch.trim()) { setTransportSearchResults([]); return; }
+    // Unlike the class-fee tab's picker, a class/section filter here
+    // is optional (not required) - a route's riders can come from any
+    // class, so leaving both blank and just searching by name/
+    // admission/roll across the whole branch is a valid way to use
+    // this too.
+    if (!transportSearch.trim() && !transportClassId) { setTransportSearchResults([]); return; }
     setTransportSearchLoading(true);
     try {
-      const res = await api.get("/students", { params: { search: transportSearch, limit: 50 } });
+      const res = await api.get("/students", {
+        params: {
+          search: transportSearch || undefined,
+          classId: transportClassId || undefined,
+          sectionId: transportSectionId || undefined,
+          limit: 50,
+        },
+      });
       setTransportSearchResults(res.data.data || []);
     } catch {
       setTransportSearchResults([]);
@@ -392,7 +427,7 @@ function AssignFeesContent() {
                   ) : (
                     <div className="card space-y-4">
                       <p className="text-sm text-gray-500">
-                        Search for students by name, admission no, or roll no and tick the ones who should get this route's transport fee. Students don't need to already be allocated to this route.
+                        Filter by class/section and/or search by name, admission no, or roll no, then tick the ones who should get this route's transport fee. Students don't need to already be allocated to this route.
                       </p>
 
                       <div>
@@ -407,6 +442,19 @@ function AssignFeesContent() {
                       </div>
 
                       <div className="flex flex-wrap gap-3">
+                        <select className="input-field w-auto" value={transportClassId} onChange={(e) => setTransportClassId(e.target.value)}>
+                          <option value="">All Classes</option>
+                          {classes.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <select
+                          className="input-field w-auto"
+                          value={transportSectionId}
+                          onChange={(e) => setTransportSectionId(e.target.value)}
+                          disabled={!transportClassId}
+                        >
+                          <option value="">All Sections</option>
+                          {transportClassSections.map((sec: any) => <option key={sec.id} value={sec.id}>{sec.name}</option>)}
+                        </select>
                         <div className="relative flex-1 min-w-[180px]">
                           <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                           <input
@@ -427,16 +475,34 @@ function AssignFeesContent() {
                           </div>
                         ) : transportSearchResults.length === 0 ? (
                           <p className="text-center text-gray-400 text-sm py-8">
-                            {transportSearch.trim() ? "No students found" : "Search for students above to select them"}
+                            {transportSearch.trim() || transportClassId ? "No students found" : "Search or filter by class above to select students"}
                           </p>
                         ) : (
                           <table className="w-full text-sm">
                             <thead className="sticky top-0 bg-gray-50">
                               <tr className="border-b">
-                                <th className="px-3 py-2 text-left w-10"></th>
+                                <th className="px-3 py-2 text-left w-10">
+                                  <input
+                                    type="checkbox"
+                                    checked={transportSearchResults.length > 0 && transportSearchResults.every((s) => selectedTransportStudentIds.has(s.id))}
+                                    onChange={() => {
+                                      setSelectedTransportStudentIds((prev) => {
+                                        const allVisibleSelected = transportSearchResults.every((s) => prev.has(s.id));
+                                        const next = new Set(prev);
+                                        if (allVisibleSelected) {
+                                          transportSearchResults.forEach((s) => next.delete(s.id));
+                                        } else {
+                                          transportSearchResults.forEach((s) => next.add(s.id));
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                </th>
                                 <th className="px-3 py-2 text-left">Admission No</th>
                                 <th className="px-3 py-2 text-left">Name</th>
                                 <th className="px-3 py-2 text-left">Class</th>
+                                <th className="px-3 py-2 text-left">Section</th>
                                 <th className="px-3 py-2 text-left">Roll No</th>
                               </tr>
                             </thead>
@@ -453,6 +519,7 @@ function AssignFeesContent() {
                                   <td className="px-3 py-2 font-mono text-xs">{s.admissionNo}</td>
                                   <td className="px-3 py-2 font-medium">{s.user.name}</td>
                                   <td className="px-3 py-2 text-gray-500">{s.class?.name || "-"}</td>
+                                  <td className="px-3 py-2 text-gray-500">{s.section?.name || "-"}</td>
                                   <td className="px-3 py-2 text-gray-500">{s.rollNo || "-"}</td>
                                 </tr>
                               ))}
