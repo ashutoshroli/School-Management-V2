@@ -292,38 +292,68 @@ future incremental improvement, not blocking.
 
 ---
 
-## Phase 6: S3 Storage + API Docs (BONUS - if time)
+## Phase 6: S3 Storage + API Docs ✅ COMPLETED (BONUS)
 
 **Priority:** MEDIUM  
-**Duration:** 2 days  
-**Status:** 🔴 Not Started
+**Duration:** ~1 day (actual)  
+**Status:** ✅ **DONE**
 
-### Tasks:
+### What was actually done:
 
-#### 1. Implement S3 Storage Provider
-**New File:** `backend/src/services/storage/s3Provider.ts`
+#### 1. S3 storage provider
+- **New file** `backend/src/services/storage/s3Provider.ts` - `S3StorageProvider`
+  implementing the existing `StorageProvider` interface (save/deleteByUrl/readByUrl),
+  using AWS SDK v3 (`@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner`).
+  Works with real AWS S3 or any S3-compatible service (Cloudflare R2, MinIO,
+  DigitalOcean Spaces, Backblaze B2) via `S3_ENDPOINT` + `forcePathStyle`.
+  Also exposes `getSignedDownloadUrl()` for a future private-bucket use case
+  (not wired into any endpoint yet - available for one to use).
+- `storage.service.ts` gained a `getStorageProvider()` factory selecting
+  between `LocalStorageProvider` (unchanged, still the default) and the new
+  `S3StorageProvider` based on `STORAGE_PROVIDER` - **fails closed** to local
+  storage if S3 config is incomplete, rather than crashing every upload on
+  a config typo. Uses a lazy `require()` for the S3 provider so deployments
+  that only ever use local storage don't pay for loading the AWS SDK.
+- Added `STORAGE_PROVIDER`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`,
+  `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT`, `S3_PUBLIC_URL` to `.env.example` + `config/index.ts`.
+- No controller changes needed anywhere - every existing upload endpoint
+  (`upload.controller.ts`) already only talks to the `StorageProvider`
+  interface, exactly as that file's original design comment intended.
 
-**Will Support:**
-- AWS S3 upload
-- Signed URLs
-- File deletion
-- CloudFront integration
+#### 2. Swagger/OpenAPI API documentation
+- **New file** `backend/src/docs/swagger.ts` - builds the OpenAPI spec via
+  `swagger-jsdoc`, reading `@swagger` JSDoc comments directly above route
+  definitions (kept next to the code they describe, not a separate giant
+  YAML file) plus shared schemas merged in from `docs/schemas/`.
+- **New files** `backend/src/docs/schemas/common.schemas.ts` (SuccessResponse/
+  ErrorResponse/PaginatedResponse - the three response envelope shapes every
+  endpoint in this API actually uses) and `auth.schemas.ts` (Login/ChangePassword/
+  SwitchBranch/UserSummary request+response shapes).
+- Fully documented `auth.routes.ts` end-to-end (login, profile, switch-branch,
+  change-password, avatar upload) as the first complete example module -
+  other route files can follow the same `@swagger` JSDoc pattern incrementally.
+- Mounted in `app.ts`: `GET /api/docs` (Swagger UI) and `GET /api/docs.json`
+  (raw spec, importable into Postman/Insomnia). Gated by `isDocsEnabled()` -
+  **on by default outside production, off by default in production**
+  (an API surface map is itself information a public deployment may not
+  want to expose), overridable via `DOCS_ENABLED=true`/`false`.
 
-#### 2. Add Swagger API Documentation
-**New Files:**
-- `backend/src/docs/swagger.ts`
-- `backend/src/docs/schemas/*.yaml`
-
-**Will Document:**
-- All endpoints
-- Request/response schemas
-- Authentication
-- Error codes
+### Verification performed (real, not just unit tests):
+- `npx tsc --noEmit` / `npm test` (**59 suites / 508 tests**, up from 56/485
+  - zero regressions) / `npm run build` - all clean
+- **Real running server test**: started the actual compiled `dist/server.js`
+  and hit it with `curl` - confirmed `GET /api/docs.json` returns a valid
+  OpenAPI document, `GET /api/docs/` returns real Swagger UI HTML
+  (`<title>Swagger UI</title>`, the actual bundle scripts), and
+  `GET /api/health` still works unaffected. Repeated with `NODE_ENV=production`
+  - confirmed `/api/docs.json` now 404s (disabled by default) while
+  `/api/health` continues to work normally.
 
 ### Deliverables:
-- ✅ S3 storage working
-- ✅ API docs at /api/docs
-- ✅ Git branch: `feat/phase-7-s3-swagger`
+- ✅ S3 storage provider implemented and unit-tested (mocked AWS SDK - no
+  real AWS account needed for this repo's test suite)
+- ✅ API docs live at `/api/docs`, verified against a real running server
+- 🔲 Git branch + PR - pending user's "PR banao" instruction
 
 ---
 

@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { config } from "../config";
+import { logger } from "../config/logger";
 
 /**
  * Minimal storage abstraction so the rest of the app (upload.controller.ts)
@@ -75,4 +76,32 @@ class LocalStorageProvider implements StorageProvider {
   }
 }
 
-export const storage: StorageProvider = new LocalStorageProvider();
+/**
+ * Selects the storage provider based on `STORAGE_PROVIDER` (Phase 6).
+ * Requires the lazy require() (rather than a top-level import) for
+ * s3Provider.ts, because that module constructs an S3Client at import
+ * time from AWS SDK v3's client-s3 package - a heavier optional
+ * dependency that every deployment using only local storage (the
+ * default) shouldn't need to load at all.
+ *
+ * Falls back to LocalStorageProvider whenever S3 config is incomplete
+ * (missing bucket/credentials) even if STORAGE_PROVIDER=s3 is set -
+ * fails closed to a working provider rather than crashing the app for
+ * every file operation on a config typo.
+ */
+export const getStorageProvider = (): StorageProvider => {
+  if (config.s3.provider === "s3") {
+    if (!config.s3.bucket || !config.s3.accessKeyId || !config.s3.secretAccessKey) {
+      logger.warn(
+        "STORAGE_PROVIDER=s3 but S3_BUCKET/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY are not fully set - falling back to local disk storage."
+      );
+      return new LocalStorageProvider();
+    }
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { S3StorageProvider } = require("./storage/s3Provider");
+    return new S3StorageProvider();
+  }
+  return new LocalStorageProvider();
+};
+
+export const storage: StorageProvider = getStorageProvider();
