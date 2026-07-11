@@ -5,14 +5,15 @@ jest.mock("../../config/database", () => ({
   default: {
     transportRoute: { create: jest.fn(), findUnique: jest.fn() },
     transportStop: { create: jest.fn() },
-    vehicle: { create: jest.fn() },
+    vehicle: { create: jest.fn(), findUnique: jest.fn() },
     student: { findUnique: jest.fn() },
     transportAllocation: { upsert: jest.fn(), findUnique: jest.fn(), delete: jest.fn() },
+    vehicleRoute: { findUnique: jest.fn(), create: jest.fn(), delete: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createRoute, addStop, addVehicle, allocateStudent, removeAllocation } from "../transport.controller";
+import { createRoute, addStop, addVehicle, allocateStudent, removeAllocation, assignVehicleToRoute, unassignVehicleFromRoute } from "../transport.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -262,6 +263,149 @@ describe("transport.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(404);
       expect(prisma.transportAllocation.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // Item A - Phase 1 (BACKEND_UX_GAP_PLAN.md): VehicleRoute existed in
+  // the schema and was referenced in delete-cleanup code, but there
+  // was NO endpoint anywhere that could ever create a row in it.
+  describe("assignVehicleToRoute", () => {
+    const VEHICLE = { id: "vehicle-1", branchId: "branch-1" };
+    const ROUTE = { id: "route-1", branchId: "branch-1" };
+
+    beforeEach(() => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue(VEHICLE);
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue(ROUTE);
+      (prisma.vehicleRoute.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.vehicleRoute.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "vr-1", ...data }));
+    });
+
+    it("assigns a vehicle to a route when both are in the caller's branch", async () => {
+      const req = makeReq({ body: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await assignVehicleToRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(prisma.vehicleRoute.create).toHaveBeenCalledWith({ data: { vehicleId: "vehicle-1", routeId: "route-1" } });
+    });
+
+    it("returns 404 when the vehicle does not exist", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await assignVehicleToRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.vehicleRoute.create).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the route does not exist", async () => {
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await assignVehicleToRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.vehicleRoute.create).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects a vehicle from a different branch", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue({ id: "vehicle-1", branchId: "branch-OTHER" });
+      const req = makeReq({ body: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await assignVehicleToRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.vehicleRoute.create).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects a route from a different branch", async () => {
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue({ id: "route-1", branchId: "branch-OTHER" });
+      const req = makeReq({ body: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await assignVehicleToRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.vehicleRoute.create).not.toHaveBeenCalled();
+    });
+
+    it("DATA INTEGRITY: rejects when the vehicle and route belong to different branches from each other (even if both are otherwise accessible)", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue({ id: "vehicle-1", branchId: "branch-1" });
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue({ id: "route-1", branchId: "branch-2" });
+      const req = makeReq({
+        body: { vehicleId: "vehicle-1", routeId: "route-1" },
+        user: { userId: "super-1", email: "e", role: UserRole.SUPER_ADMIN, branchId: undefined },
+      });
+      const res = makeMockRes();
+
+      await assignVehicleToRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.vehicleRoute.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a duplicate assignment", async () => {
+      (prisma.vehicleRoute.findUnique as jest.Mock).mockResolvedValue({ id: "vr-existing" });
+      const req = makeReq({ body: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await assignVehicleToRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.vehicleRoute.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("unassignVehicleFromRoute", () => {
+    it("removes the assignment when it exists in the caller's branch", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue({ id: "vehicle-1", branchId: "branch-1" });
+      (prisma.vehicleRoute.findUnique as jest.Mock).mockResolvedValue({ id: "vr-1" });
+      const req = makeReq({ params: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await unassignVehicleFromRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.vehicleRoute.delete).toHaveBeenCalledWith({ where: { vehicleId_routeId: { vehicleId: "vehicle-1", routeId: "route-1" } } });
+    });
+
+    it("returns 404 when the vehicle does not exist", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ params: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await unassignVehicleFromRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.vehicleRoute.delete).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects unassigning a vehicle from a different branch", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue({ id: "vehicle-1", branchId: "branch-OTHER" });
+      const req = makeReq({ params: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await unassignVehicleFromRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.vehicleRoute.delete).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the assignment does not exist", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue({ id: "vehicle-1", branchId: "branch-1" });
+      (prisma.vehicleRoute.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ params: { vehicleId: "vehicle-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await unassignVehicleFromRoute(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.vehicleRoute.delete).not.toHaveBeenCalled();
     });
   });
 });

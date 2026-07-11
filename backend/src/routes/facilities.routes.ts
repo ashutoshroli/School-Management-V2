@@ -2,14 +2,14 @@ import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { addBook, getBooks, issueBook, returnBook, getIssuedBooks, deleteBook } from "../controllers/library.controller";
 import { addItem, getItems, purchaseStock, issueStock, getLowStockAlerts, deleteItem } from "../controllers/inventory.controller";
-import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, addVehicle, deleteVehicle, deleteRoute } from "../controllers/transport.controller";
+import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, addVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute } from "../controllers/transport.controller";
 import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding } from "../controllers/hostel.controller";
 import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { addBookSchema, issueBookSchema } from "../validators/library.validator";
 import { addItemSchema, purchaseStockSchema, issueStockSchema } from "../validators/inventory.validator";
-import { createRouteSchema, addStopSchema, allocateStudentSchema, addVehicleSchema } from "../validators/transport.validator";
+import { createRouteSchema, addStopSchema, allocateStudentSchema, addVehicleSchema, assignVehicleToRouteSchema } from "../validators/transport.validator";
 import { createBuildingSchema, addFloorSchema, addRoomSchema, allocateRoomSchema, bulkAllocateRoomSchema } from "../validators/hostel.validator";
 import { createDeviceSchema, updateDeviceSchema } from "../validators/attendanceDevice.validator";
 
@@ -44,6 +44,8 @@ router.get("/transport/vehicles", getVehicles);
 router.post("/transport/vehicles", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), branchAccess, validate(addVehicleSchema), addVehicle);
 router.delete("/transport/vehicles/:id", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), deleteVehicle);
 router.delete("/transport/routes/:id", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), deleteRoute);
+router.post("/transport/vehicle-routes", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), validate(assignVehicleToRouteSchema), assignVehicleToRoute);
+router.delete("/transport/vehicle-routes/:vehicleId/:routeId", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), unassignVehicleFromRoute);
 
 // === HOSTEL ===
 router.post("/hostel/buildings", authorize(...ADMIN, UserRole.WARDEN), branchAccess, validate(createBuildingSchema), createBuilding);
