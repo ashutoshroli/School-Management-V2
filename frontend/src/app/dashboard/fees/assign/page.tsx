@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { UserCheck, Users, Search, CheckCircle2 } from "lucide-react";
+import { UserCheck, Users, Search, CheckCircle2, Bus, MapPin } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 
@@ -25,9 +25,27 @@ interface StudentOption {
   section: { name: string } | null;
 }
 
+interface TransportRoute {
+  id: string;
+  name: string;
+  startPoint: string;
+  endPoint: string;
+  monthlyFee: number;
+  _count?: { allocations: number };
+}
+
 function AssignFeesContent() {
   const searchParams = useSearchParams();
   const preselectedStructureId = searchParams.get("structureId");
+
+  // Top-level choice: assign a class-wise fee structure, or a
+  // transport route's fee to the students allocated to that route.
+  // Routes are listed here too (not just on the Transport page) since
+  // this is the single "Assign Fees" hub - a route with no
+  // FeeStructure yet still shows up (assignTransportFee on the
+  // backend creates one on first use), unlike the class-fee dropdown
+  // below which only ever lists structures that already exist.
+  const [feeType, setFeeType] = useState<"class" | "transport">("class");
 
   const [structures, setStructures] = useState<FeeStructure[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
@@ -35,6 +53,16 @@ function AssignFeesContent() {
   const [selectedStructureId, setSelectedStructureId] = useState("");
   const [mode, setMode] = useState<"class" | "students">("class");
   const [resultMessage, setResultMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Transport route fee assignment state
+  const [routes, setRoutes] = useState<TransportRoute[]>([]);
+  const [years, setYears] = useState<any[]>([]);
+  const [selectedRouteId, setSelectedRouteId] = useState("");
+  const [selectedYearId, setSelectedYearId] = useState("");
+  const [assigningTransport, setAssigningTransport] = useState(false);
+  const [transportResult, setTransportResult] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const selectedRoute = routes.find((r) => r.id === selectedRouteId) || null;
 
   // Whole-class assign state
   const [assigningClass, setAssigningClass] = useState(false);
@@ -53,17 +81,24 @@ function AssignFeesContent() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [sRes, cRes] = await Promise.all([
+      const [sRes, cRes, rRes, yRes] = await Promise.all([
         api.get("/fees/structures"),
         api.get("/classes"),
+        api.get("/facilities/transport/routes"),
+        api.get("/academic-years"),
       ]);
-      // This page only ever assigns class-wise fees (entire
-      // class/section or hand-picked students within a class) -
-      // transport fees are assigned from the Transport page instead
-      // (they target students allocated to a route, which cuts
-      // across classes), so exclude them here.
+      // The class-fee dropdown below only ever lists structures that
+      // already exist (entire class/section or hand-picked students
+      // within a class) - transport-route-wise structures (classId
+      // null) are excluded here since they're handled by the separate
+      // "Transport Route" tab, which lists routes directly instead.
       setStructures((sRes.data.data || []).filter((s: FeeStructure) => s.classId));
       setClasses(cRes.data.data || []);
+      setRoutes(rRes.data.data || []);
+      const yearList = yRes.data.data || [];
+      setYears(yearList);
+      const activeYear = yearList.find((y: any) => y.isActive);
+      setSelectedYearId(activeYear?.id || yearList[0]?.id || "");
     } catch (err) {} finally { setLoading(false); }
   };
 
@@ -81,6 +116,10 @@ function AssignFeesContent() {
     setSelectedStudentIds(new Set());
     setResultMessage(null);
   }, [selectedStructureId]);
+
+  useEffect(() => {
+    setTransportResult(null);
+  }, [selectedRouteId]);
 
   const fetchStudents = async () => {
     if (!selectedStructure) return;
@@ -166,19 +205,118 @@ function AssignFeesContent() {
 
   const classSections = selectedClass?.sections || [];
 
+  const handleAssignTransportFee = async () => {
+    if (!selectedRoute || !selectedYearId) return;
+    setAssigningTransport(true);
+    setTransportResult(null);
+    try {
+      const res = await api.post("/fees/assign/transport", {
+        routeId: selectedRoute.id,
+        academicYearId: selectedYearId,
+      });
+      setTransportResult({ type: "success", text: res.data.message || "Transport fee assigned." });
+    } catch (err: any) {
+      setTransportResult({ type: "error", text: err.response?.data?.message || "Failed to assign transport fee" });
+    } finally {
+      setAssigningTransport(false);
+    }
+  };
+
   return (
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           <UserCheck className="h-6 w-6 text-primary-600" /> Assign Fees
         </h1>
-        <p className="text-gray-500 mt-1">Assign a fee structure to an entire class or to specific students</p>
+        <p className="text-gray-500 mt-1">Assign a class fee structure or a transport route's fee to students</p>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
       ) : (
         <div className="space-y-6">
+          <div className="flex gap-2 border-b">
+            <button
+              onClick={() => setFeeType("class")}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 ${feeType === "class" ? "border-primary-600 text-primary-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+            >
+              <UserCheck className="h-4 w-4" /> Class Fee
+            </button>
+            <button
+              onClick={() => setFeeType("transport")}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 ${feeType === "transport" ? "border-primary-600 text-primary-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+            >
+              <Bus className="h-4 w-4" /> Transport Route Fee
+            </button>
+          </div>
+
+          {feeType === "transport" ? (
+            <div className="space-y-6">
+              <div className="card">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Transport Route *</label>
+                <select
+                  className="input-field max-w-xl"
+                  value={selectedRouteId}
+                  onChange={(e) => setSelectedRouteId(e.target.value)}
+                >
+                  <option value="">Select a route</option>
+                  {routes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} ({r.startPoint} → {r.endPoint}) - {formatCurrency(r.monthlyFee)}/month - {r._count?.allocations || 0} student(s) allocated
+                    </option>
+                  ))}
+                </select>
+                {routes.length === 0 && (
+                  <p className="text-sm text-gray-500 mt-2">No transport routes found. Create one under Transport first.</p>
+                )}
+              </div>
+
+              {selectedRoute && (
+                <div className="card space-y-4">
+                  {transportResult && (
+                    <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm ${transportResult.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                      {transportResult.type === "success" && <CheckCircle2 className="h-4 w-4 flex-shrink-0" />}
+                      {transportResult.text}
+                    </div>
+                  )}
+
+                  <p className="text-sm text-gray-600 flex items-start gap-2">
+                    <MapPin className="h-4 w-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                    This will assign a <span className="font-medium">Transport Fee</span> of{" "}
+                    <span className="font-medium">{formatCurrency(selectedRoute.monthlyFee)}/month</span> to every one of the{" "}
+                    <span className="font-medium">{selectedRoute._count?.allocations || 0} student(s)</span> currently allocated to this route.
+                    Students who already have this fee assigned will be skipped automatically.
+                  </p>
+
+                  {!selectedRoute._count?.allocations && (
+                    <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      No students are allocated to this route yet - go to Transport &gt; Manage Students to allocate some first.
+                    </p>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Academic Year *</label>
+                    <select className="input-field max-w-xl" value={selectedYearId} onChange={(e) => setSelectedYearId(e.target.value)}>
+                      <option value="">Select</option>
+                      {years.map((y: any) => <option key={y.id} value={y.id}>{y.name}</option>)}
+                    </select>
+                    {years.length === 0 && (
+                      <p className="text-xs text-gray-500 mt-1">No academic years found. Create one under Academic Years first.</p>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleAssignTransportFee}
+                    disabled={assigningTransport || !selectedYearId || !selectedRoute._count?.allocations}
+                    className="btn-primary disabled:opacity-50"
+                  >
+                    {assigningTransport ? "Assigning..." : "Assign Transport Fee"}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+          <>
           <div className="card">
             <label className="block text-sm font-medium text-gray-700 mb-1">Fee Structure *</label>
             <select
@@ -314,6 +452,8 @@ function AssignFeesContent() {
                 </div>
               )}
             </>
+          )}
+          </>
           )}
         </div>
       )}
