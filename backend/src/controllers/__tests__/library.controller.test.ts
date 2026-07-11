@@ -3,12 +3,12 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    libraryBook: { create: jest.fn() },
+    libraryBook: { create: jest.fn(), findUnique: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { addBook } from "../library.controller";
+import { addBook, getBookById } from "../library.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -66,5 +66,48 @@ describe("library.controller - addBook", () => {
 
     expect(res.status).toHaveBeenCalledWith(201);
     expect((prisma.libraryBook.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+  });
+});
+
+describe("library.controller - getBookById", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the book does not exist", async () => {
+    (prisma.libraryBook.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "book-1" } });
+    const res = makeMockRes();
+
+    await getBookById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a book belonging to a DIFFERENT branch", async () => {
+    (prisma.libraryBook.findUnique as jest.Mock).mockResolvedValue({ id: "book-1", branchId: "branch-OTHER", issues: [] });
+    const req = makeReq({ params: { id: "book-1" } });
+    const res = makeMockRes();
+
+    await getBookById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns the book with its issue history when in the caller's own branch", async () => {
+    (prisma.libraryBook.findUnique as jest.Mock).mockResolvedValue({
+      id: "book-1",
+      branchId: "branch-1",
+      title: "The Alchemist",
+      issues: [{ id: "issue-1", student: { user: { name: "Ravi" } } }],
+    });
+    const req = makeReq({ params: { id: "book-1" } });
+    const res = makeMockRes();
+
+    await getBookById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.issues).toHaveLength(1);
   });
 });

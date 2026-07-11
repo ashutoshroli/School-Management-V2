@@ -12,7 +12,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { createClass, createSection, createSubject, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
+import { createClass, createSection, createSubject, getSubjectById, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -142,6 +142,47 @@ describe("class.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect((prisma.subject.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+    });
+  });
+
+  describe("getSubjectById", () => {
+    it("returns 404 when the subject does not exist", async () => {
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ params: { id: "subj-1" } });
+      const res = makeMockRes();
+
+      await getSubjectById(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("SECURITY: rejects a subject belonging to a DIFFERENT branch", async () => {
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue({ id: "subj-1", branchId: "branch-OTHER", classSubjects: [], subjectTeachers: [] });
+      const req = makeReq({ params: { id: "subj-1" } });
+      const res = makeMockRes();
+
+      await getSubjectById(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("returns the subject with its classes and teachers when in the caller's own branch", async () => {
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue({
+        id: "subj-1",
+        branchId: "branch-1",
+        name: "Mathematics",
+        classSubjects: [{ class: { id: "class-1", name: "Class 5" } }],
+        subjectTeachers: [{ staff: { user: { name: "Mrs. Sharma" } }, class: { id: "class-1", name: "Class 5" } }],
+      });
+      const req = makeReq({ params: { id: "subj-1" } });
+      const res = makeMockRes();
+
+      await getSubjectById(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+      expect(payload.classSubjects).toHaveLength(1);
+      expect(payload.subjectTeachers).toHaveLength(1);
     });
   });
 

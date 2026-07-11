@@ -3,6 +3,7 @@ import { UserRole } from "@prisma/client";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create homework
@@ -75,6 +76,35 @@ export const deleteHomework = async (req: AuthRequest, res: Response): Promise<v
       prisma.homework.delete({ where: { id } }),
     ]);
     sendSuccess(res, null, "Homework deleted");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Get single homework detail, with its full submission list (student
+ * name + submitted-at + grade) - Homework has no branchId of its own,
+ * so branch-scoping is checked via its Class (like getExamById follows
+ * for Exam), a relation not otherwise loaded by getHomeworks's list view.
+ */
+export const getHomeworkById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const homework = await prisma.homework.findUnique({
+      where: { id },
+      include: {
+        subject: { select: { id: true, name: true, code: true } },
+        submissions: {
+          include: { student: { include: { user: { select: { name: true } } } } },
+          orderBy: { submittedAt: "desc" },
+        },
+      },
+    });
+    if (!homework) { sendError(res, "Homework not found", 404); return; }
+
+    const cls = await prisma.class.findUnique({ where: { id: homework.classId }, select: { branchId: true, name: true } });
+    if (!cls || !canAccessBranch(req, cls.branchId)) { sendError(res, "Homework not found", 404); return; }
+
+    sendSuccess(res, { ...homework, class: cls }, "Homework fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 

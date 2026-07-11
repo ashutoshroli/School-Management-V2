@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { createNotice, getNotices, deleteNotice, togglePin } from "../controllers/notice.controller";
+import { createNotice, getNotices, getNoticeById, deleteNotice, togglePin } from "../controllers/notice.controller";
 import { sendMessage, getConversation, getInbox } from "../controllers/message.controller";
 import { createTemplate, getTemplates, generateCertificate, getGeneratedCertificates, verifyCertificate } from "../controllers/certificate.controller";
 import { getMyNotifications } from "../controllers/notification.controller";
@@ -30,6 +30,7 @@ router.delete("/notifications/devices/:token", unregisterDeviceToken);
 // === NOTICES ===
 router.post("/notices", authorize(...STAFF), branchAccess, validate(createNoticeSchema), createNotice);
 router.get("/notices", getNotices);
+router.get("/notices/:id", getNoticeById);
 router.delete("/notices/:id", authorize(...ADMIN), deleteNotice);
 router.patch("/notices/:id/pin", authorize(...ADMIN), togglePin);
 

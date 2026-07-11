@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Tag, Plus, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
+import { Tag, Plus, ToggleLeft, ToggleRight, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -54,6 +54,25 @@ export default function FeeCategoriesPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this category"); }
   };
 
+  // View Details - drills into one category's usage count via the
+  // new getFeeCategoryById endpoint.
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/fees/categories/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load category details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -83,6 +102,9 @@ export default function FeeCategoriesPage() {
                 </div>
               </div>
               <div className="flex items-center gap-1">
+                <button onClick={() => openDetail(cat.id)} className="p-1" title="View Details">
+                  <Eye className="h-4 w-4 text-gray-400" />
+                </button>
                 <button onClick={() => toggle(cat.id)} className="p-1" title={cat.isActive ? "Deactivate" : "Activate"}>
                   {cat.isActive ? <ToggleRight className="h-6 w-6 text-green-600" /> : <ToggleLeft className="h-6 w-6 text-gray-400" />}
                 </button>
@@ -112,6 +134,24 @@ export default function FeeCategoriesPage() {
             <button type="submit" className="btn-primary">Create</button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title={detail?.name ? `Category - ${detail.name}` : "Category Details"}>
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Code</p><p className="font-medium font-mono">{detail.code}</p></div>
+              <div><p className="text-gray-500">Type</p><p className="font-medium">{detail.isSystem ? "System-defined" : "Custom"}</p></div>
+              <div><p className="text-gray-500">Status</p><p className="font-medium">{detail.isActive ? "Active" : "Inactive"}</p></div>
+              <div><p className="text-gray-500">Used by Fee Structures</p><p className="font-medium">{detail.structureCount}</p></div>
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

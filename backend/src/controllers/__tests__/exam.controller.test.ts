@@ -4,12 +4,14 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     gradeSystem: { findMany: jest.fn() },
-    mark: { upsert: jest.fn() },
+    mark: { upsert: jest.fn(), groupBy: jest.fn() },
+    exam: { findUnique: jest.fn() },
+    subject: { findMany: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { enterMarks } from "../exam.controller";
+import { enterMarks, getExamById } from "../exam.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -96,5 +98,73 @@ describe("exam.controller - enterMarks grade lookup", () => {
 
     expect(prisma.gradeSystem.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.mark.upsert).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Exam has no branchId of its own - branch-scoping is checked via its
+// Class relation instead, same pattern getHomeworkById follows.
+describe("exam.controller - getExamById", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the exam does not exist", async () => {
+    (prisma.exam.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "exam-1" } });
+    const res = makeMockRes();
+
+    await getExamById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects an exam whose class belongs to a DIFFERENT branch", async () => {
+    (prisma.exam.findUnique as jest.Mock).mockResolvedValue({
+      id: "exam-1",
+      class: { id: "class-1", name: "Class 5", branchId: "branch-OTHER" },
+      academicYear: { id: "ay-1", name: "2025-26" },
+    });
+    const req = makeReq({ params: { id: "exam-1" } });
+    const res = makeMockRes();
+
+    await getExamById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns the exam with a subject-wise marks summary", async () => {
+    (prisma.exam.findUnique as jest.Mock).mockResolvedValue({
+      id: "exam-1",
+      class: { id: "class-1", name: "Class 5", branchId: "branch-1" },
+      academicYear: { id: "ay-1", name: "2025-26" },
+    });
+    (prisma.mark.groupBy as jest.Mock).mockResolvedValue([{ subjectId: "sub-1", _count: { _all: 30 } }]);
+    (prisma.subject.findMany as jest.Mock).mockResolvedValue([{ id: "sub-1", name: "Maths", code: "MATH" }]);
+    const req = makeReq({ params: { id: "exam-1" } });
+    const res = makeMockRes();
+
+    await getExamById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.marksSummary).toEqual([{ subject: { id: "sub-1", name: "Maths", code: "MATH" }, marksRecorded: 30 }]);
+  });
+
+  it("returns an empty marksSummary when no marks have been recorded yet", async () => {
+    (prisma.exam.findUnique as jest.Mock).mockResolvedValue({
+      id: "exam-1",
+      class: { id: "class-1", name: "Class 5", branchId: "branch-1" },
+      academicYear: { id: "ay-1", name: "2025-26" },
+    });
+    (prisma.mark.groupBy as jest.Mock).mockResolvedValue([]);
+    const req = makeReq({ params: { id: "exam-1" } });
+    const res = makeMockRes();
+
+    await getExamById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.subject.findMany).not.toHaveBeenCalled();
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.marksSummary).toEqual([]);
   });
 });

@@ -3,12 +3,12 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    inventoryItem: { create: jest.fn(), findMany: jest.fn() },
+    inventoryItem: { create: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { addItem, getLowStockAlerts } from "../inventory.controller";
+import { addItem, getLowStockAlerts, getItemById } from "../inventory.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -108,5 +108,50 @@ describe("inventory.controller - getLowStockAlerts", () => {
     await getLowStockAlerts(req, res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: [] }));
+  });
+});
+
+describe("inventory.controller - getItemById", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the item does not exist", async () => {
+    (prisma.inventoryItem.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "item-1" } });
+    const res = makeMockRes();
+
+    await getItemById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects an item belonging to a DIFFERENT branch", async () => {
+    (prisma.inventoryItem.findUnique as jest.Mock).mockResolvedValue({ id: "item-1", branchId: "branch-OTHER", purchases: [], issues: [] });
+    const req = makeReq({ params: { id: "item-1" } });
+    const res = makeMockRes();
+
+    await getItemById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns the item with its purchase/issue history when in the caller's own branch", async () => {
+    (prisma.inventoryItem.findUnique as jest.Mock).mockResolvedValue({
+      id: "item-1",
+      branchId: "branch-1",
+      name: "Notebooks",
+      purchases: [{ id: "p1" }],
+      issues: [{ id: "i1" }],
+    });
+    const req = makeReq({ params: { id: "item-1" } });
+    const res = makeMockRes();
+
+    await getItemById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.purchases).toHaveLength(1);
+    expect(payload.issues).toHaveLength(1);
   });
 });

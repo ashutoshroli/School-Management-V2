@@ -98,6 +98,22 @@ async function notifyNoticeRecipients(
   });
 }
 
+/**
+ * Get single notice detail - the list view (getNotices) already
+ * returns full notice rows, but there was no direct "open one notice"
+ * URL/endpoint (e.g. for a notification deep-link or a shareable link
+ * to a specific notice).
+ */
+export const getNoticeById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const notice = await prisma.notice.findUnique({ where: { id } });
+    if (!notice) { sendError(res, "Notice not found", 404); return; }
+    if (!canAccessBranch(req, notice.branchId)) { sendError(res, "Notice not found", 404); return; }
+    sendSuccess(res, notice, "Notice fetched");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
 export const getNotices = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);

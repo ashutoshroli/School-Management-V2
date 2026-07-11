@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCalendar, getDateAttendance } from "../controllers/staffAttendance.controller";
-import { getLeaveTypes, applyLeave, getLeaveApplications, updateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType } from "../controllers/leave.controller";
+import { getLeaveTypes, getLeaveTypeById, applyLeave, getLeaveApplications, updateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType } from "../controllers/leave.controller";
 import { upsertSalaryStructure, bulkAssignSalaryStructure, assignSalaryStructureToStaff, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -22,6 +22,7 @@ router.get("/attendance/date", authenticate, authorize(...ADMIN), getDateAttenda
 
 // ===== LEAVE MANAGEMENT =====
 router.get("/leave/types", authenticate, getLeaveTypes);
+router.get("/leave/types/:id", authenticate, getLeaveTypeById);
 router.post("/leave/types", authenticate, authorize(...ADMIN), validate(createLeaveTypeSchema), createLeaveType);
 router.put("/leave/types/:id", authenticate, authorize(...ADMIN), validate(updateLeaveTypeSchema), updateLeaveType);
 router.delete("/leave/types/:id", authenticate, authorize(...ADMIN), deleteLeaveType);

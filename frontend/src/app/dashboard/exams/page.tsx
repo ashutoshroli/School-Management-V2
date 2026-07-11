@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileText, Plus, Edit, Trash2 } from "lucide-react";
+import { FileText, Plus, Edit, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
@@ -16,6 +16,26 @@ export default function ExamsPage() {
   const [classes, setClasses] = useState<any[]>([]);
   const [years, setYears] = useState<any[]>([]);
   const [form, setForm] = useState(EMPTY_FORM);
+
+  // View Details - the list view only shows a handful of summary
+  // columns; this drills into one exam via the new getExamById
+  // endpoint for its subject-wise marks-recorded summary.
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/academics/exams/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load exam details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   const fetch = async () => {
     setLoading(true);
@@ -116,6 +136,9 @@ export default function ExamsPage() {
                   </td>
                   <td className="px-4 py-3 text-center">
                     <div className="flex items-center justify-center gap-3">
+                      <button onClick={() => openDetail(e.id)} title="View Details" className="text-gray-500 hover:text-gray-700">
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
                       <a href={`/dashboard/exams/${e.id}/results`} className="text-primary-600 text-xs font-medium hover:underline">Results</a>
                       <a href={`/dashboard/exams/${e.id}/marks`} className="text-primary-600 text-xs font-medium hover:underline">Enter Marks</a>
                       <button onClick={() => openEditModal(e)} title="Edit" className="text-gray-500 hover:text-gray-700">
@@ -161,6 +184,41 @@ export default function ExamsPage() {
             <button type="submit" className="btn-primary">{editingId ? "Save Changes" : "Create"}</button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title={detail?.name ? `Exam - ${detail.name}` : "Exam Details"}>
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Class</p><p className="font-medium">{detail.class?.name}</p></div>
+              <div><p className="text-gray-500">Academic Year</p><p className="font-medium">{detail.academicYear?.name}</p></div>
+              <div><p className="text-gray-500">Type</p><p className="font-medium">{detail.type}</p></div>
+              <div><p className="text-gray-500">Status</p><p className="font-medium">{detail.isPublished ? "Published" : "Draft"}</p></div>
+              <div><p className="text-gray-500">Start Date</p><p className="font-medium">{detail.startDate ? formatDate(detail.startDate) : "-"}</p></div>
+              <div><p className="text-gray-500">End Date</p><p className="font-medium">{detail.endDate ? formatDate(detail.endDate) : "-"}</p></div>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Marks Recorded by Subject</h4>
+              {detail.marksSummary?.length > 0 ? (
+                <div className="space-y-1.5">
+                  {detail.marksSummary.map((m: any) => (
+                    <div key={m.subject?.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                      <span>{m.subject?.name} ({m.subject?.code})</span>
+                      <span className="text-xs font-medium text-gray-600">{m.marksRecorded} student(s)</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">No marks recorded yet for any subject.</p>
+              )}
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

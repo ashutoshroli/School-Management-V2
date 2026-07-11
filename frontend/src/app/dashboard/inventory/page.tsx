@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Package, Plus, AlertTriangle, Trash2 } from "lucide-react";
+import { Package, Plus, AlertTriangle, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -13,6 +13,25 @@ export default function InventoryPage() {
   const [modalType, setModalType] = useState<"item" | "purchase" | "issue">("item");
   const [form, setForm] = useState<any>({ name: "", category: "", unit: "pcs", minStock: "5" });
   const [dismissedAlert, setDismissedAlert] = useState(false);
+
+  // View Details - drills into one item's purchase/issue history via
+  // the new getItemById endpoint (the list view only shows counts).
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/facilities/inventory/items/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load item details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   const fetch = async () => {
     setLoading(true);
@@ -103,7 +122,10 @@ export default function InventoryPage() {
               <td className="px-4 py-3 text-center font-bold">{i.currentStock} {i.unit}</td>
               <td className="px-4 py-3 text-center text-gray-500">{i.minStock}</td>
               <td className="px-4 py-3 text-center">{i.currentStock <= i.minStock ? <span className="text-red-600 flex items-center justify-center gap-1"><AlertTriangle className="h-3 w-3" /> Low</span> : <span className="text-green-600">OK</span>}</td>
-              <td className="px-4 py-3 text-center"><button onClick={() => deleteItem(i.id, i.name)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button></td>
+              <td className="px-4 py-3 text-center">
+                <button onClick={() => openDetail(i.id)} title="View Details" className="text-gray-500 hover:text-gray-700 mr-3"><Eye className="h-4 w-4 inline" /></button>
+                <button onClick={() => deleteItem(i.id, i.name)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button>
+              </td>
             </tr>))}
           </tbody></table>
         </div>
@@ -135,6 +157,49 @@ export default function InventoryPage() {
           </>)}
           <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Save</button></div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title={detail?.name ? `Item - ${detail.name}` : "Item Details"}>
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3 text-sm">
+              <div><p className="text-gray-500">Category</p><p className="font-medium">{detail.category || "-"}</p></div>
+              <div><p className="text-gray-500">Current Stock</p><p className="font-medium">{detail.currentStock} {detail.unit}</p></div>
+              <div><p className="text-gray-500">Min Stock</p><p className="font-medium">{detail.minStock}</p></div>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Purchase History</h4>
+              {detail.purchases?.length > 0 ? (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {detail.purchases.map((p: any) => (
+                    <div key={p.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                      <span>{p.vendor || "-"}: {p.quantity} @ Rs {p.rate}</span>
+                      <span className="text-xs text-gray-500">Rs {p.totalCost}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-sm text-gray-400">No purchases recorded yet.</p>}
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Issue History</h4>
+              {detail.issues?.length > 0 ? (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {detail.issues.map((iss: any) => (
+                    <div key={iss.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                      <span>{iss.issuedTo}: {iss.quantity} {detail.unit}</span>
+                      <span className="text-xs text-gray-500">{iss.purpose || "-"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-sm text-gray-400">No issues recorded yet.</p>}
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

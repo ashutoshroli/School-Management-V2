@@ -136,6 +136,30 @@ export const getAdmissionInquiries = async (req: AuthRequest, res: Response): Pr
 };
 
 /**
+ * GET /api/admission/inquiries/:id
+ * Staff-only. Full JSON detail of one inquiry - the only prior way to
+ * see one inquiry's full detail was the PDF export
+ * (getAdmissionInquiryPdf below); there was no way to fetch it as data
+ * for an in-app detail view/modal.
+ */
+export const getAdmissionInquiryById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const inquiry = await prisma.admissionInquiry.findUnique({
+      where: { id },
+      include: { branch: { select: { name: true, city: true } } },
+    });
+    if (!inquiry) { sendError(res, "Inquiry not found", 404); return; }
+    if (!canAccessBranch(req, inquiry.branchId)) { sendError(res, "Inquiry not found", 404); return; }
+
+    sendSuccess(res, inquiry, "Inquiry fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch inquiry", 500, (error as Error).message);
+  }
+};
+
+/**
  * GET /api/admission/inquiries/:id/pdf
  * Streams a printable summary of one admission inquiry - staff-only
  * (same access level as viewing/updating the inquiry itself). Tries

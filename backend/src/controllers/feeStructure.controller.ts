@@ -79,6 +79,38 @@ export const createFeeStructure = async (req: AuthRequest, res: Response): Promi
 };
 
 /**
+ * Get single fee structure detail, with its installments and how many
+ * students currently have it assigned - the list view (getFeeStructures)
+ * already returns installments per row, but not the assignment count,
+ * which needs a separate FeeAssignment count query best kept out of
+ * the (cached) list query's hot path.
+ */
+export const getFeeStructureById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const structure = await prisma.feeStructure.findUnique({
+      where: { id },
+      include: {
+        feeCategory: { select: { name: true, code: true } },
+        class: { select: { name: true } },
+        transportRoute: { select: { name: true, startPoint: true, endPoint: true } },
+        academicYear: { select: { name: true } },
+        installments: { orderBy: { installmentNo: "asc" } },
+      },
+    });
+    if (!structure) { sendError(res, "Fee structure not found", 404); return; }
+    if (!canAccessBranch(req, structure.branchId)) { sendError(res, "Fee structure not found", 404); return; }
+
+    const assignedStudentCount = await prisma.feeAssignment.count({ where: { feeStructureId: id } });
+
+    sendSuccess(res, { ...structure, assignedStudentCount }, "Fee structure fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch fee structure", 500, (error as Error).message);
+  }
+};
+
+/**
  * Get fee structures (filterable by branch, class, year, category)
  */
 export const getFeeStructures = async (req: AuthRequest, res: Response): Promise<void> => {

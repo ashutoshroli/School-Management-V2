@@ -10,7 +10,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { getLeaveApplications, getLeaveBalance, getLeaveTypes, createLeaveType, updateLeaveType, deleteLeaveType } from "../leave.controller";
+import { getLeaveApplications, getLeaveBalance, getLeaveTypes, getLeaveTypeById, createLeaveType, updateLeaveType, deleteLeaveType } from "../leave.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -150,6 +150,35 @@ describe("leave.controller - getLeaveTypes", () => {
     await getLeaveTypes(req, res);
 
     expect(prisma.leaveType.findMany).toHaveBeenCalledWith({ where: {}, orderBy: { name: "asc" } });
+  });
+});
+
+describe("leave.controller - getLeaveTypeById", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the leave type does not exist", async () => {
+    (prisma.leaveType.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "lt-1" } });
+    const res = makeMockRes();
+
+    await getLeaveTypeById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns the leave type with its application count", async () => {
+    (prisma.leaveType.findUnique as jest.Mock).mockResolvedValue({ id: "lt-1", name: "Casual Leave" });
+    (prisma.leaveApplication.count as jest.Mock).mockResolvedValue(7);
+    const req = makeReq({ params: { id: "lt-1" } });
+    const res = makeMockRes();
+
+    await getLeaveTypeById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.applicationCount).toBe(7);
   });
 });
 

@@ -200,6 +200,27 @@ export const unassignVehicleFromRoute = async (req: AuthRequest, res: Response):
   } catch (error) { sendError(res, "Failed to unassign vehicle from route", 500, (error as Error).message); }
 };
 
+/**
+ * Get single vehicle detail, with its assigned routes (see
+ * assignVehicleToRoute above) - getVehicles's list view already
+ * includes this same relation, but there was no standalone
+ * single-record endpoint for it (e.g. a deep-link/detail page).
+ */
+export const getVehicleById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const vehicle = await prisma.vehicle.findUnique({
+      where: { id },
+      include: { routes: { include: { route: { select: { id: true, name: true, startPoint: true, endPoint: true } } } } },
+    });
+    if (!vehicle) { sendError(res, "Vehicle not found", 404); return; }
+    if (!canAccessBranch(req, vehicle.branchId)) { sendError(res, "Vehicle not found", 404); return; }
+
+    sendSuccess(res, vehicle, "Vehicle fetched");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
 export const addVehicle = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { vehicleNo, type, capacity, driverName, driverPhone, driverLicense } = req.body;

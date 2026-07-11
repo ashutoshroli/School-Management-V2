@@ -30,6 +30,32 @@ export const addBook = async (req: AuthRequest, res: Response): Promise<void> =>
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 
+/**
+ * Get single book detail, with its full issue history (current +
+ * past, most recent first) - the list view (getBooks) only returns
+ * stock counts, with no way to see who currently has a copy or the
+ * book's issue/return track record.
+ */
+export const getBookById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const book = await prisma.libraryBook.findUnique({
+      where: { id },
+      include: {
+        issues: {
+          include: { student: { include: { user: { select: { name: true } }, class: { select: { name: true } } } } },
+          orderBy: { issueDate: "desc" },
+        },
+      },
+    });
+    if (!book) { sendError(res, "Book not found", 404); return; }
+    if (!canAccessBranch(req, book.branchId)) { sendError(res, "Book not found", 404); return; }
+
+    sendSuccess(res, book, "Book fetched");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
 export const getBooks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);

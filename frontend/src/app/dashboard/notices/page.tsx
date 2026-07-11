@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Bell, Plus, Pin, Trash2 } from "lucide-react";
+import { Bell, Plus, Pin, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
@@ -30,6 +30,26 @@ export default function NoticesPage() {
   const togglePin = async (id: string) => { await api.patch(`/communication/notices/${id}/pin`); fetch(); };
   const deleteNotice = async (id: string) => { if (confirm("Delete?")) { await api.delete(`/communication/notices/${id}`); fetch(); } };
 
+  // View Details - a direct "open one notice" endpoint (via the new
+  // getNoticeById) that didn't exist before (e.g. for a notification
+  // deep-link or a shareable link to a specific notice).
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/communication/notices/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load notice details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -52,6 +72,7 @@ export default function NoticesPage() {
                   <p className="text-xs text-gray-400">{formatDate(n.createdAt)}</p>
                 </div>
                 <div className="flex gap-1">
+                  <button onClick={() => openDetail(n.id)} className="p-1 rounded hover:bg-gray-100" title="View Details"><Eye className="h-4 w-4 text-gray-400" /></button>
                   <button onClick={() => togglePin(n.id)} className="p-1 rounded hover:bg-gray-100"><Pin className="h-4 w-4 text-gray-400" /></button>
                   <button onClick={() => deleteNotice(n.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 className="h-4 w-4 text-red-400" /></button>
                 </div>
@@ -75,6 +96,25 @@ export default function NoticesPage() {
           </div>
           <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Publish</button></div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title={detail?.title ? `Notice - ${detail.title}` : "Notice Details"}>
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Target</p><p className="font-medium">{detail.type}</p></div>
+              <div><p className="text-gray-500">Published</p><p className="font-medium">{formatDate(detail.createdAt)}</p></div>
+              <div><p className="text-gray-500">Pinned</p><p className="font-medium">{detail.isPinned ? "Yes" : "No"}</p></div>
+              <div><p className="text-gray-500">Expiry</p><p className="font-medium">{detail.expiryDate ? formatDate(detail.expiryDate) : "None"}</p></div>
+            </div>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap">{detail.body}</p>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

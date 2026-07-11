@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Percent, ToggleLeft, ToggleRight, Trash2, Filter } from "lucide-react";
+import { Percent, ToggleLeft, ToggleRight, Trash2, Filter, Eye } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
+import Modal from "@/components/ui/Modal";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 const DISCOUNT_TYPES = ["SIBLING", "MERIT_SCHOLARSHIP", "RTE", "STAFF_WARD", "CUSTOM"];
@@ -66,6 +67,26 @@ export default function FeeDiscountsPage() {
   };
 
   const activeCount = discounts.filter((d) => d.isActive).length;
+
+  // View Details - a one-discount detail modal (via the new
+  // getDiscountById endpoint), useful when launched from either the
+  // branch-wide list here or a future per-student list.
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/fees/discounts/detail/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load discount details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   return (
     <div>
@@ -147,6 +168,13 @@ export default function FeeDiscountsPage() {
                   <td className="px-4 py-3">
                     <div className="flex justify-end items-center gap-1">
                       <button
+                        onClick={() => openDetail(d.id)}
+                        title="View Details"
+                        className="p-1.5 text-gray-500 hover:bg-gray-100 rounded"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      <button
                         onClick={() => toggle(d.id)}
                         disabled={togglingId === d.id}
                         title={d.isActive ? "Deactivate" : "Activate"}
@@ -170,6 +198,27 @@ export default function FeeDiscountsPage() {
           </table>
         </div>
       )}
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title="Discount Details">
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Student</p><p className="font-medium">{detail.student?.user?.name}</p></div>
+              <div><p className="text-gray-500">Class</p><p className="font-medium">{detail.student?.class?.name}-{detail.student?.section?.name}</p></div>
+              <div><p className="text-gray-500">Type</p><p className="font-medium">{detail.type?.replace(/_/g, " ")}</p></div>
+              <div><p className="text-gray-500">Name</p><p className="font-medium">{detail.name}</p></div>
+              <div><p className="text-gray-500">Value</p><p className="font-medium">{detail.isPercent ? `${detail.value}%` : formatCurrency(Number(detail.value))}</p></div>
+              <div><p className="text-gray-500">Status</p><p className="font-medium">{detail.isActive ? "Active" : "Inactive"}</p></div>
+              <div><p className="text-gray-500">Granted</p><p className="font-medium">{detail.createdAt ? formatDate(detail.createdAt) : "-"}</p></div>
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }
