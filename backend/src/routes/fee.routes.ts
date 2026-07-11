@@ -5,7 +5,7 @@ import { createFeeStructure, getFeeStructures, updateFeeStructure, deleteFeeStru
 import { bulkAssignFees, assignFeesToStudents, assignTransportFee, assignTransportFeeToStudents, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund, sendFeeRemindersHandler } from "../controllers/feeCollection.controller";
 import { createRazorpayOrder, verifyRazorpayPayment, razorpayWebhook } from "../controllers/payment.controller";
 import { getPaymentReceiptPdf } from "../controllers/document.controller";
-import { assignDiscount, getStudentDiscounts, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
+import { assignDiscount, getAllDiscounts, getStudentDiscounts, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
 import { getCollectionDayBook, getDefaultersList, getClassWiseSummary, getFeeCollectionTrend, getPaymentModeBreakdown, exportDefaultersCsv } from "../controllers/feeReports.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -66,6 +66,12 @@ router.post("/razorpay/verify", authorize(...PAYERS), branchAccess, validate(ver
 router.post("/refund", authorize(...ADMIN), validate(createRefundSchema), createRefund);
 
 // Discounts
+// Branch-wide list ("who has a discount at all") - registered before
+// the "/:studentId" route below so "/discounts" (no param) is never
+// swallowed as a studentId (it isn't, since Express matches on path
+// SHAPE not just prefix, but kept in this order to match this file's
+// existing "specific static route before param route" convention).
+router.get("/discounts", authorize(...FINANCE), getAllDiscounts);
 router.get("/discounts/:studentId", authorize(...FINANCE), getStudentDiscounts);
 router.post("/discounts", authorize(...ADMIN), assignDiscount);
 router.patch("/discounts/:id/toggle", authorize(...ADMIN), toggleDiscount);

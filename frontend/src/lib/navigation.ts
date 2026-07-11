@@ -108,6 +108,12 @@ export const navigation: NavItem[] = [
     roles: [...ADMIN_ROLES, "ACCOUNTANT"],
   },
   {
+    label: "Fee Discounts",
+    href: "/dashboard/fees/discounts",
+    icon: "Percent",
+    roles: [...ADMIN_ROLES, "ACCOUNTANT"],
+  },
+  {
     label: "My Fees",
     href: "/dashboard/my-fees",
     icon: "IndianRupee",

@@ -155,15 +155,60 @@ of this phase - it works exactly as originally scoped (polls
 
 ---
 
-## Phase 4: Fee Module Enhancements 🟡 (Items #4, #6, #12)
+## Phase 4: Fee Module Enhancements ✅ COMPLETED (Items #4, #6, #12)
 
 **Priority:** MEDIUM-HIGH (finance-critical gaps: refunds unreachable via UI, no discount oversight)
-**Backend:** Refund + payment-mode-breakdown fully ready; branch-wide discounts needs a small backend addition (new list endpoint reusing existing discount data)
+**Status:** ✅ **DONE**
 
-### Scope:
-- Refund button + modal on student payment history rows (`students/[id]`)
-- Payment Mode Breakdown tab on Fee Reports page
-- New `/dashboard/fees/discounts` branch-wide discount list page (small backend: a `getAllDiscounts`-style endpoint)
+### What was actually done:
+
+**Item #6 - Refund UI:**
+- Payment History table on `/dashboard/students/[id]` gained a Status column
+  (Active/Refunded) and a "Refund" action per non-refunded payment (Admin-only -
+  `POST /fees/refund` is ADMIN-only server-side, so the button is hidden for
+  everyone else rather than showing an action that would just 403)
+- Refund modal: amount (defaults to full payment, capped at the original
+  amount) + required reason, with an explicit note that this only records the
+  refund - actually moving money is a separate manual step
+
+**Item #4 - Payment Mode Breakdown:**
+- New "Payment Mode" tab on `/dashboard/fees/reports` using the already-built
+  `GET /fees/reports/payment-mode-breakdown` endpoint
+- Stacked bar chart + per-mode breakdown list + a details table with %/totals
+  (same "no charting library dependency" CSS-only approach as the existing
+  Collection Trend tab)
+
+**Item #12 - Branch-wide Fee Discounts page:**
+- **Backend addition** (as anticipated in the original audit): new
+  `getAllDiscounts` in `discount.controller.ts` - lists every discount across
+  the whole branch (optionally filtered by `type`, and by default excluding
+  inactive ones unless `includeInactive=true`), vs. the existing
+  `getStudentDiscounts` which is scoped to one student. New route
+  `GET /fees/discounts` (registered before the existing `/fees/discounts/:studentId`
+  to avoid any path-matching ambiguity).
+- **New tests:** `discount.controller.test.ts` (12 tests - this controller had
+  ZERO test coverage before this phase) covering `assignDiscount`'s branch-access
+  check, `getAllDiscounts`'s filters, and `toggleDiscount`/`deleteDiscount`'s
+  existing branch-access checks.
+- **New page** `/dashboard/fees/discounts` - branch-wide table (student, class,
+  discount type/name/value, granted date, active/inactive) with type filter,
+  "include inactive" toggle, and toggle/remove actions - links to each student's
+  profile for adding NEW discounts (unchanged, still per-student).
+- Added to `frontend/src/lib/navigation.ts` (Admin + Accountant, `Percent` icon).
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**61 suites / 574 tests**, up from
+  60/562 - zero regressions) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, all 3 touched/new pages
+  build fine (`fees/discounts` 2.88kB new, `fees/reports` 3.39kB->4.09kB,
+  `students/[id]` 9.39kB->9.15kB)
+
+### Deliverables:
+- ✅ Refund reachable from the UI (was API-only/curl-only before)
+- ✅ Payment Mode Breakdown visualized
+- ✅ Branch-wide discount oversight page live
+- ✅ All existing + new tests passing, both builds clean
+- 🔲 Git branch + PR - pending user's "PR banao" instruction
 
 ---
 

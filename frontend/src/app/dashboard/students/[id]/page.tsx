@@ -3,13 +3,14 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award, Plus, ToggleLeft, ToggleRight, IndianRupee, ClipboardCheck, Download, KeyRound, Copy, Check, AlertTriangle } from "lucide-react";
+import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award, Plus, ToggleLeft, ToggleRight, IndianRupee, ClipboardCheck, Download, KeyRound, Copy, Check, AlertTriangle, Undo2 } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate, formatCurrency } from "@/lib/utils";
 import { openPdfInNewTab } from "@/lib/pdf";
 import { resolveUploadUrl } from "@/lib/uploads";
 import FileUploadButton from "@/components/ui/FileUploadButton";
 import Modal from "@/components/ui/Modal";
+import { useAuth } from "@/hooks/useAuth";
 
 const ATTENDANCE_STATUS_COLORS: Record<string, string> = {
   PRESENT: "bg-green-100 text-green-700",
@@ -28,6 +29,12 @@ const DISCOUNT_TYPES = ["SIBLING", "MERIT_SCHOLARSHIP", "RTE", "STAFF_WARD", "CU
 export default function StudentProfilePage() {
   const params = useParams();
   const router = useRouter();
+  const { user } = useAuth();
+  // Refunds are ADMIN-only server-side (see fee.routes.ts's
+  // POST /fees/refund) - an Accountant can view/collect payments but
+  // not reverse them, so the Refund button is hidden for everyone else
+  // rather than showing an action that would just 403.
+  const isAdmin = user?.role === "SUPER_ADMIN" || user?.role === "BRANCH_ADMIN";
   const [student, setStudent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<any[]>([]);
@@ -248,6 +255,37 @@ export default function StudentProfilePage() {
     }
   };
 
+  // Refund - opens with the target payment pre-selected; amount
+  // defaults to the full payment amount but can be reduced for a
+  // partial refund (backend rejects amount > payment.amount).
+  const [refundPayment, setRefundPayment] = useState<any>(null);
+  const [refundForm, setRefundForm] = useState({ amount: "", reason: "" });
+  const [refunding, setRefunding] = useState(false);
+
+  const openRefundModal = (payment: any) => {
+    setRefundPayment(payment);
+    setRefundForm({ amount: String(payment.amount), reason: "" });
+  };
+
+  const handleRefund = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!refundPayment) return;
+    setRefunding(true);
+    try {
+      await api.post("/fees/refund", {
+        paymentId: refundPayment.id,
+        amount: parseFloat(refundForm.amount),
+        reason: refundForm.reason,
+      });
+      setRefundPayment(null);
+      await loadFees();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to process refund");
+    } finally {
+      setRefunding(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-12">
@@ -368,7 +406,8 @@ export default function StudentProfilePage() {
                           <th className="px-3 py-2 text-left">Date</th>
                           <th className="px-3 py-2 text-left">Amount</th>
                           <th className="px-3 py-2 text-left">Mode</th>
-                          <th className="px-3 py-2 text-center">Receipt</th>
+                          <th className="px-3 py-2 text-left">Status</th>
+                          <th className="px-3 py-2 text-center">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -379,13 +418,30 @@ export default function StudentProfilePage() {
                             <td className="px-3 py-2">{formatDate(p.paidAt)}</td>
                             <td className="px-3 py-2 font-medium">{formatCurrency(Number(p.amount))}</td>
                             <td className="px-3 py-2">{p.paymentMode.replace(/_/g, " ")}</td>
+                            <td className="px-3 py-2">
+                              {p.status === "REFUNDED" ? (
+                                <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full">Refunded</span>
+                              ) : (
+                                <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">{p.status}</span>
+                              )}
+                            </td>
                             <td className="px-3 py-2 text-center">
-                              <button
-                                onClick={() => openPdfInNewTab(`/fees/payments/${p.id}/receipt`)}
-                                className="inline-flex items-center gap-1 text-primary-600 text-xs font-medium hover:underline"
-                              >
-                                <Download className="h-3.5 w-3.5" /> Download
-                              </button>
+                              <div className="flex items-center justify-center gap-3">
+                                <button
+                                  onClick={() => openPdfInNewTab(`/fees/payments/${p.id}/receipt`)}
+                                  className="inline-flex items-center gap-1 text-primary-600 text-xs font-medium hover:underline"
+                                >
+                                  <Download className="h-3.5 w-3.5" /> Receipt
+                                </button>
+                                {isAdmin && p.status !== "REFUNDED" && (
+                                  <button
+                                    onClick={() => openRefundModal(p)}
+                                    className="inline-flex items-center gap-1 text-red-500 text-xs font-medium hover:underline"
+                                  >
+                                    <Undo2 className="h-3.5 w-3.5" /> Refund
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -786,6 +842,49 @@ export default function StudentProfilePage() {
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowDiscountModal(false)} className="btn-secondary">Cancel</button>
             <button type="submit" className="btn-primary">Add Discount</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={!!refundPayment} onClose={() => setRefundPayment(null)} title={`Refund Receipt ${refundPayment?.receiptNo || ""}`}>
+        <form onSubmit={handleRefund} className="space-y-4">
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800">
+              This marks the payment as refunded and reduces the student's paid amount for this fee accordingly. It
+              does not itself move money - process the actual refund (cash/bank transfer/gateway) separately.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Refund Amount (Rs) *</label>
+            <input
+              type="number"
+              min="0"
+              max={refundPayment?.amount}
+              step="0.01"
+              className="input-field"
+              value={refundForm.amount}
+              onChange={(e) => setRefundForm({ ...refundForm, amount: e.target.value })}
+              required
+            />
+            <p className="text-xs text-gray-400 mt-1">Original payment: {formatCurrency(Number(refundPayment?.amount || 0))}</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Reason *</label>
+            <textarea
+              className="input-field"
+              rows={2}
+              value={refundForm.reason}
+              onChange={(e) => setRefundForm({ ...refundForm, reason: e.target.value })}
+              placeholder="e.g. Overpayment, student withdrawn, duplicate payment..."
+              required
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setRefundPayment(null)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={refunding} className="btn-primary disabled:opacity-50">
+              {refunding ? "Processing..." : "Process Refund"}
+            </button>
           </div>
         </form>
       </Modal>

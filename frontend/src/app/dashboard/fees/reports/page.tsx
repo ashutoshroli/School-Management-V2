@@ -1,16 +1,27 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BarChart3, AlertCircle, Send, TrendingUp, Download } from "lucide-react";
+import { BarChart3, AlertCircle, Send, TrendingUp, Download, PieChart } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
+const PAYMENT_MODE_COLORS: Record<string, string> = {
+  CASH: "bg-green-500",
+  CHEQUE: "bg-blue-500",
+  DD: "bg-indigo-500",
+  ONLINE_RAZORPAY: "bg-purple-500",
+  ONLINE_PAYU: "bg-fuchsia-500",
+  UPI: "bg-orange-500",
+  BANK_TRANSFER: "bg-teal-500",
+};
+
 export default function FeeReportsPage() {
-  const [tab, setTab] = useState<"summary" | "defaulters" | "trend">("summary");
+  const [tab, setTab] = useState<"summary" | "defaulters" | "trend" | "payment-mode">("summary");
   const [summary, setSummary] = useState<any>(null);
   const [defaulters, setDefaulters] = useState<any>(null);
   const [trend, setTrend] = useState<any>(null);
   const [trendDays, setTrendDays] = useState(30);
+  const [paymentModeBreakdown, setPaymentModeBreakdown] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [sendingReminders, setSendingReminders] = useState(false);
   const [reminderResult, setReminderResult] = useState<string | null>(null);
@@ -50,6 +61,9 @@ export default function FeeReportsPage() {
       } else if (tab === "trend") {
         const res = await api.get("/fees/reports/collection-trend", { params: { days: trendDays } });
         setTrend(res.data.data);
+      } else if (tab === "payment-mode") {
+        const res = await api.get("/fees/reports/payment-mode-breakdown");
+        setPaymentModeBreakdown(res.data.data || []);
       } else {
         const res = await api.get("/fees/reports/defaulters");
         setDefaulters(res.data.data);
@@ -78,6 +92,10 @@ export default function FeeReportsPage() {
         <button onClick={() => setTab("trend")}
           className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${tab === "trend" ? "bg-primary-600 text-white" : "bg-gray-100 text-gray-700"}`}>
           <TrendingUp className="h-4 w-4" /> Collection Trend
+        </button>
+        <button onClick={() => setTab("payment-mode")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${tab === "payment-mode" ? "bg-primary-600 text-white" : "bg-gray-100 text-gray-700"}`}>
+          <PieChart className="h-4 w-4" /> Payment Mode
         </button>
       </div>
 
@@ -186,6 +204,82 @@ export default function FeeReportsPage() {
             </div>
             <p className="text-xs text-gray-400 mt-2 text-center">Hover over a bar to see the exact date and amount</p>
           </div>
+        </div>
+      ) : tab === "payment-mode" ? (
+        <div>
+          {paymentModeBreakdown.length === 0 ? (
+            <p className="text-center text-gray-400 py-12">No successful payments recorded yet</p>
+          ) : (
+            (() => {
+              const grandTotal = paymentModeBreakdown.reduce((sum, b) => sum + b.totalAmount, 0);
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="card">
+                    <h3 className="font-semibold mb-4">Collection by Payment Mode</h3>
+                    {/* Plain CSS stacked bar - same "no charting library
+                        dependency" convention as the trend tab's bar chart above. */}
+                    <div className="flex h-4 rounded-full overflow-hidden mb-4">
+                      {paymentModeBreakdown.map((b) => (
+                        <div
+                          key={b.paymentMode}
+                          className={PAYMENT_MODE_COLORS[b.paymentMode] || "bg-gray-400"}
+                          style={{ width: `${grandTotal > 0 ? (b.totalAmount / grandTotal) * 100 : 0}%` }}
+                          title={`${b.paymentMode}: ${formatCurrency(b.totalAmount)}`}
+                        />
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      {paymentModeBreakdown
+                        .sort((a, b) => b.totalAmount - a.totalAmount)
+                        .map((b) => (
+                          <div key={b.paymentMode} className="flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-2">
+                              <span className={`w-2.5 h-2.5 rounded-full ${PAYMENT_MODE_COLORS[b.paymentMode] || "bg-gray-400"}`} />
+                              {b.paymentMode.replace(/_/g, " ")}
+                            </span>
+                            <span className="text-gray-500">{b.transactionCount} txn(s)</span>
+                            <span className="font-medium">{formatCurrency(b.totalAmount)}</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                  <div className="card overflow-x-auto">
+                    <h3 className="font-semibold mb-4">Details</h3>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-gray-50">
+                          <th className="px-3 py-2 text-left">Mode</th>
+                          <th className="px-3 py-2 text-right">Transactions</th>
+                          <th className="px-3 py-2 text-right">Amount</th>
+                          <th className="px-3 py-2 text-right">%</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paymentModeBreakdown
+                          .sort((a, b) => b.totalAmount - a.totalAmount)
+                          .map((b) => (
+                            <tr key={b.paymentMode} className="border-b">
+                              <td className="px-3 py-2">{b.paymentMode.replace(/_/g, " ")}</td>
+                              <td className="px-3 py-2 text-right">{b.transactionCount}</td>
+                              <td className="px-3 py-2 text-right font-medium">{formatCurrency(b.totalAmount)}</td>
+                              <td className="px-3 py-2 text-right text-gray-500">
+                                {grandTotal > 0 ? Math.round((b.totalAmount / grandTotal) * 100) : 0}%
+                              </td>
+                            </tr>
+                          ))}
+                        <tr className="font-semibold bg-gray-50">
+                          <td className="px-3 py-2">Total</td>
+                          <td className="px-3 py-2 text-right">{paymentModeBreakdown.reduce((s, b) => s + b.transactionCount, 0)}</td>
+                          <td className="px-3 py-2 text-right">{formatCurrency(grandTotal)}</td>
+                          <td className="px-3 py-2 text-right">100%</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()
+          )}
         </div>
       ) : null}
     </div>
