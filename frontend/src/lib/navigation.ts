@@ -59,6 +59,12 @@ export const navigation: NavItem[] = [
     roles: [...ADMIN_ROLES, "TEACHER"],
   },
   {
+    label: "Teacher Assign",
+    href: "/dashboard/teacher-assign",
+    icon: "UserCog",
+    roles: ADMIN_ROLES,
+  },
+  {
     label: "Subjects",
     href: "/dashboard/subjects",
     icon: "BookOpen",

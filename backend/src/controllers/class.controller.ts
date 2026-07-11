@@ -314,6 +314,121 @@ export const deleteSubject = async (req: AuthRequest, res: Response): Promise<vo
   }
 };
 
+// ==================== SUBJECT-TEACHER ASSIGNMENT ====================
+// (Section.classTeacherId above already covers "who is the class
+// teacher for this section" - createSection/updateSection handle that.
+// This block covers the separate, subject-wise question: "who teaches
+// Subject X to Class Y" - the SubjectTeacher model, with no endpoints
+// of its own until now.)
+
+/**
+ * Assigns a teacher to teach a subject for a class (optionally
+ * section-specific in the future via classId being nullable, though
+ * this form only ever sends a classId today). Idempotent on the
+ * @@unique([staffId, subjectId, classId]) constraint - re-assigning
+ * the same teacher/subject/class combo is a no-op rather than an
+ * error, since re-submitting the same assignment isn't a mistake worth
+ * blocking on.
+ */
+export const assignSubjectTeacher = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { staffId, subjectId, classId } = req.body;
+
+    if (!staffId) { sendError(res, "staffId is required", 400); return; }
+    if (!subjectId) { sendError(res, "subjectId is required", 400); return; }
+
+    const [staff, subject, cls] = await Promise.all([
+      prisma.staff.findUnique({ where: { id: staffId }, include: { user: { select: { role: true } } } }),
+      prisma.subject.findUnique({ where: { id: subjectId } }),
+      classId ? prisma.class.findUnique({ where: { id: classId } }) : Promise.resolve(null),
+    ]);
+    if (!staff) { sendError(res, "Staff member not found", 404); return; }
+    if (!subject) { sendError(res, "Subject not found", 404); return; }
+    if (classId && !cls) { sendError(res, "Class not found", 404); return; }
+
+    // SECURITY: every one of these belongs to a branch - without this
+    // check, a Branch Admin could wire up a teacher/subject/class
+    // combination that spans branches they don't own (e.g. assigning
+    // their own teacher to another branch's class, or vice versa).
+    const branchIds = new Set([staff.branchId, subject.branchId, ...(cls ? [cls.branchId] : [])]);
+    if (branchIds.size > 1 || !canAccessBranch(req, staff.branchId)) {
+      sendError(res, "Staff, subject, and class must all belong to the same branch you have access to", 403);
+      return;
+    }
+
+    const existing = await prisma.subjectTeacher.findUnique({
+      where: { staffId_subjectId_classId: { staffId, subjectId, classId: classId || null } },
+    });
+    if (existing) {
+      sendSuccess(res, existing, "This teacher is already assigned to this subject/class");
+      return;
+    }
+
+    const assignment = await prisma.subjectTeacher.create({
+      data: { staffId, subjectId, classId: classId || null },
+    });
+
+    sendSuccess(res, assignment, "Teacher assigned to subject", 201);
+  } catch (error) {
+    sendError(res, "Failed to assign subject teacher", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Lists subject-teacher assignments, optionally filtered to a single
+ * class (the "Teacher Assign" page's Subject Teacher tab always passes
+ * one) - branch-scoped via the subject's branchId, matching every
+ * other list endpoint in this file.
+ */
+export const getSubjectTeachers = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    const classId = req.query.classId as string;
+
+    const where: any = {};
+    if (classId) where.classId = classId;
+    if (branchId) where.subject = { branchId };
+
+    const assignments = await prisma.subjectTeacher.findMany({
+      where,
+      include: {
+        staff: { select: { id: true, user: { select: { name: true } } } },
+        subject: { select: { id: true, name: true, code: true } },
+        class: { select: { id: true, name: true } },
+      },
+      orderBy: { subject: { name: "asc" } },
+    });
+
+    sendSuccess(res, assignments, "Subject teachers fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch subject teachers", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Removes a single subject-teacher assignment (unassign) - no
+ * historical data hangs off SubjectTeacher itself (Marks/Homework
+ * reference the subject directly, not this mapping), so a plain
+ * delete is safe with no dependent-record checks needed.
+ */
+export const removeSubjectTeacher = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const assignment = await prisma.subjectTeacher.findUnique({
+      where: { id },
+      include: { subject: { select: { branchId: true } } },
+    });
+    if (!assignment) { sendError(res, "Assignment not found", 404); return; }
+    if (!canAccessBranch(req, assignment.subject.branchId)) { sendError(res, "Assignment not found", 404); return; }
+
+    await prisma.subjectTeacher.delete({ where: { id } });
+    sendSuccess(res, null, "Teacher unassigned from subject");
+  } catch (error) {
+    sendError(res, "Failed to remove subject teacher", 500, (error as Error).message);
+  }
+};
+
 // ==================== CLASS-SUBJECT MAPPING ====================
 
 export const assignSubjectToClass = async (req: AuthRequest, res: Response): Promise<void> => {

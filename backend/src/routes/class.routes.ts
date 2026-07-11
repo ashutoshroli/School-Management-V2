@@ -5,6 +5,7 @@ import {
   createSection, getSections, updateSection, deleteSection,
   createSubject, getSubjects, updateSubject, deleteSubject,
   assignSubjectToClass, getClassSubjects, removeSubjectFromClass,
+  assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher,
 } from "../controllers/class.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 
@@ -35,5 +36,12 @@ router.delete("/subjects/:id", authorize(...ADMIN), deleteSubject);
 router.post("/subjects/assign", authorize(...ADMIN), assignSubjectToClass);
 router.get("/:classId/subjects", getClassSubjects);
 router.delete("/subjects/mapping/:id", authorize(...ADMIN), removeSubjectFromClass);
+
+// Subject-Teacher assignment ("who teaches Subject X to Class Y") -
+// separate from Section.classTeacherId (updateSection above), which
+// covers "who is the class teacher for this section".
+router.post("/subject-teachers", authorize(...ADMIN), assignSubjectTeacher);
+router.get("/subject-teachers", getSubjectTeachers);
+router.delete("/subject-teachers/:id", authorize(...ADMIN), removeSubjectTeacher);
 
 export default router;

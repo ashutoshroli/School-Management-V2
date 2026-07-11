@@ -330,13 +330,14 @@ model Class {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  branch        Branch          @relation(fields: [branchId], references: [id])
-  sections      Section[]
-  students      Student[]
-  subjects      ClassSubject[]
-  feeStructures FeeStructure[]
-  exams         Exam[]
-  timetables    Timetable[]
+  branch          Branch           @relation(fields: [branchId], references: [id])
+  sections        Section[]
+  students        Student[]
+  subjects        ClassSubject[]
+  feeStructures   FeeStructure[]
+  exams           Exam[]
+  timetables      Timetable[]
+  subjectTeachers SubjectTeacher[]
 
   @@unique([branchId, name])
 }
@@ -405,6 +406,7 @@ model SubjectTeacher {
 
   staff   Staff   @relation(fields: [staffId], references: [id])
   subject Subject @relation(fields: [subjectId], references: [id])
+  class   Class?  @relation(fields: [classId], references: [id])
 
   @@unique([staffId, subjectId, classId])
 }

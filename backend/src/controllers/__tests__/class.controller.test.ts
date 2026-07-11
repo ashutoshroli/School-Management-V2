@@ -6,11 +6,13 @@ jest.mock("../../config/database", () => ({
     class: { findUnique: jest.fn(), create: jest.fn() },
     section: { findUnique: jest.fn(), create: jest.fn() },
     subject: { findUnique: jest.fn(), create: jest.fn() },
+    staff: { findUnique: jest.fn() },
+    subjectTeacher: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn(), delete: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createClass, createSection, createSubject } from "../class.controller";
+import { createClass, createSection, createSubject, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -140,6 +142,188 @@ describe("class.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect((prisma.subject.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+    });
+  });
+
+  describe("assignSubjectTeacher", () => {
+    const STAFF = { id: "staff-1", branchId: "branch-1", user: { role: UserRole.TEACHER } };
+    const SUBJECT = { id: "subj-1", branchId: "branch-1" };
+    const CLASS = { id: "class-1", branchId: "branch-1" };
+
+    beforeEach(() => {
+      (prisma.staff.findUnique as jest.Mock).mockResolvedValue(STAFF);
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue(SUBJECT);
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue(CLASS);
+      (prisma.subjectTeacher.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.subjectTeacher.create as jest.Mock).mockImplementation(({ data }: any) =>
+        Promise.resolve({ id: "st-1", ...data })
+      );
+    });
+
+    it("returns 400 when staffId is missing", async () => {
+      const req = makeReq({ body: { subjectId: "subj-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.staff.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when subjectId is missing", async () => {
+      const req = makeReq({ body: { staffId: "staff-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it("returns 404 when the staff member does not exist", async () => {
+      (prisma.staff.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { staffId: "staff-1", subjectId: "subj-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.subjectTeacher.create).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the subject does not exist", async () => {
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { staffId: "staff-1", subjectId: "subj-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("returns 404 when a given classId does not exist", async () => {
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { staffId: "staff-1", subjectId: "subj-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("SECURITY: rejects when the staff, subject, and class don't all belong to the same branch", async () => {
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue({ id: "subj-1", branchId: "branch-OTHER" });
+      const req = makeReq({ body: { staffId: "staff-1", subjectId: "subj-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.subjectTeacher.create).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects a Branch Admin whose own branch doesn't match the staff's branch", async () => {
+      const req = makeReq({
+        body: { staffId: "staff-1", subjectId: "subj-1", classId: "class-1" },
+        user: { userId: "admin-2", email: "e", role: UserRole.BRANCH_ADMIN, branchId: "branch-OTHER" },
+      });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.subjectTeacher.create).not.toHaveBeenCalled();
+    });
+
+    it("creates the assignment when everything is valid", async () => {
+      const req = makeReq({ body: { staffId: "staff-1", subjectId: "subj-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(prisma.subjectTeacher.create).toHaveBeenCalledWith({
+        data: { staffId: "staff-1", subjectId: "subj-1", classId: "class-1" },
+      });
+    });
+
+    it("is idempotent - re-assigning the same teacher/subject/class combo is a no-op, not an error", async () => {
+      (prisma.subjectTeacher.findUnique as jest.Mock).mockResolvedValue({ id: "st-existing" });
+      const req = makeReq({ body: { staffId: "staff-1", subjectId: "subj-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.subjectTeacher.create).not.toHaveBeenCalled();
+    });
+
+    it("allows a null classId (subject-wide assignment, not tied to one class)", async () => {
+      const req = makeReq({ body: { staffId: "staff-1", subjectId: "subj-1" } });
+      const res = makeMockRes();
+
+      await assignSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(prisma.class.findUnique).not.toHaveBeenCalled();
+      expect(prisma.subjectTeacher.create).toHaveBeenCalledWith({
+        data: { staffId: "staff-1", subjectId: "subj-1", classId: null },
+      });
+    });
+  });
+
+  describe("getSubjectTeachers", () => {
+    it("fetches assignments filtered by classId when provided", async () => {
+      (prisma.subjectTeacher.findMany as jest.Mock).mockResolvedValue([]);
+      const req = makeReq({ query: { classId: "class-1" } });
+      const res = makeMockRes();
+
+      await getSubjectTeachers(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const whereArg = (prisma.subjectTeacher.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(whereArg.classId).toBe("class-1");
+      expect(whereArg.subject).toEqual({ branchId: "branch-1" });
+    });
+  });
+
+  describe("removeSubjectTeacher", () => {
+    it("returns 404 when the assignment does not exist", async () => {
+      (prisma.subjectTeacher.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ params: { id: "st-1" } });
+      const res = makeMockRes();
+
+      await removeSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.subjectTeacher.delete).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects removing an assignment belonging to a different branch", async () => {
+      (prisma.subjectTeacher.findUnique as jest.Mock).mockResolvedValue({
+        id: "st-1",
+        subject: { branchId: "branch-OTHER" },
+      });
+      const req = makeReq({ params: { id: "st-1" } });
+      const res = makeMockRes();
+
+      await removeSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.subjectTeacher.delete).not.toHaveBeenCalled();
+    });
+
+    it("deletes the assignment when it belongs to the caller's branch", async () => {
+      (prisma.subjectTeacher.findUnique as jest.Mock).mockResolvedValue({
+        id: "st-1",
+        subject: { branchId: "branch-1" },
+      });
+      const req = makeReq({ params: { id: "st-1" } });
+      const res = makeMockRes();
+
+      await removeSubjectTeacher(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.subjectTeacher.delete).toHaveBeenCalledWith({ where: { id: "st-1" } });
     });
   });
 });
