@@ -143,6 +143,138 @@ export const assignFeesToStudents = async (req: AuthRequest, res: Response): Pro
 };
 
 /**
+ * Assign a transport fee to every student currently allocated to a
+ * transport route - the transport counterpart to bulkAssignFees
+ * (class-wise) and assignFeesToStudents (hand-picked list) above.
+ *
+ * Unlike those two, this doesn't require a FeeStructure to already
+ * exist: it finds-or-creates one automatically, keyed on
+ * (branch, academicYear, route, feeCategory) via the
+ * @@unique([branchId, academicYearId, transportRouteId, feeCategoryId])
+ * constraint on FeeStructure - so calling this endpoint twice for the
+ * same route/year reuses the same structure instead of creating
+ * duplicates (mirrors the "Transport Fee" system FeeCategory seeded in
+ * db/prisma/seed.ts, auto-created here too if a branch doesn't have it
+ * yet - e.g. any branch created after that seed script ran).
+ *
+ * FeeStructure.classId is intentionally left null for these - a
+ * transport fee applies to whichever students are allocated to the
+ * route, which cuts across classes, not to a specific class.
+ */
+export const assignTransportFee = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { routeId, academicYearId } = req.body;
+
+    if (!routeId) { sendError(res, "routeId is required", 400); return; }
+    if (!academicYearId) { sendError(res, "academicYearId is required", 400); return; }
+
+    const route = await prisma.transportRoute.findUnique({ where: { id: routeId } });
+    if (!route) { sendError(res, "Transport route not found", 404); return; }
+    if (!canAccessBranch(req, route.branchId)) { sendError(res, "Transport route not found", 404); return; }
+
+    const academicYear = await prisma.academicYear.findUnique({ where: { id: academicYearId } });
+    if (!academicYear || academicYear.branchId !== route.branchId) {
+      sendError(res, "Academic year not found for this branch", 404);
+      return;
+    }
+
+    // Find-or-create the branch's "Transport Fee" system category -
+    // present via db/prisma/seed.ts's demo data, but a branch created
+    // through the running app (see createBranch's own auto-seeding of
+    // Chart of Accounts for the same class of issue) has no fee
+    // categories at all until an admin creates them, so this can't
+    // assume it already exists.
+    let transportCategory = await prisma.feeCategory.findUnique({
+      where: { branchId_code: { branchId: route.branchId, code: "TRANSPORT" } },
+    });
+    if (!transportCategory) {
+      transportCategory = await prisma.feeCategory.create({
+        data: { branchId: route.branchId, name: "Transport Fee", code: "TRANSPORT", isSystem: true, isActive: true },
+      });
+    }
+
+    // Find-or-create the route's FeeStructure for this academic year.
+    // NOTE: if the route's monthlyFee has changed since this structure
+    // was first created, the structure amount is NOT retroactively
+    // updated here (same as class-wise structures, which also don't
+    // auto-track changes elsewhere) - edit the fee structure directly
+    // (Fees > Fee Structures) if the amount needs correcting.
+    let structure = await prisma.feeStructure.findUnique({
+      where: {
+        branchId_academicYearId_transportRouteId_feeCategoryId: {
+          branchId: route.branchId,
+          academicYearId,
+          transportRouteId: routeId,
+          feeCategoryId: transportCategory.id,
+        },
+      },
+    });
+    if (!structure) {
+      structure = await prisma.feeStructure.create({
+        data: {
+          branchId: route.branchId,
+          academicYearId,
+          transportRouteId: routeId,
+          feeCategoryId: transportCategory.id,
+          amount: route.monthlyFee,
+          frequency: "MONTHLY",
+          dueDay: 10,
+          lateFeeType: "NONE",
+          lateFeeValue: 0,
+          isActive: true,
+        },
+      });
+    }
+
+    const allocations = await prisma.transportAllocation.findMany({
+      where: { routeId },
+      select: { studentId: true },
+    });
+
+    if (allocations.length === 0) {
+      sendSuccess(res, { created: 0, skipped: 0, total: 0 }, "No students are currently allocated to this route");
+      return;
+    }
+
+    // Same N+1-avoidance pattern as bulkAssignFees/assignFeesToStudents:
+    // one query to find who already has this assignment, instead of a
+    // findUnique-per-student.
+    const existingAssignments = await prisma.feeAssignment.findMany({
+      where: { feeStructureId: structure.id, studentId: { in: allocations.map((a) => a.studentId) } },
+      select: { studentId: true },
+    });
+    const alreadyAssigned = new Set(existingAssignments.map((a) => a.studentId));
+
+    const toCreate = allocations.filter((a) => !alreadyAssigned.has(a.studentId));
+
+    if (toCreate.length > 0) {
+      await prisma.feeAssignment.createMany({
+        data: toCreate.map((a) => ({
+          studentId: a.studentId,
+          feeStructureId: structure!.id,
+          totalAmount: structure!.amount,
+          paidAmount: 0,
+          discount: 0,
+          lateFee: 0,
+          status: "PENDING" as const,
+        })),
+      });
+    }
+
+    const created = toCreate.length;
+    const skipped = allocations.length - created;
+
+    sendSuccess(
+      res,
+      { created, skipped, total: allocations.length, feeStructureId: structure.id },
+      `Transport fee assigned to ${created} student(s) (${skipped} skipped - already assigned)`
+    );
+  } catch (error) {
+    sendError(res, "Failed to assign transport fee", 500, (error as Error).message);
+  }
+};
+
+/**
  * Get student's pending fees
  */
 export const getStudentPendingFees = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -163,6 +295,10 @@ export const getStudentPendingFees = async (req: AuthRequest, res: Response): Pr
           include: {
             feeCategory: { select: { name: true, code: true } },
             class: { select: { name: true } },
+            // Present instead of `class` for transport fees (see the
+            // FeeStructure model's doc comment in schema.prisma) - the
+            // frontend falls back to this when `class` is null.
+            transportRoute: { select: { name: true } },
           },
         },
       },

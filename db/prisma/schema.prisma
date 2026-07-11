@@ -434,7 +434,14 @@ model FeeStructure {
   id              String          @id @default(cuid())
   branchId        String
   academicYearId  String
-  classId         String
+  // Nullable: a fee structure is EITHER class-wise (classId set,
+  // transportRouteId null) OR transport-route-wise (transportRouteId
+  // set, classId null) - never both, never neither. Enforced in
+  // application code (feeStructure.controller.ts's createFeeStructure
+  // and the new transport fee assignment controller), not at the DB
+  // level, since Prisma has no portable CHECK-constraint support.
+  classId         String?
+  transportRouteId String?
   feeCategoryId   String
   amount          Decimal         @db.Decimal(12, 2)
   frequency       FeeFrequency
@@ -447,12 +454,21 @@ model FeeStructure {
 
   branch         Branch         @relation(fields: [branchId], references: [id])
   academicYear   AcademicYear   @relation(fields: [academicYearId], references: [id])
-  class          Class          @relation(fields: [classId], references: [id])
+  class          Class?         @relation(fields: [classId], references: [id])
+  transportRoute TransportRoute? @relation(fields: [transportRouteId], references: [id])
   feeCategory    FeeCategory    @relation(fields: [feeCategoryId], references: [id])
   feeAssignments FeeAssignment[]
   installments   FeeInstallment[]
 
+  // NOTE: Postgres treats NULL as distinct from every other value in a
+  // unique index, so each of these two constraints is only actually
+  // enforced for the row "shape" where its own key columns are
+  // non-null - class-wise structures (transportRouteId always null)
+  // are deduped by the first constraint; transport-route-wise
+  // structures (classId always null) are deduped by the second. They
+  // don't interfere with each other.
   @@unique([branchId, academicYearId, classId, feeCategoryId])
+  @@unique([branchId, academicYearId, transportRouteId, feeCategoryId])
 }
 
 enum FeeFrequency {
@@ -1117,10 +1133,11 @@ model TransportRoute {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  branch      Branch               @relation(fields: [branchId], references: [id])
-  stops       TransportStop[]
-  vehicles    VehicleRoute[]
-  allocations TransportAllocation[]
+  branch        Branch               @relation(fields: [branchId], references: [id])
+  stops         TransportStop[]
+  vehicles      VehicleRoute[]
+  allocations   TransportAllocation[]
+  feeStructures FeeStructure[]
 }
 
 model TransportStop {

@@ -9,7 +9,7 @@ import { formatCurrency } from "@/lib/utils";
 
 interface FeeStructure {
   id: string;
-  classId: string;
+  classId: string | null;
   amount: number;
   frequency: string;
   dueDay: number;
@@ -17,7 +17,12 @@ interface FeeStructure {
   lateFeeValue: number;
   isActive: boolean;
   feeCategory: { name: string; code: string };
-  class: { name: string };
+  // Exactly one of these two is present - class-wise structures have
+  // `class`, transport-route-wise ones (created via Transport >
+  // Assign Fee, not this page) have `transportRoute` instead. See the
+  // FeeStructure model's doc comment in schema.prisma.
+  class: { name: string } | null;
+  transportRoute: { name: string; startPoint: string; endPoint: string } | null;
   academicYear: { name: string };
   installments: { installmentNo: number; amount: number; dueDate: string }[];
 }
@@ -151,7 +156,13 @@ export default function FeeStructuresPage() {
             <tbody>
               {structures.map((s) => (
                 <tr key={s.id} className="border-b hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium">{s.class.name}</td>
+                  <td className="px-4 py-3 font-medium">
+                    {s.class ? s.class.name : (
+                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full">
+                        Transport: {s.transportRoute?.name}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">{s.feeCategory.name}</td>
                   <td className="px-4 py-3 font-semibold text-green-700">{formatCurrency(s.amount)}</td>
                   <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">{s.frequency}</span></td>
@@ -162,12 +173,18 @@ export default function FeeStructuresPage() {
                   <td className="px-4 py-3 text-xs text-gray-500">{s.academicYear.name}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => goToAssign(s.id)}
-                        className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
-                      >
-                        <UserCheck className="h-3 w-3" /> Assign
-                      </button>
+                      {s.classId ? (
+                        <button
+                          onClick={() => goToAssign(s.id)}
+                          className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
+                        >
+                          <UserCheck className="h-3 w-3" /> Assign
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400" title="Transport fees are assigned from the Transport page, to students allocated to this route">
+                          Assigned via Transport
+                        </span>
+                      )}
                       <button onClick={() => openEditModal(s)} title="Edit" className="text-gray-500 hover:text-gray-700">
                         <Edit className="h-3.5 w-3.5" />
                       </button>

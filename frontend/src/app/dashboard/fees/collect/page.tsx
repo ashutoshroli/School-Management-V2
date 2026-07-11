@@ -142,7 +142,9 @@ export default function FeeCollectionPage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="font-medium">{fee.feeStructure.feeCategory.name}</p>
-                          <p className="text-xs text-gray-500">{fee.feeStructure.class.name} | {fee.feeStructure.frequency}</p>
+                          <p className="text-xs text-gray-500">
+                            {fee.feeStructure.class?.name || `Transport: ${fee.feeStructure.transportRoute?.name}`} | {fee.feeStructure.frequency}
+                          </p>
                         </div>
                         <div className="text-right">
                           <p className="font-bold text-red-600">{formatCurrency(fee.pendingAmount)}</p>

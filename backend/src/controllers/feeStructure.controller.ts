@@ -27,6 +27,15 @@ export const createFeeStructure = async (req: AuthRequest, res: Response): Promi
       sendError(res, "Access denied: branch mismatch", 403);
       return;
     }
+    // This form only ever creates class-wise structures - transport
+    // fee structures (classId null, transportRouteId set) are created
+    // exclusively by assignTransportFee (feeCollection.controller.ts),
+    // which finds-or-creates its own route-keyed structure and never
+    // goes through this endpoint.
+    if (!classId) {
+      sendError(res, "classId is required", 400);
+      return;
+    }
 
     // Check uniqueness
     const existing = await prisma.feeStructure.findUnique({
@@ -86,9 +95,18 @@ export const getFeeStructures = async (req: AuthRequest, res: Response): Promise
       include: {
         feeCategory: { select: { name: true, code: true } },
         class: { select: { name: true } },
+        // Present only for transport-route-wise structures (classId
+        // null) - see the FeeStructure model's doc comment in
+        // schema.prisma for why a structure is exactly one or the
+        // other, never both.
+        transportRoute: { select: { name: true, startPoint: true, endPoint: true } },
         academicYear: { select: { name: true } },
         installments: { orderBy: { installmentNo: "asc" } },
       },
+      // Transport-route-wise structures have no class (classId null),
+      // so they naturally sort after every class-wise structure here
+      // (Postgres/Prisma puts NULLs last by default for an ascending
+      // sort on a to-one relation's field).
       orderBy: [{ class: { numericOrder: "asc" } }, { feeCategory: { name: "asc" } }],
     });
 

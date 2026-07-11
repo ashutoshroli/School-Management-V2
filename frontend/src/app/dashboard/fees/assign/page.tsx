@@ -8,11 +8,11 @@ import { formatCurrency } from "@/lib/utils";
 
 interface FeeStructure {
   id: string;
-  classId: string;
+  classId: string | null;
   amount: number;
   frequency: string;
   feeCategory: { name: string; code: string };
-  class: { name: string };
+  class: { name: string } | null;
   academicYear: { name: string };
 }
 
@@ -57,7 +57,12 @@ function AssignFeesContent() {
         api.get("/fees/structures"),
         api.get("/classes"),
       ]);
-      setStructures(sRes.data.data || []);
+      // This page only ever assigns class-wise fees (entire
+      // class/section or hand-picked students within a class) -
+      // transport fees are assigned from the Transport page instead
+      // (they target students allocated to a route, which cuts
+      // across classes), so exclude them here.
+      setStructures((sRes.data.data || []).filter((s: FeeStructure) => s.classId));
       setClasses(cRes.data.data || []);
     } catch (err) {} finally { setLoading(false); }
   };
@@ -184,7 +189,7 @@ function AssignFeesContent() {
               <option value="">Select a fee structure</option>
               {structures.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.class.name} - {s.feeCategory.name} - {formatCurrency(s.amount)} ({s.frequency}) - {s.academicYear.name}
+                  {s.class?.name} - {s.feeCategory.name} - {formatCurrency(s.amount)} ({s.frequency}) - {s.academicYear.name}
                 </option>
               ))}
             </select>
@@ -220,7 +225,7 @@ function AssignFeesContent() {
               {mode === "class" ? (
                 <div className="card">
                   <p className="text-sm text-gray-600 mb-4">
-                    This will assign <span className="font-medium">{selectedStructure.feeCategory.name}</span> ({formatCurrency(selectedStructure.amount)}, {selectedStructure.frequency}) to <span className="font-medium">every active student</span> in <span className="font-medium">{selectedStructure.class.name}</span>. Students who already have this fee assigned will be skipped automatically.
+                    This will assign <span className="font-medium">{selectedStructure.feeCategory.name}</span> ({formatCurrency(selectedStructure.amount)}, {selectedStructure.frequency}) to <span className="font-medium">every active student</span> in <span className="font-medium">{selectedStructure.class?.name}</span>. Students who already have this fee assigned will be skipped automatically.
                   </p>
                   <button onClick={handleAssignToClass} disabled={assigningClass} className="btn-primary disabled:opacity-50">
                     {assigningClass ? "Assigning..." : "Assign to Entire Class"}
@@ -229,7 +234,7 @@ function AssignFeesContent() {
               ) : (
                 <div className="card space-y-4">
                   <p className="text-sm text-gray-500">
-                    Only students in <span className="font-medium">{selectedStructure.class.name}</span> are shown - narrow down by section or search, then tick the students who should get this fee.
+                    Only students in <span className="font-medium">{selectedStructure.class?.name}</span> are shown - narrow down by section or search, then tick the students who should get this fee.
                   </p>
 
                   <div className="flex flex-wrap gap-3">

@@ -48,6 +48,13 @@ export const assignFeesToStudentsSchema = z.object({
   }),
 });
 
+export const assignTransportFeeSchema = z.object({
+  body: z.object({
+    routeId: z.string().min(1, "routeId is required"),
+    academicYearId: z.string().min(1, "academicYearId is required"),
+  }),
+});
+
 export const createRazorpayOrderSchema = z.object({
   body: z.object({
     // Optional - see collectPaymentSchema's comment above.

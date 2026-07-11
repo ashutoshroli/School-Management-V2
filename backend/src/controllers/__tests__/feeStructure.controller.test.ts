@@ -102,4 +102,22 @@ describe("feeStructure.controller - createFeeStructure", () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(prisma.feeStructure.create).not.toHaveBeenCalled();
   });
+
+  // BUG FIX / REGRESSION: FeeStructure.classId became nullable in the
+  // schema (to allow transport-route-wise structures, classId null +
+  // transportRouteId set - see assignTransportFee in
+  // feeCollection.controller.ts) - this form only ever creates
+  // class-wise structures, so it must keep requiring classId rather
+  // than silently creating a structure with neither classId nor
+  // transportRouteId set (which nothing else in the app can look up).
+  it("rejects when classId is missing (this endpoint never creates transport-route-wise structures)", async () => {
+    const req = makeReq({ body: { ...baseBody, classId: undefined } });
+    const res = makeMockRes();
+
+    await createFeeStructure(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.feeStructure.findUnique).not.toHaveBeenCalled();
+    expect(prisma.feeStructure.create).not.toHaveBeenCalled();
+  });
 });
