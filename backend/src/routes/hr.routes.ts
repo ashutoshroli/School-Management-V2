@@ -4,29 +4,33 @@ import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCal
 import { getLeaveTypes, applyLeave, getLeaveApplications, updateLeaveStatus, getLeaveBalance } from "../controllers/leave.controller";
 import { upsertSalaryStructure, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
 import { authenticate, authorize } from "../middleware/auth";
+import { validate } from "../middleware/validate";
+import { markStaffAttendanceSchema, bulkMarkStaffAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
+import { applyLeaveSchema, updateLeaveStatusSchema } from "../validators/leave.validator";
+import { upsertSalaryStructureSchema, runPayrollSchema } from "../validators/payroll.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
 const STAFF_ROLES = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.TEACHER, UserRole.ACCOUNTANT, UserRole.LIBRARIAN, UserRole.TRANSPORT_MANAGER, UserRole.WARDEN, UserRole.STAFF];
 
 // ===== STAFF ATTENDANCE =====
-router.post("/attendance/mark", authenticate, authorize(...ADMIN), markAttendance);
-router.post("/attendance/bulk", authenticate, authorize(...ADMIN), bulkMarkAttendance);
-router.post("/attendance/card-tap", cardTapAttendance); // No auth - device uses API key in body
+router.post("/attendance/mark", authenticate, authorize(...ADMIN), validate(markStaffAttendanceSchema), markAttendance);
+router.post("/attendance/bulk", authenticate, authorize(...ADMIN), validate(bulkMarkStaffAttendanceSchema), bulkMarkAttendance);
+router.post("/attendance/card-tap", validate(cardTapSchema), cardTapAttendance); // No auth - device uses API key in body
 router.get("/attendance/calendar/:staffId", authenticate, getAttendanceCalendar);
 router.get("/attendance/date", authenticate, authorize(...ADMIN), getDateAttendance);
 
 // ===== LEAVE MANAGEMENT =====
 router.get("/leave/types", authenticate, getLeaveTypes);
-router.post("/leave/apply", authenticate, authorize(...STAFF_ROLES), applyLeave);
+router.post("/leave/apply", authenticate, authorize(...STAFF_ROLES), validate(applyLeaveSchema), applyLeave);
 router.get("/leave/applications", authenticate, getLeaveApplications);
-router.patch("/leave/:id/status", authenticate, authorize(...ADMIN), updateLeaveStatus);
+router.patch("/leave/:id/status", authenticate, authorize(...ADMIN), validate(updateLeaveStatusSchema), updateLeaveStatus);
 router.get("/leave/balance/:staffId", authenticate, getLeaveBalance);
 
 // ===== PAYROLL =====
-router.post("/salary-structure", authenticate, authorize(...ADMIN), upsertSalaryStructure);
+router.post("/salary-structure", authenticate, authorize(...ADMIN), validate(upsertSalaryStructureSchema), upsertSalaryStructure);
 router.get("/salary-structure/:staffId", authenticate, getSalaryStructure);
-router.post("/payroll/run", authenticate, authorize(...ADMIN), runPayroll);
+router.post("/payroll/run", authenticate, authorize(...ADMIN), validate(runPayrollSchema), runPayroll);
 router.get("/payroll/payslips", authenticate, authorize(...ADMIN), getPayslips);
 router.patch("/payroll/payslip/:id/approve", authenticate, authorize(...ADMIN), approvePayslip);
 router.patch("/payroll/payslip/:id/paid", authenticate, authorize(...ADMIN), markPaid);

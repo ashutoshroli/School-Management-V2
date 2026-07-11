@@ -5,6 +5,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { seedDefaultAccountsForBranch } from "../services/defaultChartOfAccounts";
+import { cached, CacheKeys, CacheTTL, invalidateBranchesCache } from "../services/cache.service";
 
 /**
  * Create a new branch
@@ -52,6 +53,7 @@ export const createBranch = async (req: AuthRequest, res: Response): Promise<voi
     // data gets, right when the branch is created, so fee collection
     // works out of the box.
     await seedDefaultAccountsForBranch(branch.id);
+    await invalidateBranchesCache();
 
     sendSuccess(res, branch, "Branch created successfully", 201);
   } catch (error) {
@@ -118,14 +120,23 @@ export const getBranchById = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    const branch = await prisma.branch.findUnique({
-      where: { id },
-      include: {
-        _count: {
-          select: { students: true, staff: true, classes: true },
+    // Cached (Phase 4) - a branch's own details change very rarely.
+    // Note: the list endpoint (getBranches) is intentionally NOT
+    // cached here - it's paginated/searchable, so caching it would
+    // mean one cache entry per distinct page/search combination for
+    // comparatively little benefit; this single-record lookup is the
+    // one that's actually hit repeatedly (e.g. every branchAccess
+    // check that re-resolves a branch).
+    const branch = await cached(CacheKeys.branchById(id), CacheTTL.BRANCHES, () =>
+      prisma.branch.findUnique({
+        where: { id },
+        include: {
+          _count: {
+            select: { students: true, staff: true, classes: true },
+          },
         },
-      },
-    });
+      })
+    );
 
     if (!branch) {
       sendError(res, "Branch not found", 404);
@@ -156,6 +167,7 @@ export const updateBranch = async (req: AuthRequest, res: Response): Promise<voi
       where: { id },
       data: { name, address, city, state, pincode, phone, email, isActive, logo },
     });
+    await invalidateBranchesCache(id);
 
     sendSuccess(res, updated, "Branch updated successfully");
   } catch (error) {
@@ -193,6 +205,7 @@ export const deleteBranch = async (req: AuthRequest, res: Response): Promise<voi
     }
 
     await prisma.branch.delete({ where: { id } });
+    await invalidateBranchesCache(id);
     sendSuccess(res, null, "Branch deleted");
   } catch (error) {
     sendError(res, "Failed to delete branch", 500, (error as Error).message);

@@ -126,57 +126,77 @@ already exist with tests. No action taken. See correction note in Phase 1.
 
 ---
 
-## Phase 4: Missing Validators + Caching (Day 8-9) 🟡
+## Phase 4: Missing Validators + Caching ✅ COMPLETED
 
 **Priority:** HIGH  
-**Duration:** 2 days  
-**Status:** 🔴 Not Started
+**Duration:** ~1 day (actual)  
+**Status:** ✅ **DONE**
 
-### Tasks:
+### What was actually done:
 
-#### 1. Create Missing Validators (10 files)
-**New Files:**
+#### 1. Created 11 new/expanded validator files
 ```
 backend/src/validators/
-├── staff.validator.ts (expand)
-├── payroll.validator.ts (new)
-├── attendance.validator.ts (new)
-├── exam.validator.ts (new)
-├── timetable.validator.ts (new)
-├── library.validator.ts (new)
-├── transport.validator.ts (new)
-├── hostel.validator.ts (new)
-├── homework.validator.ts (new)
-└── notice.validator.ts (new)
+├── staff.validator.ts (new - createStaff/updateStaff)
+├── payroll.validator.ts (new - salary structure, run payroll)
+├── attendance.validator.ts (new - staff+student mark/bulk/card-tap)
+├── leave.validator.ts (new - apply leave, approve/reject)
+├── exam.validator.ts (new - create/update exam, enter marks)
+├── timetable.validator.ts (new - get-or-create, upsert slot)
+├── homework.validator.ts (new - create/update/submit)
+├── library.validator.ts (new - add book, issue book)
+├── inventory.validator.ts (new - add item, purchase/issue stock)
+├── transport.validator.ts (new - route, stop, allocate, vehicle)
+├── hostel.validator.ts (new - building, floor, room, allocate)
+├── notice.validator.ts (new - create notice)
+└── attendanceDevice.validator.ts (new - create/update device)
 ```
 
-#### 2. Apply Validators to Routes
-**Files to Update:**
-- All route files (17 files)
-- Add `validate()` middleware
+#### 2. Wired `validate()` into 5 route files
+`hr.routes.ts`, `academics.routes.ts`, `facilities.routes.ts`,
+`communication.routes.ts`, `staff.routes.ts` - every previously-
+unvalidated create/update endpoint across HR, academics, facilities,
+communication, and staff management now runs its Zod schema before
+reaching the controller.
 
-#### 3. Implement Redis Caching Layer
-**New Files:**
-- `backend/src/config/redis.ts`
-- `backend/src/services/cache.service.ts`
-- `backend/src/middleware/cache.ts`
+#### 3. Implemented Redis caching layer
+- **New file** `backend/src/config/redis.ts` - `ioredis` client,
+  opt-in via `REDIS_URL`, no-ops cleanly when unset (same pattern as
+  Sentry/SMS/WhatsApp/Push)
+- **New file** `backend/src/services/cache.service.ts` -
+  `cacheGet`/`cacheSet`/`cacheDel`/`cached()` cache-aside helper,
+  `CacheKeys`/`CacheTTL` constants, and branch-scoped
+  `invalidateBranchesCache`/`invalidateClassesCache`/`invalidateFeeStructuresCache`
+  helpers
+- Wired into: `branch.controller.ts` (`getBranchById` cached 1 day;
+  create/update/delete invalidate), `class.controller.ts`
+  (`getClasses` cached 1 hour; class+section create/update/delete
+  invalidate), `feeStructure.controller.ts` (`getFeeStructures`
+  cached 1 hour for the whole-branch/whole-year query shape;
+  create/update/delete invalidate)
+- Added `REDIS_URL` to `.env.example` + `config/index.ts`; Redis 7
+  was already added to `docker-compose.yml` in Phase 3 (unused until
+  now)
 
-**Will Cache:**
-- Branches (1 day TTL)
-- Classes/Sections (1 hour TTL)
-- Fee structures (1 hour TTL)
-- User sessions
+#### 4. Added tests
+`config/__tests__/redis.test.ts`, `services/__tests__/cache.service.test.ts`
+(covers cache hit/miss, error fallback, wildcard invalidation via
+SCAN, and the disabled/no-Redis-configured path)
 
-#### 4. Add Cache Invalidation
-**Files to Update:**
-- All create/update/delete controllers
-- Clear relevant caches on data changes
+### Verification performed:
+- `npx tsc --noEmit` - clean
+- `npm test` - **51 suites / 470 tests pass** (2 new suites added: 4
+  redis tests + 19 cache.service tests; zero regressions in the other
+  49 pre-existing suites, confirming validators didn't break any
+  controller-level test that calls controllers directly)
+- `npm run build` - clean
 
 ### Deliverables:
-- ✅ All endpoints validated
-- ✅ Redis caching working
-- ✅ 50% faster responses (cached)
-- ✅ Git branch: `feat/phase-5-validation-caching`
+- ✅ 13 new validator files covering every previously-unvalidated module
+- ✅ Redis caching working (branches, classes, fee structures) with
+  branch-scoped invalidation on every write
+- ✅ All existing + new tests passing, build clean
+- 🔲 Git branch + PR - pending user's "PR banao" instruction
 
 ---
 

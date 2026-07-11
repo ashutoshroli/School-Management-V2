@@ -3,6 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
+import { cached, CacheKeys, CacheTTL, invalidateClassesCache } from "../services/cache.service";
 
 // ==================== CLASS ====================
 
@@ -44,6 +45,7 @@ export const createClass = async (req: AuthRequest, res: Response): Promise<void
     const cls = await prisma.class.create({
       data: { branchId, name, numericOrder: safeNumericOrder },
     });
+    await invalidateClassesCache(branchId);
 
     sendSuccess(res, cls, "Class created", 201);
   } catch (error) {
@@ -59,14 +61,22 @@ export const getClasses = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    const classes = await prisma.class.findMany({
-      where: { branchId },
-      orderBy: { numericOrder: "asc" },
-      include: {
-        sections: { orderBy: { name: "asc" } },
-        _count: { select: { students: true } },
-      },
-    });
+    // Cached (Phase 4) - classes/sections change occasionally, not on
+    // every request, and this list is read on nearly every "pick a
+    // class" dropdown across the app. 1 hour TTL, invalidated
+    // explicitly on any Class/Section create/update/delete for this
+    // branch (see invalidateClassesCache calls below and in
+    // createSection/updateSection/deleteSection).
+    const classes = await cached(CacheKeys.classesByBranch(branchId), CacheTTL.CLASSES, () =>
+      prisma.class.findMany({
+        where: { branchId },
+        orderBy: { numericOrder: "asc" },
+        include: {
+          sections: { orderBy: { name: "asc" } },
+          _count: { select: { students: true } },
+        },
+      })
+    );
 
     sendSuccess(res, classes, "Classes fetched");
   } catch (error) {
@@ -83,6 +93,7 @@ export const updateClass = async (req: AuthRequest, res: Response): Promise<void
       where: { id },
       data: { ...(name && { name }), ...(numericOrder !== undefined && { numericOrder }) },
     });
+    await invalidateClassesCache(updated.branchId);
 
     sendSuccess(res, updated, "Class updated");
   } catch (error) {
@@ -101,7 +112,8 @@ export const deleteClass = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    await prisma.class.delete({ where: { id } });
+    const deleted = await prisma.class.delete({ where: { id } });
+    await invalidateClassesCache(deleted.branchId);
     sendSuccess(res, null, "Class deleted");
   } catch (error) {
     sendError(res, "Failed to delete class", 500, (error as Error).message);
@@ -138,6 +150,10 @@ export const createSection = async (req: AuthRequest, res: Response): Promise<vo
     const section = await prisma.section.create({
       data: { branchId, classId, name, capacity: capacity || 40, classTeacherId },
     });
+    // The cached class list (getClasses) embeds each class's sections,
+    // so any section change must invalidate it too, not just the
+    // class-level create/update/delete above.
+    await invalidateClassesCache(branchId);
 
     sendSuccess(res, section, "Section created", 201);
   } catch (error) {
@@ -179,6 +195,7 @@ export const updateSection = async (req: AuthRequest, res: Response): Promise<vo
       where: { id },
       data: { ...(name && { name }), ...(capacity && { capacity }), ...(classTeacherId !== undefined && { classTeacherId }) },
     });
+    await invalidateClassesCache(updated.branchId);
 
     sendSuccess(res, updated, "Section updated");
   } catch (error) {
@@ -196,7 +213,8 @@ export const deleteSection = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
-    await prisma.section.delete({ where: { id } });
+    const deletedSection = await prisma.section.delete({ where: { id } });
+    await invalidateClassesCache(deletedSection.branchId);
     sendSuccess(res, null, "Section deleted");
   } catch (error) {
     sendError(res, "Failed to delete section", 500, (error as Error).message);

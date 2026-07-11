@@ -8,6 +8,7 @@ import { registerDeviceToken, unregisterDeviceToken } from "../controllers/devic
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { generateCertificateSchema } from "../validators/certificate.validator";
+import { createNoticeSchema } from "../validators/notice.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -27,7 +28,7 @@ router.post("/notifications/devices/register", registerDeviceToken);
 router.delete("/notifications/devices/:token", unregisterDeviceToken);
 
 // === NOTICES ===
-router.post("/notices", authorize(...STAFF), branchAccess, createNotice);
+router.post("/notices", authorize(...STAFF), branchAccess, validate(createNoticeSchema), createNotice);
 router.get("/notices", getNotices);
 router.delete("/notices/:id", authorize(...ADMIN), deleteNotice);
 router.patch("/notices/:id/pin", authorize(...ADMIN), togglePin);

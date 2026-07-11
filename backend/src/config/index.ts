@@ -77,4 +77,13 @@ export const config = {
     dsn: process.env.SENTRY_DSN || "",
     tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || "0.1"),
   },
+  redis: {
+    // Optional caching layer (Phase 4). Leave unset to disable entirely
+    // - see config/redis.ts's isRedisConfigured()/cache.service.ts,
+    // which fall back to always-miss (i.e. hit the database directly,
+    // today's behavior) when this is blank. Matches
+    // docker-compose.yml's Redis service for local development
+    // (redis://localhost:6379).
+    url: process.env.REDIS_URL || "",
+  },
 };
