@@ -90,6 +90,12 @@ export const navigation: NavItem[] = [
     roles: [...ADMIN_ROLES, "ACCOUNTANT"],
   },
   {
+    label: "Assign Fees",
+    href: "/dashboard/fees/assign",
+    icon: "UserCheck",
+    roles: [...ADMIN_ROLES, "ACCOUNTANT"],
+  },
+  {
     label: "My Fees",
     href: "/dashboard/my-fees",
     icon: "IndianRupee",
