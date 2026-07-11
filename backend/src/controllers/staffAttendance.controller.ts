@@ -3,6 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { canAccessStaffRecord } from "../utils/staffAccess";
 import { authenticateDevice, extractDeviceApiKey } from "../utils/deviceAuth";
 import { toAttendanceDateOnly } from "../utils/attendanceDate";
 
@@ -197,10 +198,19 @@ export const cardTapAttendance = async (req: AuthRequest, res: Response): Promis
 
 /**
  * Get staff attendance calendar (monthly)
+ *
+ * SECURITY: previously had no access check at all beyond `authenticate`
+ * - any logged-in user (e.g. a Teacher) could pull ANY other staff
+ * member's attendance calendar just by supplying their staffId,
+ * including staff in a completely different branch (IDOR).
  */
 export const getAttendanceCalendar = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { staffId } = req.params;
+    if (!(await canAccessStaffRecord(req, staffId))) {
+      sendError(res, "Staff not found", 404);
+      return;
+    }
     const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
     const year = parseInt(req.query.year as string) || new Date().getFullYear();
 

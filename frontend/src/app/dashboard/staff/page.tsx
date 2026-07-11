@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { Users, Plus, Search, Eye, BadgeCheck, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
@@ -113,6 +114,9 @@ export default function StaffPage() {
       key: "actions", label: "",
       render: (s: StaffMember) => (
         <div className="flex items-center gap-1">
+          <Link href={`/dashboard/staff/${s.id}`} title="View Profile" className="p-1 rounded hover:bg-gray-100 inline-block">
+            <Eye className="h-4 w-4 text-primary-600" />
+          </Link>
           <button
             onClick={() => openPdfInNewTab(`/staff/${s.id}/id-card`)}
             title="Download ID Card"

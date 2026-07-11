@@ -3,6 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
+import { canAccessStaffRecord } from "../utils/staffAccess";
 import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, drawQrCode, formatMoney } from "../services/pdf.service";
 import { renderTemplateToPdf } from "../services/templateRenderer.service";
 import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
@@ -68,10 +69,20 @@ export const upsertSalaryStructure = async (req: AuthRequest, res: Response): Pr
 
 /**
  * Get salary structure
+ *
+ * SECURITY: previously had no access check at all beyond `authenticate`
+ * - any logged-in user (e.g. a Teacher) could read ANY other staff
+ * member's salary structure just by supplying their staffId, including
+ * staff in a completely different branch. Salary is exactly the kind
+ * of need-to-know data this must not leak (IDOR).
  */
 export const getSalaryStructure = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { staffId } = req.params;
+    if (!(await canAccessStaffRecord(req, staffId))) {
+      sendError(res, "Staff not found", 404);
+      return;
+    }
     const structure = await prisma.salaryStructure.findUnique({ where: { staffId } });
     sendSuccess(res, structure, "Salary structure fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
@@ -207,10 +218,18 @@ export const markPaid = async (req: AuthRequest, res: Response): Promise<void> =
 
 /**
  * Get single staff's payslip
+ *
+ * SECURITY: previously had no access check at all beyond `authenticate`
+ * - same IDOR class as getSalaryStructure above, but for the payslip
+ * (gross earning, deductions, net pay) instead of the salary structure.
  */
 export const getStaffPayslip = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { staffId, month, year } = req.params;
+    if (!(await canAccessStaffRecord(req, staffId))) {
+      sendError(res, "Payslip not found", 404);
+      return;
+    }
     const payslip = await prisma.payslip.findUnique({
       where: { staffId_month_year: { staffId, month: parseInt(month), year: parseInt(year) } },
       include: { staff: { include: { user: { select: { name: true, email: true } }, salaryStructure: true } } },

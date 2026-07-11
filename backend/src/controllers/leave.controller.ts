@@ -3,6 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { canAccessStaffRecord } from "../utils/staffAccess";
 
 /**
  * Get leave types
@@ -54,12 +55,24 @@ export const applyLeave = async (req: AuthRequest, res: Response): Promise<void>
 
 /**
  * Get leave applications (admin view or self view)
+ *
+ * SECURITY: when a `staffId` query param was supplied, this used to
+ * skip branch scoping ENTIRELY (`if (branchId && !staffId) ...`) with
+ * no ownership check either - any authenticated user (e.g. a Teacher)
+ * could pass `?staffId=<anyone>` and read that staff member's full
+ * leave application history (including their stated `reason`), even
+ * for staff in a completely different branch (IDOR).
  */
 export const getLeaveApplications = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const staffId = req.query.staffId as string;
     const status = req.query.status as string;
     const branchId = resolveBranchId(req);
+
+    if (staffId && !(await canAccessStaffRecord(req, staffId))) {
+      sendError(res, "Staff not found", 404);
+      return;
+    }
 
     const where: any = {};
     if (staffId) where.staffId = staffId;
@@ -116,6 +129,9 @@ export const updateLeaveStatus = async (req: AuthRequest, res: Response): Promis
 
 /**
  * Get leave balance for a staff
+ *
+ * SECURITY: when a real staffId (not "self") was supplied, this had no
+ * access check at all - same IDOR class as getLeaveApplications above.
  */
 export const getLeaveBalance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -133,6 +149,7 @@ export const getLeaveBalance = async (req: AuthRequest, res: Response): Promise<
         ? requestedStaffId
         : (await prisma.staff.findUnique({ where: { userId: req.user!.userId } }))?.id;
     if (!staffId) { sendError(res, "Staff not found", 404); return; }
+    if (!(await canAccessStaffRecord(req, staffId))) { sendError(res, "Staff not found", 404); return; }
 
     const leaveTypes = await prisma.leaveType.findMany({ where: { isActive: true } });
     const yearStart = new Date(new Date().getFullYear(), 0, 1);

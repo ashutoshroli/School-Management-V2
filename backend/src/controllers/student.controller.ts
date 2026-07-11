@@ -1,38 +1,16 @@
 import { Response } from "express";
 import { Prisma, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import crypto from "crypto";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
+import { generateOneTimePassword } from "../utils/password";
 import { logAuditFromRequest } from "../services/auditLog.service";
 import { notify } from "../services/notification.service";
 import { welcomeEmail } from "../services/notification/emailTemplates";
 import { config } from "../config";
-
-/**
- * Generates a random one-time login password for resetStudentPassword
- * below. Built from an unambiguous character set (no 0/O/1/l/I) since
- * this is meant to be read off a screen and typed/relayed by hand -
- * still satisfies changePasswordSchema's own new-password rule
- * (8+ chars, at least one uppercase letter, at least one digit) so a
- * student can keep using it as-is or change it via the normal
- * "Change Password" flow afterwards.
- */
-const generateOneTimePassword = (): string => {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  const bytes = crypto.randomBytes(10);
-  let password = "";
-  for (let i = 0; i < bytes.length; i++) {
-    password += chars[bytes[i] % chars.length];
-  }
-  // Guarantee at least one uppercase + one digit regardless of what
-  // the random draw above happened to produce, since the character
-  // pool doesn't make that certain on its own.
-  return `${password}A9`;
-};
 
 /**
  * Generate unique admission number.
