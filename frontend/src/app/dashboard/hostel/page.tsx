@@ -9,7 +9,9 @@ export default function HostelPage() {
   const [buildings, setBuildings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ name: "", type: "BOYS", warden: "", branchId: "" });
+  // Note: branchId is deliberately NOT part of this form - the backend
+  // always scopes creation to the logged-in user's own branch.
+  const [form, setForm] = useState({ name: "", type: "BOYS", warden: "" });
 
   const fetch = async () => {
     setLoading(true);

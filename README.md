@@ -210,6 +210,25 @@ After seeding:
   member whose `cardId` they also knew. A real hardware reader must now
   be configured with its generated `apiKey` (shown once, at device
   creation/rotation time) to authenticate.
+- **Fixed: nearly every "create X" endpoint failed** (Academic Years,
+  Classes/Sections/Subjects, Staff, Students, Fee Categories/
+  Structures, Fee Collection, Chart of Accounts/Vouchers, Notices,
+  Library Books, Transport Routes/Vehicles, Hostel Buildings, Inventory
+  Items) - every one of those creation forms in the frontend has no
+  branch-picker UI and was sending `branchId` as an empty string. For a
+  Branch Admin this was silently rejected with a 403 "branch mismatch";
+  for a Super Admin it reached the database with an invalid empty
+  foreign key and surfaced as a generic 500 (e.g. "Failed to create
+  academic year"). Fixed by `resolveEffectiveBranchId()` in
+  `backend/src/utils/branchScope.ts`, which falls back to the caller's
+  own branch whenever the client doesn't supply one (a Super Admin can
+  still target a different branch by actually sending a real
+  `branchId`). Several of the affected endpoints (`createClass`,
+  `createSection`, `createSubject`, `addBook` in library, `createRoute`/
+  `addVehicle` in transport, `createBuilding` in hostel, `addItem` in
+  inventory) also had **no branch-access check at all** before this fix
+  - that gap is closed too. The corresponding frontend forms no longer
+  send a dead `branchId` field.
 
 ## Public Pages
 
@@ -361,8 +380,13 @@ controllers - including explicit regression tests for the pre-fix
 "no apiKey required" vulnerability described above), the CSV export
 utility (`services/csvExport.service.ts` - RFC 4180 escaping rules),
 and the new analytics endpoints (fee collection trend's zero-fill
-bucketing, attendance-defaulters' threshold filtering/sorting), plus a
-handful of HTTP-level smoke tests against the real Express app.
+bucketing, attendance-defaulters' threshold filtering/sorting), the
+`resolveEffectiveBranchId` branch-resolution fix and its regression
+tests across every affected "create X" controller (academic years,
+classes/sections/subjects, staff, students, fee categories/structures/
+collection, accounting, notices, library, transport, hostel,
+inventory), plus a handful of HTTP-level smoke tests against the real
+Express app.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR to
 `main`:

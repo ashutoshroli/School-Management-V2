@@ -21,7 +21,9 @@ export default function ChartOfAccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ name: "", code: "", type: "ASSET", branchId: "", parentId: "" });
+  // Note: branchId is deliberately NOT part of this form - the backend
+  // always scopes creation to the logged-in user's own branch.
+  const [form, setForm] = useState({ name: "", code: "", type: "ASSET", parentId: "" });
 
   const fetch = async () => {
     setLoading(true);
@@ -34,7 +36,7 @@ export default function ChartOfAccountsPage() {
     e.preventDefault();
     try {
       await api.post("/accounting/accounts", { ...form, parentId: form.parentId || undefined });
-      setShowModal(false); setForm({ name: "", code: "", type: "ASSET", branchId: "", parentId: "" }); fetch();
+      setShowModal(false); setForm({ name: "", code: "", type: "ASSET", parentId: "" }); fetch();
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };
 

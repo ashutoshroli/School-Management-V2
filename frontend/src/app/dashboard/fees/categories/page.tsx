@@ -17,7 +17,9 @@ export default function FeeCategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ name: "", code: "", branchId: "" });
+  // Note: branchId is deliberately NOT part of this form - the backend
+  // always scopes creation to the logged-in user's own branch.
+  const [form, setForm] = useState({ name: "", code: "" });
 
   const fetch = async () => {
     try {
@@ -34,7 +36,7 @@ export default function FeeCategoriesPage() {
     try {
       await api.post("/fees/categories", form);
       setShowModal(false);
-      setForm({ name: "", code: "", branchId: "" });
+      setForm({ name: "", code: "" });
       fetch();
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };

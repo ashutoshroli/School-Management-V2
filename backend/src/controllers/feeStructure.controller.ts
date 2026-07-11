@@ -2,7 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
-import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create fee structure (class-wise, with frequency & late fee rules)
@@ -10,11 +10,19 @@ import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 export const createFeeStructure = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
-      branchId, academicYearId, classId, feeCategoryId,
+      academicYearId, classId, feeCategoryId,
       amount, frequency, dueDay, lateFeeType, lateFeeValue,
       installments, // optional: [{installmentNo, amount, dueDate}]
     } = req.body;
+    // BUG FIX: the "Create Fee Structure" form has no branch-picker, so
+    // req.body.branchId always arrived as "" - see
+    // resolveEffectiveBranchId's doc comment.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
 
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
     if (!canAccessBranch(req, branchId)) {
       sendError(res, "Access denied: branch mismatch", 403);
       return;

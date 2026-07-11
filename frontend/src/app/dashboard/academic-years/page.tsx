@@ -19,7 +19,12 @@ export default function AcademicYearsPage() {
   const [years, setYears] = useState<AcademicYear[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ name: "", startDate: "", endDate: "", branchId: "" });
+  // Note: branchId is deliberately NOT part of this form - the backend
+  // always scopes creation to the logged-in user's own branch (see
+  // resolveEffectiveBranchId in backend/src/utils/branchScope.ts). This
+  // form previously sent an always-empty branchId field, which caused
+  // every creation to fail (403/500) until that backend fallback was added.
+  const [form, setForm] = useState({ name: "", startDate: "", endDate: "" });
 
   const [error, setError] = useState<string | null>(null);
 
@@ -44,7 +49,7 @@ export default function AcademicYearsPage() {
     try {
       await api.post("/academic-years", form);
       setShowModal(false);
-      setForm({ name: "", startDate: "", endDate: "", branchId: "" });
+      setForm({ name: "", startDate: "", endDate: "" });
       fetchYears();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to create");

@@ -5,7 +5,7 @@ import { config } from "../config";
 import { getRazorpayClient, isRazorpayConfigured } from "../config/razorpay";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
-import { canAccessBranch } from "../utils/branchScope";
+import { canAccessBranch, resolveEffectiveBranchId } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
 import { getValidatedFeeAssignment, recordFeePayment, notifyPaymentConfirmation } from "../services/feePayment.service";
 
@@ -23,8 +23,18 @@ export const createRazorpayOrder = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const { branchId, studentId, feeAssignmentId } = req.body;
+    const { studentId, feeAssignmentId } = req.body;
+    // DEFENSE IN DEPTH: same fallback as the other create/collect
+    // endpoints - branchId here normally comes from the student's own
+    // record (see frontend/src/lib/razorpay.ts), not a blank form
+    // field, but falling back to the caller's own branch if it's ever
+    // missing/blank keeps this consistent and avoids a confusing 403.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
 
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved", 400);
+      return;
+    }
     if (!canAccessBranch(req, branchId)) {
       sendError(res, "Access denied: branch mismatch", 403);
       return;
@@ -96,9 +106,14 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
       razorpay_order_id: orderId,
       razorpay_payment_id: paymentId,
       razorpay_signature: signature,
-      branchId, studentId, feeAssignmentId,
+      studentId, feeAssignmentId,
     } = req.body;
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
 
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved", 400);
+      return;
+    }
     if (!canAccessBranch(req, branchId)) {
       sendError(res, "Access denied: branch mismatch", 403);
       return;

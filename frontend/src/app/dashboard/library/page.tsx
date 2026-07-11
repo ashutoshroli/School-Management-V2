@@ -13,7 +13,9 @@ export default function LibraryPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ title: "", author: "", isbn: "", publisher: "", category: "", rackNo: "", totalCopies: "1", price: "", branchId: "" });
+  // Note: branchId is deliberately NOT part of this form - the backend
+  // always scopes creation to the logged-in user's own branch.
+  const [form, setForm] = useState({ title: "", author: "", isbn: "", publisher: "", category: "", rackNo: "", totalCopies: "1", price: "" });
 
   const fetch = async () => {
     setLoading(true);

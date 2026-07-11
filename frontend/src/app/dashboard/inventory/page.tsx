@@ -31,7 +31,9 @@ export default function InventoryPage() {
 
   const openModal = (type: "item" | "purchase" | "issue") => {
     setModalType(type);
-    if (type === "item") setForm({ name: "", category: "", unit: "pcs", minStock: "5", branchId: "" });
+    // Note: branchId is deliberately NOT part of this form - the
+    // backend always scopes creation to the logged-in user's own branch.
+    if (type === "item") setForm({ name: "", category: "", unit: "pcs", minStock: "5" });
     else if (type === "purchase") setForm({ itemId: "", vendor: "", quantity: "", rate: "", billNo: "" });
     else setForm({ itemId: "", issuedTo: "", quantity: "", purpose: "" });
     setShowModal(true);

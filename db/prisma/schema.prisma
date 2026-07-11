@@ -267,6 +267,7 @@ model Student {
   hostelAllocation    HostelAllocation?
   promotions      Promotion[]
   discounts       StudentDiscount[]
+  certificates    GeneratedCertificate[]
 }
 
 
@@ -1384,6 +1385,7 @@ model GeneratedCertificate {
   createdAt  DateTime @default(now())
 
   template CertificateTemplate @relation(fields: [templateId], references: [id])
+  student  Student              @relation(fields: [studentId], references: [id])
 }
 
 // ============================================

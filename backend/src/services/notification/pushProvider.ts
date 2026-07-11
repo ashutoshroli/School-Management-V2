@@ -27,6 +27,9 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 let cachedToken: { accessToken: string; expiresAt: number } | null = null;
 
+/** @internal - exposed for test isolation only; do not use in production code. */
+export const _resetCachedToken = (): void => { cachedToken = null; };
+
 /**
  * Mints (and caches) an OAuth2 access token for calling the FCM v1 API.
  * Tokens are valid for 1 hour - we refresh 60s early to avoid edge-case

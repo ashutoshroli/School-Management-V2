@@ -2,11 +2,27 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
-import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 
 export const addItem = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { branchId, name, category, unit, minStock } = req.body;
+    const { name, category, unit, minStock } = req.body;
+    // BUG FIX + SECURITY: the "Add Item" form has no branch-picker, so
+    // req.body.branchId always arrived as "" - see
+    // resolveEffectiveBranchId's doc comment. Also adds the
+    // canAccessBranch check this endpoint was previously missing
+    // entirely.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
+
     const item = await prisma.inventoryItem.create({ data: { branchId, name, category, unit, minStock: minStock || 5, currentStock: 0 } });
     sendSuccess(res, item, "Item added", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }

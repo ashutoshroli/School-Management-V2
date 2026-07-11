@@ -2,13 +2,29 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
-import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 
 // ==================== CLASS ====================
 
 export const createClass = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { branchId, name, numericOrder } = req.body;
+    const { name, numericOrder } = req.body;
+    // BUG FIX: the "Add Class" form has no branch-picker, so
+    // req.body.branchId always arrived as "" - see
+    // resolveEffectiveBranchId's doc comment. Also adds the
+    // canAccessBranch check this endpoint was previously missing
+    // entirely (a Branch Admin could otherwise have created a class in
+    // another branch by just sending that branch's real id).
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
 
     const existing = await prisma.class.findUnique({
       where: { branchId_name: { branchId, name } },
@@ -89,7 +105,20 @@ export const deleteClass = async (req: AuthRequest, res: Response): Promise<void
 
 export const createSection = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { branchId, classId, name, capacity, classTeacherId } = req.body;
+    const { classId, name, capacity, classTeacherId } = req.body;
+    // BUG FIX + SECURITY: same as createClass above - no branch-picker
+    // in the "Add Section" form (branchId always ""), and this
+    // endpoint had no canAccessBranch check at all.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
 
     const existing = await prisma.section.findUnique({
       where: { classId_name: { classId, name } },
@@ -171,7 +200,20 @@ export const deleteSection = async (req: AuthRequest, res: Response): Promise<vo
 
 export const createSubject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { branchId, name, code, type } = req.body;
+    const { name, code, type } = req.body;
+    // BUG FIX + SECURITY: same as createClass above - no branch-picker
+    // in the "Add Subject" form (branchId always ""), and this
+    // endpoint had no canAccessBranch check at all.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
 
     const existing = await prisma.subject.findUnique({
       where: { branchId_code: { branchId, code } },
