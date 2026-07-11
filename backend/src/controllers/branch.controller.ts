@@ -1,5 +1,6 @@
 import { Response } from "express";
 import { UserRole } from "@prisma/client";
+import bcrypt from "bcryptjs";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
@@ -147,5 +148,130 @@ export const updateBranch = async (req: AuthRequest, res: Response): Promise<voi
     sendSuccess(res, updated, "Branch updated successfully");
   } catch (error) {
     sendError(res, "Failed to update branch", 500, (error as Error).message);
+  }
+};
+
+/**
+ * SUPER_ADMIN only. Creates a Branch Admin account and assigns them to
+ * a specific branch in one step - this is how a Super Admin hands a
+ * branch off to be self-managed day-to-day.
+ *
+ * Modeled closely on staff.controller.ts's createStaff (a Branch Admin
+ * is stored as a Staff record with role=BRANCH_ADMIN, designation
+ * defaulted to "Branch Admin", type NON_TEACHING) rather than
+ * introducing a separate table - every branch-scoped query in this app
+ * already resolves a caller's branch via their Staff.branchId, so a
+ * Branch Admin needs that same linkage to inherit branch access
+ * anywhere (canAccessBranch, resolveEffectiveBranchId, etc).
+ */
+export const createBranchAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { name, email, phone, password, branchId } = req.body;
+
+    if (!branchId) {
+      sendError(res, "branchId is required", 400);
+      return;
+    }
+
+    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+    if (!branch) {
+      sendError(res, "Branch not found", 404);
+      return;
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      sendError(res, "Email already exists", 400);
+      return;
+    }
+
+    const count = await prisma.staff.count({ where: { branchId } });
+    const employeeId = `EMP-${String(count + 1).padStart(4, "0")}`;
+    const hashedPassword = await bcrypt.hash(password || "Admin@123", 12);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        name,
+        phone,
+        password: hashedPassword,
+        role: UserRole.BRANCH_ADMIN,
+        organizationId: req.user!.organizationId || undefined,
+        isActive: true,
+      },
+    });
+
+    const staff = await prisma.staff.create({
+      data: {
+        userId: user.id,
+        branchId,
+        employeeId,
+        designation: "Branch Admin",
+        department: "Administration",
+        type: "NON_TEACHING",
+        joiningDate: new Date(),
+        isActive: true,
+      },
+    });
+
+    const fullStaff = await prisma.staff.findUnique({
+      where: { id: staff.id },
+      include: {
+        user: { select: { name: true, email: true, phone: true, role: true } },
+        branch: { select: { id: true, name: true } },
+      },
+    });
+
+    sendSuccess(res, fullStaff, "Branch Admin created successfully", 201);
+  } catch (error) {
+    sendError(res, "Failed to create Branch Admin", 500, (error as Error).message);
+  }
+};
+
+/**
+ * SUPER_ADMIN only. Lists every Branch Admin across the organization,
+ * with the branch each one is assigned to - the counterpart list view
+ * to createBranchAdmin above.
+ */
+export const getBranchAdmins = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const admins = await prisma.staff.findMany({
+      where: { user: { role: UserRole.BRANCH_ADMIN } },
+      orderBy: { user: { name: "asc" } },
+      include: {
+        user: { select: { id: true, name: true, email: true, phone: true, isActive: true, avatar: true } },
+        branch: { select: { id: true, name: true, code: true } },
+      },
+    });
+
+    sendSuccess(res, admins, "Branch Admins fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch Branch Admins", 500, (error as Error).message);
+  }
+};
+
+/**
+ * SUPER_ADMIN only. Activates/deactivates a Branch Admin's account
+ * (e.g. offboarding, or temporarily revoking access) without deleting
+ * their history. Deactivated accounts are rejected at login (see
+ * auth.controller.ts's login - checks user.isActive).
+ */
+export const setBranchAdminStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { staffId } = req.params;
+    const { isActive } = req.body;
+
+    const staff = await prisma.staff.findUnique({ where: { id: staffId }, include: { user: true } });
+    if (!staff || staff.user.role !== UserRole.BRANCH_ADMIN) {
+      sendError(res, "Branch Admin not found", 404);
+      return;
+    }
+
+    await prisma.user.update({ where: { id: staff.userId }, data: { isActive } });
+    await prisma.staff.update({ where: { id: staff.id }, data: { isActive } });
+
+    sendSuccess(res, null, isActive ? "Branch Admin activated" : "Branch Admin deactivated");
+  } catch (error) {
+    sendError(res, "Failed to update Branch Admin status", 500, (error as Error).message);
   }
 };

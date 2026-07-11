@@ -79,6 +79,13 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     const token = generateToken(payload);
 
+    // Fetch the branch name for the frontend display
+    let branchName: string | undefined;
+    if (branchId) {
+      const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { name: true } });
+      branchName = branch?.name;
+    }
+
     sendSuccess(res, {
       token,
       user: {
@@ -87,6 +94,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         email: user.email,
         role: user.role,
         avatar: user.avatar,
+        branchId,
+        branchName,
       },
     }, "Login successful");
   } catch (error) {
@@ -181,9 +190,73 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    sendSuccess(res, user, "Profile fetched");
+    // branchId is already resolved into the JWT at login time (see
+    // login()/googleCallback() - handles the SUPER_ADMIN-has-no-Staff-
+    // record default-branch fallback there). Reuse it here rather than
+    // re-deriving it, and just look up the display name for the UI's
+    // branch indicator/switcher.
+    const branchId = req.user.branchId;
+    let branchName: string | undefined;
+    if (branchId) {
+      const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { name: true } });
+      branchName = branch?.name;
+    }
+
+    sendSuccess(res, { ...user, branchId, branchName }, "Profile fetched");
   } catch (error) {
     sendError(res, "Failed to fetch profile", 500);
+  }
+};
+
+/**
+ * POST /api/auth/switch-branch
+ * SUPER_ADMIN only. A Super Admin's active branch is baked into their
+ * JWT (see login()'s "default to first active branch" comment) so
+ * every branch-scoped endpoint has something to resolve. This endpoint
+ * lets them change that active branch from the UI's branch switcher
+ * without logging out - it re-issues the JWT with the new branchId.
+ *
+ * Any other role (Branch Admin, Teacher, ...) is permanently locked to
+ * the branch their Staff/Student record belongs to - this endpoint
+ * refuses them outright rather than silently no-op'ing, so a stray
+ * frontend bug can't be mistaken for a working branch switch.
+ */
+export const switchBranch = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      sendError(res, "Not authenticated", 401);
+      return;
+    }
+    if (req.user.role !== UserRole.SUPER_ADMIN) {
+      sendError(res, "Only a Super Admin can switch branches", 403);
+      return;
+    }
+
+    const { branchId } = req.body;
+    if (!branchId) {
+      sendError(res, "branchId is required", 400);
+      return;
+    }
+
+    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+    if (!branch) {
+      sendError(res, "Branch not found", 404);
+      return;
+    }
+
+    const payload: JwtPayload = {
+      userId: req.user.userId,
+      email: req.user.email,
+      role: req.user.role,
+      organizationId: req.user.organizationId,
+      branchId: branch.id,
+    };
+
+    const token = generateToken(payload);
+
+    sendSuccess(res, { token, branchId: branch.id, branchName: branch.name }, "Active branch switched");
+  } catch (error) {
+    sendError(res, "Failed to switch branch", 500, (error as Error).message);
   }
 };
 

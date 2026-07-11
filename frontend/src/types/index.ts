@@ -18,6 +18,25 @@ export interface User {
   avatar?: string;
   phone?: string;
   organizationId?: string;
+  branchId?: string;
+  branchName?: string;
+}
+
+export interface Branch {
+  id: string;
+  name: string;
+  code: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  phone?: string;
+  email?: string;
+  isActive: boolean;
+  _count?: {
+    students: number;
+    staff: number;
+  };
 }
 
 export interface AuthState {

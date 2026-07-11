@@ -123,4 +123,68 @@ describe("staff.controller - createStaff", () => {
     const staffCreateCall = (prisma.staff.create as jest.Mock).mock.calls[0][0];
     expect(staffCreateCall.data.branchId).toBe("branch-target");
   });
+
+  // SECURITY: `role` used to be taken straight from req.body with zero
+  // validation - a Branch Admin could self-escalate by sending
+  // role: "SUPER_ADMIN" (or "BRANCH_ADMIN") in an otherwise-normal
+  // create-staff request. These regression-test the fix.
+  describe("SECURITY: role assignment restrictions", () => {
+    it("rejects a Branch Admin trying to assign SUPER_ADMIN to a new staff member", async () => {
+      const req = makeReq({ body: { ...baseBody, role: UserRole.SUPER_ADMIN } });
+      const res = makeMockRes();
+
+      await createStaff(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects SUPER_ADMIN itself trying to assign the SUPER_ADMIN role via this endpoint", async () => {
+      const req = makeReq({
+        body: { ...baseBody, role: UserRole.SUPER_ADMIN },
+        user: { userId: "super-1", email: "super@test.com", role: UserRole.SUPER_ADMIN, branchId: "branch-1" },
+      });
+      const res = makeMockRes();
+
+      await createStaff(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a Branch Admin trying to assign the BRANCH_ADMIN role to a new staff member", async () => {
+      const req = makeReq({ body: { ...baseBody, role: UserRole.BRANCH_ADMIN } });
+      const res = makeMockRes();
+
+      await createStaff(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it("allows SUPER_ADMIN to assign the BRANCH_ADMIN role", async () => {
+      const req = makeReq({
+        body: { ...baseBody, role: UserRole.BRANCH_ADMIN },
+        user: { userId: "super-1", email: "super@test.com", role: UserRole.SUPER_ADMIN, branchId: "branch-1" },
+      });
+      const res = makeMockRes();
+
+      await createStaff(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      const userCreateCall = (prisma.user.create as jest.Mock).mock.calls[0][0];
+      expect(userCreateCall.data.role).toBe(UserRole.BRANCH_ADMIN);
+    });
+
+    it("allows a Branch Admin to assign an ordinary staff role like ACCOUNTANT", async () => {
+      const req = makeReq({ body: { ...baseBody, role: UserRole.ACCOUNTANT } });
+      const res = makeMockRes();
+
+      await createStaff(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      const userCreateCall = (prisma.user.create as jest.Mock).mock.calls[0][0];
+      expect(userCreateCall.data.role).toBe(UserRole.ACCOUNTANT);
+    });
+  });
 });
