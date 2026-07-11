@@ -4,13 +4,13 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     staff: { findUnique: jest.fn() },
-    leaveApplication: { findMany: jest.fn(), aggregate: jest.fn() },
-    leaveType: { findMany: jest.fn() },
+    leaveApplication: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
+    leaveType: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { getLeaveApplications, getLeaveBalance } from "../leave.controller";
+import { getLeaveApplications, getLeaveBalance, getLeaveTypes, createLeaveType, updateLeaveType, deleteLeaveType } from "../leave.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -124,5 +124,129 @@ describe("leave.controller - getLeaveBalance (IDOR fix)", () => {
     await getLeaveBalance(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+
+describe("leave.controller - getLeaveTypes", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.leaveType.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("defaults to only active types (unchanged behavior for the leave-apply form)", async () => {
+    const req = makeReq({ query: {} });
+    const res = makeMockRes();
+
+    await getLeaveTypes(req, res);
+
+    expect(prisma.leaveType.findMany).toHaveBeenCalledWith({ where: { isActive: true }, orderBy: { name: "asc" } });
+  });
+
+  it("includes inactive types when includeInactive=true (admin management UI)", async () => {
+    const req = makeReq({ query: { includeInactive: "true" } });
+    const res = makeMockRes();
+
+    await getLeaveTypes(req, res);
+
+    expect(prisma.leaveType.findMany).toHaveBeenCalledWith({ where: {}, orderBy: { name: "asc" } });
+  });
+});
+
+describe("leave.controller - createLeaveType", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.leaveType.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.leaveType.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "lt-new", ...data }));
+  });
+
+  it("creates a new leave type", async () => {
+    const req = makeReq({ body: { name: "Sabbatical Leave", code: "SAB", maxDays: 30, carryForward: false } });
+    const res = makeMockRes();
+
+    await createLeaveType(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(prisma.leaveType.create).toHaveBeenCalled();
+  });
+
+  it("DATA INTEGRITY: rejects a duplicate code", async () => {
+    (prisma.leaveType.findUnique as jest.Mock).mockResolvedValue({ id: "existing" });
+    const req = makeReq({ body: { name: "Sabbatical Leave", code: "SAB", maxDays: 30 } });
+    const res = makeMockRes();
+
+    await createLeaveType(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.leaveType.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("leave.controller - updateLeaveType", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.leaveType.findUnique as jest.Mock).mockResolvedValue({ id: "lt-1", name: "Casual Leave", code: "CL", maxDays: 12, carryForward: false, isActive: true });
+    (prisma.leaveType.update as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "lt-1", ...data }));
+  });
+
+  it("updates maxDays/carryForward/isActive", async () => {
+    const req = makeReq({ params: { id: "lt-1" }, body: { maxDays: 15, isActive: false } });
+    const res = makeMockRes();
+
+    await updateLeaveType(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect((prisma.leaveType.update as jest.Mock).mock.calls[0][0].data).toEqual({ maxDays: 15, isActive: false });
+  });
+
+  it("returns 404 for a nonexistent leave type", async () => {
+    (prisma.leaveType.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "missing" }, body: { maxDays: 15 } });
+    const res = makeMockRes();
+
+    await updateLeaveType(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.leaveType.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("leave.controller - deleteLeaveType", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.leaveType.findUnique as jest.Mock).mockResolvedValue({ id: "lt-1" });
+  });
+
+  it("deletes a leave type with no applications against it", async () => {
+    (prisma.leaveApplication.count as jest.Mock).mockResolvedValue(0);
+    (prisma.leaveType.delete as jest.Mock).mockResolvedValue({});
+    const req = makeReq({ params: { id: "lt-1" } });
+    const res = makeMockRes();
+
+    await deleteLeaveType(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.leaveType.delete).toHaveBeenCalledWith({ where: { id: "lt-1" } });
+  });
+
+  it("DATA INTEGRITY: blocks deletion when leave applications reference this type", async () => {
+    (prisma.leaveApplication.count as jest.Mock).mockResolvedValue(3);
+    const req = makeReq({ params: { id: "lt-1" } });
+    const res = makeMockRes();
+
+    await deleteLeaveType(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.leaveType.delete).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for a nonexistent leave type", async () => {
+    (prisma.leaveType.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "missing" } });
+    const res = makeMockRes();
+
+    await deleteLeaveType(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
   });
 });

@@ -107,6 +107,30 @@ export const getExams = async (req: AuthRequest, res: Response): Promise<void> =
 };
 
 /**
+ * Auto grade lookup: prefer the admin-configured GradeSystem bands
+ * (see gradeSystem.controller.ts) if any exist, matching the
+ * percentage against each band's [minMarks, maxMarks] range
+ * inclusively. Falls back to the original hardcoded A+/A/B+/.../F
+ * scale when no bands have been configured yet, so existing
+ * deployments/tests that never touch Grade System settings keep their
+ * exact previous behavior.
+ */
+const lookupGrade = (pct: number, bands: { minMarks: any; maxMarks: any; grade: string }[]): string => {
+  if (bands.length > 0) {
+    const match = bands.find((b) => pct >= Number(b.minMarks) && pct <= Number(b.maxMarks));
+    if (match) return match.grade;
+  }
+  if (pct >= 90) return "A+";
+  if (pct >= 80) return "A";
+  if (pct >= 70) return "B+";
+  if (pct >= 60) return "B";
+  if (pct >= 50) return "C";
+  if (pct >= 40) return "D";
+  if (pct >= 33) return "E";
+  return "F";
+};
+
+/**
  * Enter/update marks (bulk for a subject+exam)
  */
 export const enterMarks = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -114,18 +138,15 @@ export const enterMarks = async (req: AuthRequest, res: Response): Promise<void>
     const { examId, subjectId, marks } = req.body;
     // marks: [{studentId, maxMarks, obtainedMarks}]
 
+    // Fetch the configured grade bands once for the whole batch,
+    // rather than re-querying per student (this loop can be dozens of
+    // students for a single class).
+    const gradeBands = await prisma.gradeSystem.findMany({ orderBy: { minMarks: "asc" } });
+
     let saved = 0;
     for (const m of marks) {
-      // Auto grade
       const pct = (m.obtainedMarks / m.maxMarks) * 100;
-      let grade = "F";
-      if (pct >= 90) grade = "A+";
-      else if (pct >= 80) grade = "A";
-      else if (pct >= 70) grade = "B+";
-      else if (pct >= 60) grade = "B";
-      else if (pct >= 50) grade = "C";
-      else if (pct >= 40) grade = "D";
-      else if (pct >= 33) grade = "E";
+      const grade = lookupGrade(pct, gradeBands);
 
       await prisma.mark.upsert({
         where: { examId_studentId_subjectId: { examId, studentId: m.studentId, subjectId } },

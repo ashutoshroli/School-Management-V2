@@ -15,3 +15,25 @@ export const updateLeaveStatusSchema = z.object({
     remarks: z.string().optional(),
   }),
 });
+
+export const createLeaveTypeSchema = z.object({
+  body: z.object({
+    name: z.string().min(1, "name is required"),
+    code: z.string().min(1, "code is required"),
+    maxDays: z.union([z.number(), z.string()]).transform((v) => Number(v)).refine((v) => Number.isInteger(v) && v > 0, {
+      message: "maxDays must be a positive whole number",
+    }),
+    carryForward: z.boolean().optional(),
+  }),
+});
+
+export const updateLeaveTypeSchema = z.object({
+  body: z.object({
+    name: z.string().min(1).optional(),
+    maxDays: z.union([z.number(), z.string()]).transform((v) => Number(v)).refine((v) => Number.isInteger(v) && v > 0, {
+      message: "maxDays must be a positive whole number",
+    }).optional(),
+    carryForward: z.boolean().optional(),
+    isActive: z.boolean().optional(),
+  }),
+});
