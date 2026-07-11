@@ -3,13 +3,20 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award, Plus, ToggleLeft, ToggleRight } from "lucide-react";
+import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award, Plus, ToggleLeft, ToggleRight, IndianRupee, ClipboardCheck, Download } from "lucide-react";
 import api from "@/lib/api";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatCurrency } from "@/lib/utils";
 import { openPdfInNewTab } from "@/lib/pdf";
 import { resolveUploadUrl } from "@/lib/uploads";
 import FileUploadButton from "@/components/ui/FileUploadButton";
 import Modal from "@/components/ui/Modal";
+
+const ATTENDANCE_STATUS_COLORS: Record<string, string> = {
+  PRESENT: "bg-green-100 text-green-700",
+  ABSENT: "bg-red-100 text-red-700",
+  HALF_DAY: "bg-yellow-100 text-yellow-700",
+  LATE: "bg-orange-100 text-orange-700",
+};
 
 // yyyy-mm-dd for an HTML date input, from either an ISO string or a Date.
 const toDateInputValue = (value: string | Date | null | undefined): string =>
@@ -33,6 +40,18 @@ export default function StudentProfilePage() {
     address: "", city: "", state: "", pincode: "", cardId: "", isActive: true,
   });
 
+  // Fee details (pending fees + payment history)
+  const [pendingFees, setPendingFees] = useState<any[]>([]);
+  const [payments, setPayments] = useState<any[]>([]);
+  const [feesLoading, setFeesLoading] = useState(true);
+  const [feesError, setFeesError] = useState<string | null>(null);
+
+  // Attendance details (monthly, same as My Attendance)
+  const [attendanceMonth, setAttendanceMonth] = useState(new Date().getMonth() + 1);
+  const [attendanceYear, setAttendanceYear] = useState(new Date().getFullYear());
+  const [attendanceData, setAttendanceData] = useState<{ records: any[]; summary: any } | null>(null);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
+
   useEffect(() => {
     const fetchStudent = async () => {
       try {
@@ -53,6 +72,59 @@ export default function StudentProfilePage() {
     const res = await api.get(`/students/${params.id}`);
     setStudent(res.data.data);
   };
+
+  const loadFees = async () => {
+    setFeesLoading(true);
+    setFeesError(null);
+    try {
+      const [pendingRes, paymentsRes] = await Promise.all([
+        api.get(`/fees/pending/${params.id}`),
+        api.get(`/fees/payments/${params.id}`),
+      ]);
+      setPendingFees(pendingRes.data.data || []);
+      setPayments(paymentsRes.data.data || []);
+    } catch (err: any) {
+      setPendingFees([]);
+      setPayments([]);
+      // Teachers can view a student's profile but fee data is
+      // Admin/Accountant-only (see fee.routes.ts's PAYERS list) - show
+      // an honest "no access" message rather than silently rendering
+      // "No pending fees - all paid up", which would be misleading.
+      setFeesError(
+        err.response?.status === 403
+          ? "You don't have permission to view fee details for this student."
+          : "Failed to load fee details."
+      );
+    } finally {
+      setFeesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadFees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.id]);
+
+  const loadAttendance = async () => {
+    setAttendanceLoading(true);
+    try {
+      const res = await api.get(`/academics/attendance/student/${params.id}`, {
+        params: { month: attendanceMonth, year: attendanceYear },
+      });
+      setAttendanceData(res.data.data);
+    } catch (err) {
+      setAttendanceData(null);
+    } finally {
+      setAttendanceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAttendance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.id, attendanceMonth, attendanceYear]);
+
+  const totalPending = pendingFees.reduce((sum, f) => sum + f.pendingAmount, 0);
 
   const openEditModal = () => {
     setEditForm({
@@ -200,6 +272,159 @@ export default function StudentProfilePage() {
               <div><span className="text-gray-500">Admission Date:</span> <span className="font-medium ml-2">{formatDate(student.admissionDate)}</span></div>
               <div><span className="text-gray-500">Previous School:</span> <span className="font-medium ml-2">{student.previousSchool || "-"}</span></div>
             </div>
+          </div>
+
+          {/* Fee Details */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <IndianRupee className="h-5 w-5 text-green-600" /> Fee Details
+              </h3>
+              <Link href="/dashboard/fees/collect" className="text-sm text-primary-600 hover:underline font-medium">
+                Collect Payment &rarr;
+              </Link>
+            </div>
+            {feesLoading ? (
+              <div className="flex justify-center py-6">
+                <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+              </div>
+            ) : feesError ? (
+              <p className="text-sm text-gray-400">{feesError}</p>
+            ) : (
+              <>
+                <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3 mb-4">
+                  <span className="text-sm text-gray-600">Total Pending</span>
+                  <span className={`text-lg font-bold ${totalPending > 0 ? "text-red-600" : "text-green-600"}`}>
+                    {formatCurrency(totalPending)}
+                  </span>
+                </div>
+
+                <h4 className="text-sm font-semibold text-gray-600 mb-2">Pending Fees</h4>
+                {pendingFees.length === 0 ? (
+                  <p className="text-sm text-green-600 font-medium mb-4">No pending fees - all paid up.</p>
+                ) : (
+                  <div className="space-y-2 mb-4">
+                    {pendingFees.map((fee: any) => (
+                      <div key={fee.id} className="border rounded-lg p-3 flex items-center justify-between flex-wrap gap-2">
+                        <div>
+                          <p className="font-medium text-sm">{fee.feeStructure.feeCategory.name}</p>
+                          <p className="text-xs text-gray-500">{fee.feeStructure.class.name} &bull; {fee.feeStructure.frequency}</p>
+                          {fee.calculatedLateFee > 0 && (
+                            <p className="text-xs text-orange-600 mt-0.5">Includes late fee: {formatCurrency(fee.calculatedLateFee)}</p>
+                          )}
+                        </div>
+                        <p className="font-bold text-red-600">{formatCurrency(fee.pendingAmount)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <h4 className="text-sm font-semibold text-gray-600 mb-2">Payment History</h4>
+                {payments.length === 0 ? (
+                  <p className="text-sm text-gray-400">No payments recorded yet</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-gray-50">
+                          <th className="px-3 py-2 text-left">Receipt No</th>
+                          <th className="px-3 py-2 text-left">Category</th>
+                          <th className="px-3 py-2 text-left">Date</th>
+                          <th className="px-3 py-2 text-left">Amount</th>
+                          <th className="px-3 py-2 text-left">Mode</th>
+                          <th className="px-3 py-2 text-center">Receipt</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {payments.map((p: any) => (
+                          <tr key={p.id} className="border-b hover:bg-gray-50">
+                            <td className="px-3 py-2 font-mono text-xs">{p.receiptNo}</td>
+                            <td className="px-3 py-2">{p.feeAssignment?.feeStructure?.feeCategory?.name || "-"}</td>
+                            <td className="px-3 py-2">{formatDate(p.paidAt)}</td>
+                            <td className="px-3 py-2 font-medium">{formatCurrency(Number(p.amount))}</td>
+                            <td className="px-3 py-2">{p.paymentMode.replace(/_/g, " ")}</td>
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                onClick={() => openPdfInNewTab(`/fees/payments/${p.id}/receipt`)}
+                                className="inline-flex items-center gap-1 text-primary-600 text-xs font-medium hover:underline"
+                              >
+                                <Download className="h-3.5 w-3.5" /> Download
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Attendance Details */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <ClipboardCheck className="h-5 w-5 text-blue-600" /> Attendance Details
+              </h3>
+              <div className="flex gap-2">
+                <select className="input-field w-auto text-sm" value={attendanceMonth} onChange={(e) => setAttendanceMonth(Number(e.target.value))}>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                    <option key={m} value={m}>{new Date(2000, m - 1).toLocaleString("en", { month: "long" })}</option>
+                  ))}
+                </select>
+                <select className="input-field w-auto text-sm" value={attendanceYear} onChange={(e) => setAttendanceYear(Number(e.target.value))}>
+                  {[attendanceYear - 1, attendanceYear, attendanceYear + 1].map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {attendanceLoading ? (
+              <div className="flex justify-center py-6">
+                <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+              </div>
+            ) : attendanceData ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                  <div className="bg-gray-50 rounded-lg text-center py-2">
+                    <p className="text-xl font-bold text-primary-600">{attendanceData.summary.percentage}%</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Attendance</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg text-center py-2">
+                    <p className="text-xl font-bold text-green-600">{attendanceData.summary.present}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Present</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg text-center py-2">
+                    <p className="text-xl font-bold text-red-600">{attendanceData.summary.absent}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Absent</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg text-center py-2">
+                    <p className="text-xl font-bold text-orange-600">{attendanceData.summary.late}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Late</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg text-center py-2">
+                    <p className="text-xl font-bold text-yellow-600">{attendanceData.summary.halfDay}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Half Day</p>
+                  </div>
+                </div>
+
+                {attendanceData.records.length === 0 ? (
+                  <p className="text-sm text-gray-400">No attendance records for this month yet</p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {attendanceData.records.map((r: any) => (
+                      <div key={r.id} className={`px-3 py-2 rounded-lg text-sm flex justify-between ${ATTENDANCE_STATUS_COLORS[r.status] || "bg-gray-100"}`}>
+                        <span>{formatDate(r.date)}</span>
+                        <span className="font-medium">{r.status.replace("_", " ")}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-gray-400">No attendance data available</p>
+            )}
           </div>
 
           {/* Address */}
