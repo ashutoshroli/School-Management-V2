@@ -9,14 +9,24 @@
 # This does NOT provision a database - use a free Neon/Supabase Postgres
 # instance (see DEPLOY.md) and paste its connection string into
 # DATABASE_URL.
+#
+# runtime: docker (instead of the plain Node runtime used previously)
+# so LibreOffice can be installed via backend/Dockerfile's `apt-get
+# install libreoffice` - needed for the Templates page's uploaded .docx
+# certificate/document templates to actually be converted to PDF (see
+# backend/src/services/docxToPdf.service.ts). This works on Render's
+# FREE tier with no Shell/SSH access required: the package install runs
+# automatically as part of Render's own Docker build step, not
+# something you run yourself after deploying. Without this, the app
+# still works fine - every generator falls back to its built-in PDFKit
+# layout - it just never actually uses an uploaded template's design.
 services:
   - type: web
     name: school-erp-backend
-    runtime: node
+    runtime: docker
     plan: free
-    rootDir: .
-    buildCommand: bash backend/scripts/build.sh
-    startCommand: node backend/dist/server.js
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
