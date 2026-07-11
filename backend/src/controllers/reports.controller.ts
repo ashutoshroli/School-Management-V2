@@ -3,6 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { buildCsv, sendCsv, CsvColumn } from "../services/csvExport.service";
 
 /**
  * Admin Dashboard stats
@@ -135,6 +136,142 @@ export const getAttendanceAnalytics = async (req: AuthRequest, res: Response): P
 
     sendSuccess(res, analytics, "Attendance analytics fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Below-threshold attendance list (Phase 6) - students whose current-
+ * month attendance percentage falls below a configurable threshold
+ * (default 75%, the common statutory/board minimum) so class teachers
+ * and admins can proactively follow up rather than discovering the
+ * problem only at exam-eligibility time.
+ *
+ * "Working days" here is approximated as the count of DISTINCT dates
+ * that have at least one attendance record anywhere in the branch for
+ * the month - i.e. days the school was actually open and attendance
+ * was taken - rather than a fixed calendar-day count, since weekends/
+ * holidays vary per school and this schema has no holiday calendar to
+ * consult.
+ */
+interface AttendanceDefaultersQuery {
+  branchId: string;
+  threshold: number;
+  month: number;
+  year: number;
+  classId?: string;
+}
+
+/** Shared query behind getAttendanceDefaultersList (JSON) and exportAttendanceDefaultersCsv (CSV). */
+const fetchAttendanceDefaulters = async ({ branchId, threshold, month, year, classId }: AttendanceDefaultersQuery) => {
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 0, 23, 59, 59);
+
+  const [workingDayRecords, students] = await Promise.all([
+    prisma.studentAttendance.findMany({
+      where: { student: { branchId }, date: { gte: startDate, lte: endDate }, period: null },
+      select: { date: true },
+      distinct: ["date"],
+    }),
+    prisma.student.findMany({
+      where: { branchId, isActive: true, ...(classId ? { classId } : {}) },
+      include: {
+        user: { select: { name: true, phone: true } },
+        class: { select: { name: true } },
+        section: { select: { name: true } },
+        attendances: { where: { date: { gte: startDate, lte: endDate }, period: null } },
+      },
+    }),
+  ]);
+
+  const workingDays = workingDayRecords.length;
+  if (workingDays === 0) return { students: [], workingDays: 0 };
+
+  const enriched = students
+    .map((s) => {
+      const presentDays = s.attendances.filter((a) => a.status === "PRESENT" || a.status === "LATE").length;
+      const percentage = Math.round((presentDays / workingDays) * 1000) / 10;
+      return {
+        studentId: s.id,
+        name: s.user.name,
+        phone: s.user.phone,
+        admissionNo: s.admissionNo,
+        className: s.class.name,
+        sectionName: s.section.name,
+        presentDays,
+        workingDays,
+        percentage,
+      };
+    })
+    .filter((s) => s.percentage < threshold)
+    .sort((a, b) => a.percentage - b.percentage);
+
+  return { students: enriched, workingDays };
+};
+
+const parseAttendanceDefaultersQuery = (req: AuthRequest): AttendanceDefaultersQuery | null => {
+  const branchId = resolveBranchId(req);
+  if (!branchId) return null;
+
+  return {
+    branchId,
+    threshold: Math.min(Math.max(parseFloat(req.query.threshold as string) || 75, 0), 100),
+    month: parseInt(req.query.month as string) || new Date().getMonth() + 1,
+    year: parseInt(req.query.year as string) || new Date().getFullYear(),
+    classId: req.query.classId as string | undefined,
+  };
+};
+
+export const getAttendanceDefaultersList = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const query = parseAttendanceDefaultersQuery(req);
+    if (!query) { sendError(res, "Branch ID required", 400); return; }
+
+    const { students, workingDays } = await fetchAttendanceDefaulters(query);
+
+    if (workingDays === 0) {
+      sendSuccess(res, { students: [], workingDays: 0, threshold: query.threshold }, "No attendance recorded for this month yet");
+      return;
+    }
+
+    sendSuccess(
+      res,
+      { students, workingDays, threshold: query.threshold, count: students.length },
+      "Attendance defaulters fetched"
+    );
+  } catch (error) {
+    sendError(res, "Failed to fetch attendance defaulters", 500, (error as Error).message);
+  }
+};
+
+type AttendanceDefaulterRow = Awaited<ReturnType<typeof fetchAttendanceDefaulters>>["students"][number];
+
+const ATTENDANCE_DEFAULTER_CSV_COLUMNS: CsvColumn<AttendanceDefaulterRow>[] = [
+  { header: "Student Name", accessor: (s) => s.name },
+  { header: "Admission No", accessor: (s) => s.admissionNo },
+  { header: "Phone", accessor: (s) => s.phone },
+  { header: "Class", accessor: (s) => s.className },
+  { header: "Section", accessor: (s) => s.sectionName },
+  { header: "Present Days", accessor: (s) => s.presentDays },
+  { header: "Working Days", accessor: (s) => s.workingDays },
+  { header: "Attendance %", accessor: (s) => s.percentage },
+];
+
+/**
+ * GET /api/reports/attendance-defaulters/export
+ * CSV download of the below-threshold attendance list, for class
+ * teachers/admins to share with parents or escalate.
+ */
+export const exportAttendanceDefaultersCsv = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const query = parseAttendanceDefaultersQuery(req);
+    if (!query) { sendError(res, "Branch ID required", 400); return; }
+
+    const { students } = await fetchAttendanceDefaulters(query);
+    const csv = buildCsv(students, ATTENDANCE_DEFAULTER_CSV_COLUMNS);
+
+    sendCsv(res, `attendance-defaulters-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  } catch (error) {
+    sendError(res, "Failed to export attendance defaulters", 500, (error as Error).message);
+  }
 };
 
 /**

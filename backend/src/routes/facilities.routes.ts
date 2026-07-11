@@ -4,6 +4,7 @@ import { addBook, getBooks, issueBook, returnBook, getIssuedBooks } from "../con
 import { addItem, getItems, purchaseStock, issueStock, getLowStockAlerts } from "../controllers/inventory.controller";
 import { createRoute, getRoutes, addStop, allocateStudent, getVehicles, addVehicle } from "../controllers/transport.controller";
 import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, deallocateRoom, getOccupancy } from "../controllers/hostel.controller";
+import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 
 const router = Router();
@@ -41,5 +42,12 @@ router.post("/hostel/rooms", authorize(...ADMIN, UserRole.WARDEN), addRoom);
 router.post("/hostel/allocate", authorize(...ADMIN, UserRole.WARDEN), allocateRoom);
 router.patch("/hostel/deallocate/:id", authorize(...ADMIN, UserRole.WARDEN), deallocateRoom);
 router.get("/hostel/occupancy", getOccupancy);
+
+// === ATTENDANCE DEVICES (RFID/card-tap readers) - Phase 5 ===
+router.post("/attendance-devices", authorize(...ADMIN), branchAccess, createDevice);
+router.get("/attendance-devices", authorize(...ADMIN), getDevices);
+router.patch("/attendance-devices/:id", authorize(...ADMIN), updateDevice);
+router.post("/attendance-devices/:id/regenerate-key", authorize(...ADMIN), regenerateApiKey);
+router.delete("/attendance-devices/:id", authorize(...ADMIN), deleteDevice);
 
 export default router;

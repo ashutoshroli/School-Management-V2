@@ -148,6 +148,8 @@ After seeding:
 | 14 | Public online admission form + inquiry pipeline, Audit log viewer | Done |
 | 15 | Fee reminder automation (defaulter Email/SMS blast) | Done |
 | 16 | Real certificate generation (TC/Bonafide/Character PDFs), staff & batch ID cards, public certificate verification | Done |
+| 17 | Attendance device (RFID reader) self-service management + apiKey-based device authentication for card-tap endpoints | Done |
+| 18 | Analytics: fee collection trend, payment mode breakdown, attendance-defaulters ("at-risk students") list, CSV exports | Done |
 
 > Note: "Done" means the backend API and a corresponding frontend page
 > exist and are functional for local/dev use. It does not imply the
@@ -193,6 +195,21 @@ After seeding:
   `backend/src/services/storage.service.ts`'s `StorageProvider`
   interface) - swap in an S3/GCS-backed implementation for production
   multi-instance deployments.
+- **RFID/card-tap devices** are now self-service manageable (create/
+  deactivate/rotate credentials from Dashboard > Facilities >
+  Attendance Devices, or `POST/GET/PATCH/DELETE /api/facilities/attendance-devices`)
+  and the card-tap endpoints
+  (`POST /api/academics/attendance/card-tap`,
+  `POST /api/hr/attendance/card-tap`) now require the device's `apiKey`
+  (via an `X-Device-Api-Key` header or `apiKey` body field) in addition
+  to its `deviceId` - see `backend/src/utils/deviceAuth.ts`. **This
+  fixes a pre-existing security gap**: previously these endpoints only
+  checked `deviceId` + `isActive`, which is not a secret and was never
+  actually validated as a credential, so anyone who knew (or could
+  guess) a `deviceId` could post fake attendance for any student/staff
+  member whose `cardId` they also knew. A real hardware reader must now
+  be configured with its generated `apiKey` (shown once, at device
+  creation/rotation time) to authenticate.
 
 ## Public Pages
 
@@ -236,6 +253,12 @@ After seeding:
   public, no-login verification page/endpoint by serial number, plus
   staff ID cards and one-click batch ID-card printing for an entire
   class/section
+- Self-service RFID/card-tap device management with per-device apiKey
+  authentication (see "Known limitations" above) and real-time SMS to
+  parents on a student's entry/exit tap
+- Analytics dashboards for fee collection trends and attendance
+  "at-risk students" (below a configurable attendance % threshold),
+  both with one-click CSV export for offline follow-up/import into Excel
 
 ## API Endpoints
 
@@ -293,6 +316,26 @@ The frontend's `/verify-certificate/[serialNo]` page (also public, no
 login) is the human-facing counterpart to the verify endpoint above -
 it's the URL printed on every generated certificate's footer.
 
+Notable additions for RFID attendance device management (Phase 5):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /facilities/attendance-devices | Register a device - returns the `apiKey` **once**, at creation time only |
+| GET | /facilities/attendance-devices | List devices for the caller's branch (never includes `apiKey`) |
+| PATCH | /facilities/attendance-devices/:id | Update name/location/isActive (deactivating blocks card-taps immediately) |
+| POST | /facilities/attendance-devices/:id/regenerate-key | Issue a new `apiKey`, invalidating the old one |
+| DELETE | /facilities/attendance-devices/:id | Remove a device |
+
+Notable additions for analytics/reporting (Phase 6):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /fees/reports/collection-trend?days= | Daily fee-collection amounts for the last N days (zero-filled gaps) |
+| GET | /fees/reports/payment-mode-breakdown | Amount/count collected per `PaymentMode` (cash, UPI, Razorpay, etc.) |
+| GET | /fees/reports/defaulters/export | CSV download of the fee-defaulters list |
+| GET | /reports/attendance-defaulters?threshold=&month=&year=&classId= | Students below a configurable attendance % (default 75) - admin + teacher |
+| GET | /reports/attendance-defaulters/export | CSV download of the above |
+
 ## Testing & CI
 
 ```bash
@@ -312,8 +355,14 @@ validators, the core atomic payment-recording logic in
 generators (`services/certificateGenerator.service.ts` - these render
 real PDFs via pdfkit rather than mocking it, verifying well-formed
 output), the certificate/ID-card controllers' branch-access rules
-(`controllers/{certificate,document}.controller.ts`), and a handful of
-HTTP-level smoke tests against the real Express app.
+(`controllers/{certificate,document}.controller.ts`), the RFID device
+authentication logic (`utils/deviceAuth.ts` and the card-tap
+controllers - including explicit regression tests for the pre-fix
+"no apiKey required" vulnerability described above), the CSV export
+utility (`services/csvExport.service.ts` - RFC 4180 escaping rules),
+and the new analytics endpoints (fee collection trend's zero-fill
+bucketing, attendance-defaulters' threshold filtering/sorting), plus a
+handful of HTTP-level smoke tests against the real Express app.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR to
 `main`:
