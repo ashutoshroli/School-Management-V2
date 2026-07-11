@@ -308,7 +308,9 @@ export default function StudentProfilePage() {
                       <div key={fee.id} className="border rounded-lg p-3 flex items-center justify-between flex-wrap gap-2">
                         <div>
                           <p className="font-medium text-sm">{fee.feeStructure.feeCategory.name}</p>
-                          <p className="text-xs text-gray-500">{fee.feeStructure.class.name} &bull; {fee.feeStructure.frequency}</p>
+                          <p className="text-xs text-gray-500">
+                            {fee.feeStructure.class?.name || `Transport: ${fee.feeStructure.transportRoute?.name}`} &bull; {fee.feeStructure.frequency}
+                          </p>
                           {fee.calculatedLateFee > 0 && (
                             <p className="text-xs text-orange-600 mt-0.5">Includes late fee: {formatCurrency(fee.calculatedLateFee)}</p>
                           )}

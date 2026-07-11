@@ -580,7 +580,17 @@ export const getStudentPayments = async (req: AuthRequest, res: Response): Promi
         orderBy: { paidAt: "desc" },
         include: {
           feeAssignment: {
-            include: { feeStructure: { include: { feeCategory: { select: { name: true } } } } },
+            include: {
+              feeStructure: {
+                include: {
+                  feeCategory: { select: { name: true } },
+                  // Present instead of `class` for transport fees (see
+                  // FeeStructure's doc comment in schema.prisma) - kept
+                  // consistent with getStudentPendingFees's include.
+                  transportRoute: { select: { name: true } },
+                },
+              },
+            },
           },
         },
       }),
