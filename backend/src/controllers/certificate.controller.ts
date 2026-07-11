@@ -53,7 +53,7 @@ const getParentName = (
  */
 export const generateCertificate = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { templateId, studentId, purpose } = req.body;
+    const { templateId, studentId, purpose, customFields } = req.body;
 
     const template = await prisma.certificateTemplate.findUnique({ where: { id: templateId } });
     if (!template || !template.isActive) {
@@ -107,6 +107,9 @@ export const generateCertificate = async (req: AuthRequest, res: Response): Prom
       issueDate,
       verifyUrl,
       purpose,
+      // Only meaningfully used by a CUSTOM template's placeholders -
+      // see CertificateRenderParams.extraFields's doc comment.
+      extraFields: customFields,
       templateUrl: template.templateUrl,
       branch: student.branch,
       student: {
@@ -126,13 +129,11 @@ export const generateCertificate = async (req: AuthRequest, res: Response): Prom
     });
 
     if (!pdfBuffer) {
-      sendError(
-        res,
-        `Certificate type ${template.type} is not yet supported by the PDF generator. ` +
-          `Upload a .docx template for this type on the Templates page, or use the ` +
-          `dedicated ID card endpoint for ID_CARD.`,
-        400
-      );
+      const hint =
+        template.type === "CUSTOM"
+          ? "CUSTOM certificates have no built-in layout - upload a .docx template for it on the Templates page first (any custom field values you supplied here only fill placeholders in that uploaded template)."
+          : `Upload a .docx template for this type on the Templates page, or use the dedicated ID card endpoint for ID_CARD.`;
+      sendError(res, `Certificate type ${template.type} is not yet supported by the PDF generator. ${hint}`, 400);
       return;
     }
 

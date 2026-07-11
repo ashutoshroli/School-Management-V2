@@ -353,13 +353,60 @@ never touch Grade System settings keep their exact previous behavior.
 
 ---
 
-## Phase 7: Advanced/Deferred Items 🔵 (Items #14, #16)
+## Phase 7: Advanced/Deferred Items ✅ COMPLETED (Items #14, #16)
 
-**Priority:** LOW (higher effort, lower urgency - can be deferred indefinitely)
+**Priority:** LOW (higher effort, lower urgency - could have been deferred indefinitely)
+**Status:** ✅ **DONE - all 18 originally-identified gap-analysis items now shipped**
 
-### Scope:
-- Certificate CUSTOM-type generic renderer (needs a field-mapping UI + different generation flow - meaningfully bigger than other items)
-- Academic Year rollover wizard (pure UX sequencing/convenience, links Phases 1 + existing pages together)
+### What was actually done:
+
+**Item #14 - Certificate CUSTOM-type generic renderer:**
+- A CUSTOM certificate template's fields aren't known in advance (unlike
+  Transfer/Bonafide/Character's fixed field sets), so rather than a fixed
+  field-mapping UI, the admin now supplies free-form `{{placeholder}}` key/value
+  pairs ("Custom Fields") directly on the Generate Certificate modal at
+  generation time - a genuinely generic solution, not tied to any specific
+  CUSTOM template's layout.
+- **Backend:** `generateCertificateSchema` gained an optional `customFields`
+  record; `certificate.controller.ts`'s `generateCertificate` passes it through
+  as `extraFields` to `renderCertificateByType`/`toTemplateData`
+  (`certificateGenerator.service.ts`), merged alongside the standard
+  student/branch fields. **Data-integrity guard:** a standard field (e.g.
+  `studentName`, `purpose`) always wins if a custom field key collides with
+  it - a CUSTOM field can never silently override real record data.
+- Since CUSTOM has no hardcoded PDFKit fallback (confirmed still true - see
+  `renderCertificateByType`'s `default: return null`), the 400 error message
+  for CUSTOM now explicitly says to upload a .docx template first and clarifies
+  that Custom Fields only fill placeholders in *that* uploaded template.
+- **Frontend:** `/dashboard/certificates`'s Generate modal shows a dynamic
+  "Custom Fields" key/value row list (add/remove rows) whenever a CUSTOM-type
+  template is selected, with a hint explaining the key must match the
+  template's `{{placeholder}}` name.
+
+**Item #16 - Academic Year rollover wizard:**
+- New "Start New Academic Year" button on `/dashboard/academic-years` opens a
+  3-step guided modal chaining 3 already-existing flows that were previously
+  separate, easy-to-forget manual steps:
+  1. Create the new academic year (and immediately activates it, so step 2's
+     Promotion page - which defaults to whichever year is active - already
+     points at the right one)
+  2. Link to `/dashboard/promotion` (Phase 1) to promote last year's students
+  3. Link to `/dashboard/fees/structures` to set up fees for the new year
+- Pure frontend convenience/UX sequencing - no new backend endpoint, each step
+  just calls/links to functionality that already existed.
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**63 suites / 606 tests**, up from
+  63/600 - zero regressions) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean,
+  `certificates` (3.37kB->3.92kB) and `academic-years` (3.19kB->4.52kB) build fine
+
+### Deliverables:
+- ✅ CUSTOM certificates now have a real, generic generation path (was "not
+  yet supported" before)
+- ✅ Academic Year rollover is now a guided 3-step flow instead of 3 disconnected pages
+- ✅ All existing + new tests passing, both builds clean
+- ✅ **All 18 items from FRONTEND_GAP_ANALYSIS.md are now shipped across 7 phases**
 
 ---
 

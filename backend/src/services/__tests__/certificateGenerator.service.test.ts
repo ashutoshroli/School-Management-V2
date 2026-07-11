@@ -3,6 +3,7 @@ import {
   renderBonafideCertificate,
   renderCharacterCertificate,
   renderCertificateByType,
+  toTemplateData,
   CertificateRenderParams,
 } from "../certificateGenerator.service";
 
@@ -137,6 +138,49 @@ describe("certificateGenerator.service", () => {
 
     it("returns null for CUSTOM when no template is uploaded (no generic PDFKit fallback exists)", async () => {
       expect(await renderCertificateByType("CUSTOM" as any, baseParams)).toBeNull();
+    });
+  });
+
+  // extraFields feeds a CUSTOM certificate's admin-supplied placeholder
+  // values (see CertificateRenderParams.extraFields's doc comment) -
+  // these params have no templateUrl, so renderTemplateToPdf()
+  // short-circuits to null regardless, but toTemplateData (exercised
+  // indirectly via renderTemplateToPdf's data argument) must never
+  // throw when extraFields is present, and standard fields must always
+  // win over a colliding extraFields key.
+  describe("extraFields (CUSTOM certificate custom field values)", () => {
+    it("does not affect PDFKit rendering when set alongside a supported type", async () => {
+      const buffer = await renderCertificateByType("TRANSFER_CERTIFICATE" as any, {
+        ...baseParams,
+        extraFields: { eventName: "Annual Sports Day" },
+      });
+      expect(buffer).not.toBeNull();
+      expect(buffer!.subarray(0, 5).toString("ascii")).toBe(PDF_MAGIC_BYTES);
+    });
+
+    it("still returns null for CUSTOM with no template even when extraFields is provided", async () => {
+      const buffer = await renderCertificateByType("CUSTOM" as any, {
+        ...baseParams,
+        extraFields: { eventName: "Annual Sports Day" },
+      });
+      expect(buffer).toBeNull();
+    });
+
+    it("merges extraFields alongside the standard placeholder data", () => {
+      const data = toTemplateData({ ...baseParams, extraFields: { eventName: "Annual Sports Day", awardTitle: "Best Student" } });
+      expect(data.eventName).toBe("Annual Sports Day");
+      expect(data.awardTitle).toBe("Best Student");
+      expect(data.studentName).toBe("Ravi Kumar");
+    });
+
+    it("DATA INTEGRITY: a standard field always wins over a colliding extraFields key", () => {
+      const data = toTemplateData({
+        ...baseParams,
+        purpose: "applying for a passport",
+        extraFields: { studentName: "SHOULD NOT WIN", purpose: "SHOULD NOT WIN" },
+      });
+      expect(data.studentName).toBe("Ravi Kumar");
+      expect(data.purpose).toBe("applying for a passport");
     });
   });
 });

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, Plus, Check, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Calendar, Plus, Check, Trash2, Sparkles, ArrowRight, ArrowUpCircle, FileText } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import ErrorBanner from "@/components/ui/ErrorBanner";
@@ -16,9 +17,22 @@ interface AcademicYear {
 }
 
 export default function AcademicYearsPage() {
+  const router = useRouter();
   const [years, setYears] = useState<AcademicYear[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+
+  // "Start New Academic Year" rollover wizard - a guided sequence
+  // chaining 3 already-existing flows (create year -> Student
+  // Promotion -> Fee Structures) that today are 3 separate, easy-to-
+  // forget manual steps. Pure frontend convenience: no new backend
+  // endpoint, each step just calls/links to what already exists.
+  const [showWizard, setShowWizard] = useState(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [wizardYear, setWizardYear] = useState<AcademicYear | null>(null);
+  const [wizardForm, setWizardForm] = useState({ name: "", startDate: "", endDate: "" });
+  const [wizardCreating, setWizardCreating] = useState(false);
+  const [wizardError, setWizardError] = useState("");
   // Note: branchId is deliberately NOT part of this form - the backend
   // always scopes creation to the logged-in user's own branch (see
   // resolveEffectiveBranchId in backend/src/utils/branchScope.ts). This
@@ -75,6 +89,36 @@ export default function AcademicYearsPage() {
     }
   };
 
+  const openWizard = () => {
+    setWizardStep(1);
+    setWizardYear(null);
+    setWizardForm({ name: "", startDate: "", endDate: "" });
+    setWizardError("");
+    setShowWizard(true);
+  };
+
+  const handleWizardCreateYear = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWizardCreating(true);
+    setWizardError("");
+    try {
+      const res = await api.post("/academic-years", wizardForm);
+      const created = res.data.data as AcademicYear;
+      // Setting the newly-created year active immediately, so the
+      // Promotion page's "Academic Year" picker (which defaults to
+      // whichever year is currently active) already points at it in
+      // step 2 without the admin needing a separate detour back here.
+      await api.patch(`/academic-years/${created.id}/activate`);
+      setWizardYear({ ...created, isActive: true });
+      await fetchYears();
+      setWizardStep(2);
+    } catch (err: any) {
+      setWizardError(err.response?.data?.message || "Failed to create academic year");
+    } finally {
+      setWizardCreating(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -84,9 +128,14 @@ export default function AcademicYearsPage() {
           </h1>
           <p className="text-gray-500 mt-1">Manage academic sessions</p>
         </div>
-        <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2">
-          <Plus className="h-4 w-4" /> Add Year
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={openWizard} className="btn-secondary flex items-center gap-2">
+            <Sparkles className="h-4 w-4" /> Start New Academic Year
+          </button>
+          <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2">
+            <Plus className="h-4 w-4" /> Add Year
+          </button>
+        </div>
       </div>
 
       {error && <ErrorBanner message={error} onRetry={fetchYears} />}
@@ -146,6 +195,100 @@ export default function AcademicYearsPage() {
             <button type="submit" className="btn-primary">Create</button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={showWizard} onClose={() => setShowWizard(false)} title="Start New Academic Year" size="lg">
+        <div className="space-y-6">
+          {/* Step indicator */}
+          <div className="flex items-center justify-center gap-2 text-xs font-medium">
+            {[
+              { n: 1, label: "Create Year" },
+              { n: 2, label: "Promote Students" },
+              { n: 3, label: "Fee Structures" },
+            ].map((s, i) => (
+              <div key={s.n} className="flex items-center gap-2">
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${wizardStep === s.n ? "bg-primary-600 text-white" : wizardStep > s.n ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}>
+                  {wizardStep > s.n ? <Check className="h-3.5 w-3.5" /> : <span>{s.n}</span>}
+                  {s.label}
+                </div>
+                {i < 2 && <ArrowRight className="h-3.5 w-3.5 text-gray-300" />}
+              </div>
+            ))}
+          </div>
+
+          {wizardError && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{wizardError}</div>}
+
+          {wizardStep === 1 && (
+            <form onSubmit={handleWizardCreateYear} className="space-y-4">
+              <p className="text-sm text-gray-500">
+                Step 1 of 3: create the new academic year and set it active. This unlocks Promotion and Fee Structure
+                setup for it.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Year Name *</label>
+                <input className="input-field" placeholder="e.g., 2026-27" value={wizardForm.name} onChange={(e) => setWizardForm({ ...wizardForm, name: e.target.value })} required />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+                  <input type="date" className="input-field" value={wizardForm.startDate} onChange={(e) => setWizardForm({ ...wizardForm, startDate: e.target.value })} required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
+                  <input type="date" className="input-field" value={wizardForm.endDate} onChange={(e) => setWizardForm({ ...wizardForm, endDate: e.target.value })} required />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-2 border-t">
+                <button type="button" onClick={() => setShowWizard(false)} className="btn-secondary">Cancel</button>
+                <button type="submit" disabled={wizardCreating} className="btn-primary disabled:opacity-50">
+                  {wizardCreating ? "Creating..." : "Create & Continue"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {wizardStep === 2 && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500">
+                Step 2 of 3: <span className="font-medium text-gray-700">{wizardYear?.name}</span> is now active. Promote
+                last year&apos;s students into their next class/section on the Promotion page (opens in this tab).
+              </p>
+              <button
+                onClick={() => router.push("/dashboard/promotion")}
+                className="w-full btn-secondary flex items-center justify-center gap-2 py-3"
+              >
+                <ArrowUpCircle className="h-4 w-4" /> Go to Student Promotion
+              </button>
+              <div className="flex justify-between pt-2 border-t">
+                <button type="button" onClick={() => setWizardStep(1)} className="btn-secondary">Back</button>
+                <button type="button" onClick={() => setWizardStep(3)} className="btn-primary">
+                  I&apos;ve Promoted Students - Continue
+                </button>
+              </div>
+            </div>
+          )}
+
+          {wizardStep === 3 && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500">
+                Step 3 of 3: set up fee structures for <span className="font-medium text-gray-700">{wizardYear?.name}</span>{" "}
+                so fees can be assigned/collected once students are in their new classes.
+              </p>
+              <button
+                onClick={() => router.push("/dashboard/fees/structures")}
+                className="w-full btn-secondary flex items-center justify-center gap-2 py-3"
+              >
+                <FileText className="h-4 w-4" /> Go to Fee Structures
+              </button>
+              <div className="flex justify-between pt-2 border-t">
+                <button type="button" onClick={() => setWizardStep(2)} className="btn-secondary">Back</button>
+                <button type="button" onClick={() => setShowWizard(false)} className="btn-primary flex items-center gap-1.5">
+                  <Check className="h-4 w-4" /> Done
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   );

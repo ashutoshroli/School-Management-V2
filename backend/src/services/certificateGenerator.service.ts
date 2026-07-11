@@ -62,6 +62,16 @@ export interface CertificateRenderParams {
   purpose?: string;
   /** The admin-uploaded .docx template for this CertificateTemplate row, if any. */
   templateUrl?: string | null;
+  /**
+   * Free-form extra {{placeholder}} values, mainly for CUSTOM
+   * certificate templates whose fields aren't known in advance (see
+   * generateCertificateSchema's doc comment). Merged into the standard
+   * fields in `toTemplateData` - if an admin somehow reuses one of the
+   * standard keys (e.g. "purpose") here, the standard value always
+   * wins, so a CUSTOM field can never silently corrupt data pulled
+   * from the actual student/branch record.
+   */
+  extraFields?: Record<string, string>;
 }
 
 const branchAddressLine = (branch: CertificateBranchInfo): string =>
@@ -75,7 +85,8 @@ const branchAddressLine = (branch: CertificateBranchInfo): string =>
  * means the guide shown to admins and the data actually substituted at
  * generation time can never silently drift apart.
  */
-const toTemplateData = (params: CertificateRenderParams): TemplateData => ({
+export const toTemplateData = (params: CertificateRenderParams): TemplateData => ({
+  ...(params.extraFields || {}),
   studentName: params.student.studentName,
   admissionNo: params.student.admissionNo,
   fatherName: params.student.fatherName,
