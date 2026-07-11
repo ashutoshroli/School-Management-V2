@@ -1,7 +1,7 @@
 import { Prisma, PaymentMode, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import prisma from "../config/database";
-import { seedDefaultAccountsForBranch } from "./defaultChartOfAccounts";
+import { seedDefaultAccountsForBranch, DEFAULT_CHART_OF_ACCOUNTS } from "./defaultChartOfAccounts";
 import { recordFeePayment } from "./feePayment.service";
 
 /**
@@ -16,8 +16,19 @@ import { recordFeePayment } from "./feePayment.service";
  * Deliberately does NOT touch Organization/Branch/AcademicYear/Class/
  * Section/Subject/FeeCategory/Chart-of-Accounts/LeaveType - those are
  * structural setup the branch is expected to already have (either from
- * db/prisma/seed.ts or normal admin usage); this only fills in the
- * *transactional* data that's tedious to create by hand one at a time.
+ * db/prisma/seed.ts, seedDemoData below, or normal admin usage); this
+ * only fills in the *transactional* data that's tedious to create by
+ * hand one at a time.
+ *
+ * seedDemoData/getDemoDataStatus/removeDemoData further down this file
+ * are the STRUCTURAL counterpart: they create/remove the demo
+ * Organization/Branch/AcademicYear/Class/Section/Subject/FeeCategory/
+ * Chart-of-Accounts/Permissions/LeaveTypes a branch needs to exist at
+ * all, entirely from the server (Settings > Demo Data) - no local
+ * machine or Shell access required, unlike db/prisma/seed.ts (see
+ * DEPLOY.md's Step 4). Use that first on a brand-new/empty deployment,
+ * then generateDemoDataForBranch (above) to fill it with realistic
+ * transactional records.
  */
 
 const FIRST_NAMES_MALE = [
@@ -533,4 +544,537 @@ export const generateDemoDataForBranch = async (
   }
 
   return result;
+};
+
+// ============================================================
+// STRUCTURAL demo data: seedDemoData / getDemoDataStatus / removeDemoData
+// ============================================================
+//
+// Server-side "one click" demo data seed/remove, so a Super Admin can
+// populate/clear a trial deployment's structural setup (organization,
+// branch, classes, subjects, fee categories, chart of accounts, leave
+// types, permissions) entirely from the Admin Portal (Settings > Demo
+// Data) - no local machine, `npm run seed`, or shell access required.
+// This matters specifically for Render's free tier, which does not
+// provide Shell/SSH access at all (see DEPLOY.md's Step 4, which
+// previously required running db/prisma/seed.ts from a developer's own
+// machine against the deployed DATABASE_URL).
+//
+// The IDs/codes/emails below are deliberately identical to
+// db/prisma/seed.ts's hardcoded values, so:
+//  - seeding via this API and seeding via the CLI script are 100%
+//    interchangeable / idempotent with each other (running one after
+//    the other just upserts, never duplicates), and
+//  - removeDemoData below can safely recognize "the demo org/branch"
+//    by a well-known id instead of guessing.
+export const DEMO_ORG_ID = "org-main";
+export const DEMO_BRANCH_ID = "branch-main";
+export const DEMO_BRANCH_CODE = "MAIN-001";
+export const DEMO_SUPER_ADMIN_EMAIL = "superadmin@abcschool.edu.in";
+export const DEMO_BRANCH_ADMIN_EMAIL = "branchadmin@abcschool.edu.in";
+const DEMO_PASSWORD = "Admin@123";
+
+// Mirrors db/prisma/seed.ts's demo data lists. Duplicated rather than
+// imported (like DEFAULT_CHART_OF_ACCOUNTS is imported here) because
+// db/prisma/seed.ts lives in a separate `db` package with no dependency
+// relationship to `backend` - see defaultChartOfAccounts.ts's own doc
+// comment for the same tradeoff. Keep these in sync by hand if the
+// seed script's demo content changes.
+const DEMO_CLASSES: { name: string; order: number }[] = [
+  { name: "Nursery", order: 0 },
+  { name: "LKG", order: 1 },
+  { name: "UKG", order: 2 },
+  { name: "Class 1", order: 3 },
+  { name: "Class 2", order: 4 },
+  { name: "Class 3", order: 5 },
+  { name: "Class 4", order: 6 },
+  { name: "Class 5", order: 7 },
+  { name: "Class 6", order: 8 },
+  { name: "Class 7", order: 9 },
+  { name: "Class 8", order: 10 },
+  { name: "Class 9", order: 11 },
+  { name: "Class 10", order: 12 },
+  { name: "Class 11", order: 13 },
+  { name: "Class 12", order: 14 },
+];
+const DEMO_SECTION_NAMES = ["A", "B", "C"];
+
+const DEMO_SUBJECTS: { name: string; code: string }[] = [
+  { name: "English", code: "ENG" },
+  { name: "Hindi", code: "HIN" },
+  { name: "Mathematics", code: "MAT" },
+  { name: "Science", code: "SCI" },
+  { name: "Social Studies", code: "SST" },
+  { name: "Computer Science", code: "CS" },
+  { name: "Physical Education", code: "PE" },
+  { name: "Art & Craft", code: "ART" },
+  { name: "Music", code: "MUS" },
+  { name: "Sanskrit", code: "SKT" },
+  { name: "Physics", code: "PHY" },
+  { name: "Chemistry", code: "CHE" },
+  { name: "Biology", code: "BIO" },
+  { name: "Accountancy", code: "ACC" },
+  { name: "Business Studies", code: "BST" },
+  { name: "Economics", code: "ECO" },
+];
+
+const DEMO_FEE_CATEGORIES: { name: string; code: string }[] = [
+  { name: "Tuition Fee", code: "TUITION" },
+  { name: "Transport Fee", code: "TRANSPORT" },
+  { name: "Hostel Fee", code: "HOSTEL" },
+  { name: "Exam Fee", code: "EXAM" },
+  { name: "Uniform Fee", code: "UNIFORM" },
+  { name: "Library Fee", code: "LIBRARY" },
+  { name: "Lab Fee", code: "LAB" },
+  { name: "Sports Fee", code: "SPORTS" },
+  { name: "Computer Fee", code: "COMPUTER" },
+  { name: "Admission Fee", code: "ADMISSION" },
+  { name: "Development Fee", code: "DEVELOPMENT" },
+];
+
+const DEMO_LEAVE_TYPES: { name: string; code: string; maxDays: number; carryForward?: boolean }[] = [
+  { name: "Casual Leave", code: "CL", maxDays: 12 },
+  { name: "Sick Leave", code: "SL", maxDays: 12 },
+  { name: "Earned Leave", code: "EL", maxDays: 15, carryForward: true },
+  { name: "Maternity Leave", code: "ML", maxDays: 180 },
+  { name: "Paternity Leave", code: "PL", maxDays: 15 },
+  { name: "Compensatory Off", code: "CO", maxDays: 5 },
+];
+
+const DEMO_PERMISSION_MODULES = [
+  "dashboard", "branches", "students", "staff", "classes",
+  "attendance", "fees", "accounting", "payroll", "exams",
+  "timetable", "library", "transport", "hostel", "inventory",
+  "notices", "messages", "certificates", "reports", "settings",
+];
+const DEMO_PERMISSION_ACTIONS = ["create", "read", "update", "delete"];
+
+export interface DemoDataSummary {
+  organization: string;
+  branch: string;
+  superAdminEmail: string;
+  branchAdminEmail: string;
+  classes: number;
+  sections: number;
+  subjects: number;
+  feeCategories: number;
+  leaveTypes: number;
+  accounts: number;
+  permissions: number;
+}
+
+/**
+ * Idempotently creates the demo organization/branch/admins/academic
+ * structure - safe to call repeatedly (every step is an upsert), so
+ * clicking "Add Demo Data" again after it's already been seeded just
+ * fills in anything missing rather than erroring or duplicating.
+ */
+export const seedDemoData = async (): Promise<DemoDataSummary> => {
+  const org = await prisma.organization.upsert({
+    where: { id: DEMO_ORG_ID },
+    update: {},
+    create: {
+      id: DEMO_ORG_ID,
+      name: "ABC Public School Group",
+      email: "admin@abcschool.edu.in",
+      phone: "+91-9876543210",
+      website: "https://abcschool.edu.in",
+      address: "123 Education Lane",
+      city: "New Delhi",
+      state: "Delhi",
+      pincode: "110001",
+    },
+  });
+
+  const hashedPassword = await bcrypt.hash(DEMO_PASSWORD, 12);
+
+  const superAdmin = await prisma.user.upsert({
+    where: { email: DEMO_SUPER_ADMIN_EMAIL },
+    update: {},
+    create: {
+      email: DEMO_SUPER_ADMIN_EMAIL,
+      password: hashedPassword,
+      name: "Super Administrator",
+      phone: "+91-9876543210",
+      role: UserRole.SUPER_ADMIN,
+      organizationId: org.id,
+      isActive: true,
+    },
+  });
+  void superAdmin;
+
+  const branch = await prisma.branch.upsert({
+    where: { code: DEMO_BRANCH_CODE },
+    update: {},
+    create: {
+      id: DEMO_BRANCH_ID,
+      organizationId: org.id,
+      name: "ABC Public School - Main Campus",
+      code: DEMO_BRANCH_CODE,
+      address: "123 Education Lane",
+      city: "New Delhi",
+      state: "Delhi",
+      pincode: "110001",
+      phone: "+91-11-23456789",
+      email: "main@abcschool.edu.in",
+      isActive: true,
+    },
+  });
+
+  const branchAdmin = await prisma.user.upsert({
+    where: { email: DEMO_BRANCH_ADMIN_EMAIL },
+    update: {},
+    create: {
+      email: DEMO_BRANCH_ADMIN_EMAIL,
+      password: hashedPassword,
+      name: "Branch Administrator",
+      phone: "+91-9876543211",
+      role: UserRole.BRANCH_ADMIN,
+      organizationId: org.id,
+      isActive: true,
+    },
+  });
+
+  await prisma.staff.upsert({
+    where: { userId: branchAdmin.id },
+    update: {},
+    create: {
+      userId: branchAdmin.id,
+      branchId: branch.id,
+      employeeId: "EMP-001",
+      designation: "Principal",
+      department: "Administration",
+      type: "NON_TEACHING",
+      joiningDate: new Date("2020-04-01"),
+    },
+  });
+
+  const academicYear = await prisma.academicYear.upsert({
+    where: { branchId_name: { branchId: branch.id, name: "2025-26" } },
+    update: {},
+    create: {
+      branchId: branch.id,
+      name: "2025-26",
+      startDate: new Date("2025-04-01"),
+      endDate: new Date("2026-03-31"),
+      isActive: true,
+    },
+  });
+  void academicYear;
+
+  for (const cls of DEMO_CLASSES) {
+    await prisma.class.upsert({
+      where: { branchId_name: { branchId: branch.id, name: cls.name } },
+      update: {},
+      create: { branchId: branch.id, name: cls.name, numericOrder: cls.order },
+    });
+  }
+
+  const classes = await prisma.class.findMany({ where: { branchId: branch.id } });
+  for (const cls of classes) {
+    for (const secName of DEMO_SECTION_NAMES) {
+      await prisma.section.upsert({
+        where: { classId_name: { classId: cls.id, name: secName } },
+        update: {},
+        create: { branchId: branch.id, classId: cls.id, name: secName, capacity: 50 },
+      });
+    }
+  }
+
+  for (const sub of DEMO_SUBJECTS) {
+    await prisma.subject.upsert({
+      where: { branchId_code: { branchId: branch.id, code: sub.code } },
+      update: {},
+      create: { branchId: branch.id, name: sub.name, code: sub.code, type: "THEORY" },
+    });
+  }
+
+  for (const cat of DEMO_FEE_CATEGORIES) {
+    await prisma.feeCategory.upsert({
+      where: { branchId_code: { branchId: branch.id, code: cat.code } },
+      update: {},
+      create: { branchId: branch.id, name: cat.name, code: cat.code, isSystem: true, isActive: true },
+    });
+  }
+
+  for (const lt of DEMO_LEAVE_TYPES) {
+    await prisma.leaveType.upsert({
+      where: { code: lt.code },
+      update: {},
+      create: {
+        name: lt.name,
+        code: lt.code,
+        maxDays: lt.maxDays,
+        carryForward: lt.carryForward || false,
+        isActive: true,
+      },
+    });
+  }
+
+  // Reuses the SAME source-of-truth as createBranch's auto-seeding and
+  // the setup-defaults backfill endpoint (see defaultChartOfAccounts.ts) -
+  // rather than duplicating the account list a third time.
+  await seedDefaultAccountsForBranch(branch.id);
+
+  for (const mod of DEMO_PERMISSION_MODULES) {
+    for (const action of DEMO_PERMISSION_ACTIONS) {
+      await prisma.permission.upsert({
+        where: { module_action: { module: mod, action } },
+        update: {},
+        create: { module: mod, action, description: `${action} ${mod}` },
+      });
+    }
+  }
+
+  return {
+    organization: org.name,
+    branch: branch.name,
+    superAdminEmail: DEMO_SUPER_ADMIN_EMAIL,
+    branchAdminEmail: DEMO_BRANCH_ADMIN_EMAIL,
+    classes: DEMO_CLASSES.length,
+    sections: DEMO_CLASSES.length * DEMO_SECTION_NAMES.length,
+    subjects: DEMO_SUBJECTS.length,
+    feeCategories: DEMO_FEE_CATEGORIES.length,
+    leaveTypes: DEMO_LEAVE_TYPES.length,
+    accounts: DEFAULT_CHART_OF_ACCOUNTS.length,
+    permissions: DEMO_PERMISSION_MODULES.length * DEMO_PERMISSION_ACTIONS.length,
+  };
+};
+
+export interface DemoDataStatus {
+  seeded: boolean;
+  branchId: string | null;
+  counts: {
+    classes: number;
+    sections: number;
+    subjects: number;
+    feeCategories: number;
+    accounts: number;
+    students: number;
+    staff: number;
+  };
+  canRemove: boolean;
+  blockedReasons: string[];
+}
+
+/**
+ * Reports whether the demo branch currently exists, some headline
+ * counts for the Settings UI, and whether removeDemoData would
+ * currently be blocked (and why) - so the frontend can show a useful
+ * message instead of just letting the user click "Remove" and get an
+ * error.
+ */
+export const getDemoDataStatus = async (): Promise<DemoDataStatus> => {
+  const branch = await prisma.branch.findUnique({ where: { id: DEMO_BRANCH_ID } });
+
+  if (!branch) {
+    return {
+      seeded: false,
+      branchId: null,
+      counts: { classes: 0, sections: 0, subjects: 0, feeCategories: 0, accounts: 0, students: 0, staff: 0 },
+      canRemove: false,
+      blockedReasons: [],
+    };
+  }
+
+  const [classes, sections, subjects, feeCategories, accounts, students, staff, blockedReasons] = await Promise.all([
+    prisma.class.count({ where: { branchId: branch.id } }),
+    prisma.section.count({ where: { branchId: branch.id } }),
+    prisma.subject.count({ where: { branchId: branch.id } }),
+    prisma.feeCategory.count({ where: { branchId: branch.id } }),
+    prisma.account.count({ where: { branchId: branch.id } }),
+    prisma.student.count({ where: { branchId: branch.id } }),
+    prisma.staff.count({ where: { branchId: branch.id } }),
+    getRemovalBlockers(branch.id),
+  ]);
+
+  return {
+    seeded: true,
+    branchId: branch.id,
+    counts: { classes, sections, subjects, feeCategories, accounts, students, staff },
+    canRemove: blockedReasons.length === 0,
+    blockedReasons,
+  };
+};
+
+/**
+ * Everything the demo seed itself creates ZERO of - if any of these
+ * are non-zero, real usage (or generateDemoDataForBranch above) has
+ * happened on top of the demo data (a real/generated admission, a real
+ * fee structure/payment, a real staff member beyond the seeded branch
+ * admin, etc), and removal must be blocked rather than silently
+ * deleting someone's real records along with the demo scaffolding.
+ */
+const getRemovalBlockers = async (branchId: string): Promise<string[]> => {
+  const [
+    students,
+    extraStaff,
+    payments,
+    vouchers,
+    feeStructures,
+    exams,
+    timetables,
+    promotions,
+    notices,
+    libraryBooks,
+    inventoryItems,
+    transportRoutes,
+    hostelBuildings,
+    admissionInquiries,
+    devices,
+  ] = await Promise.all([
+    prisma.student.count({ where: { branchId } }),
+    // The seed creates exactly one Staff record (the demo Branch
+    // Admin) - anything beyond that is a real (or generated) staff member.
+    prisma.staff.count({ where: { branchId } }).then((n) => Math.max(0, n - 1)),
+    prisma.payment.count({ where: { branchId } }),
+    prisma.voucher.count({ where: { branchId } }),
+    prisma.feeStructure.count({ where: { branchId } }),
+    prisma.exam.count({ where: { academicYear: { branchId } } }),
+    prisma.timetable.count({ where: { academicYear: { branchId } } }),
+    prisma.promotion.count({ where: { academicYear: { branchId } } }),
+    prisma.notice.count({ where: { branchId } }),
+    prisma.libraryBook.count({ where: { branchId } }),
+    prisma.inventoryItem.count({ where: { branchId } }),
+    prisma.transportRoute.count({ where: { branchId } }),
+    prisma.hostelBuilding.count({ where: { branchId } }),
+    prisma.admissionInquiry.count({ where: { branchId } }),
+    prisma.attendanceDevice.count({ where: { branchId } }),
+  ]);
+
+  const reasons: string[] = [];
+  if (students > 0) reasons.push(`${students} student(s)`);
+  if (extraStaff > 0) reasons.push(`${extraStaff} staff member(s) beyond the demo Branch Admin`);
+  if (payments > 0) reasons.push(`${payments} fee payment(s)`);
+  if (vouchers > 0) reasons.push(`${vouchers} accounting voucher(s)`);
+  if (feeStructures > 0) reasons.push(`${feeStructures} fee structure(s)`);
+  if (exams > 0) reasons.push(`${exams} exam(s)`);
+  if (timetables > 0) reasons.push(`${timetables} timetable(s)`);
+  if (promotions > 0) reasons.push(`${promotions} student promotion record(s)`);
+  if (notices > 0) reasons.push(`${notices} notice(s)`);
+  if (libraryBooks > 0) reasons.push(`${libraryBooks} library book(s)`);
+  if (inventoryItems > 0) reasons.push(`${inventoryItems} inventory item(s)`);
+  if (transportRoutes > 0) reasons.push(`${transportRoutes} transport route(s)`);
+  if (hostelBuildings > 0) reasons.push(`${hostelBuildings} hostel building(s)`);
+  if (admissionInquiries > 0) reasons.push(`${admissionInquiries} admission inquiry/inquiries`);
+  if (devices > 0) reasons.push(`${devices} attendance device(s)`);
+
+  return reasons;
+};
+
+export interface RemoveDemoDataResult {
+  removed: boolean;
+  message: string;
+  blockedReasons?: string[];
+}
+
+/**
+ * Removes everything seedDemoData creates - but ONLY if nothing real
+ * (or generated via generateDemoDataForBranch above) has been layered
+ * on top of it (see getRemovalBlockers). Deliberately conservative
+ * about what it touches:
+ *  - NEVER deletes the calling Super Admin's own account, and never
+ *    deletes the demo Super Admin login unless at least one OTHER
+ *    Super Admin account will still exist afterwards (so this can
+ *    never lock every admin out of the app).
+ *  - NEVER deletes global Permission/LeaveType rows - these back every
+ *    branch's RBAC and HR leave features, not just the demo branch, so
+ *    a real deployment still needs them even after "demo" data is gone.
+ *  - Only deletes the Organization/demo-branch-admin login if nothing
+ *    else in the system still depends on them.
+ */
+export const removeDemoData = async (callerUserId: string): Promise<RemoveDemoDataResult> => {
+  const branch = await prisma.branch.findUnique({ where: { id: DEMO_BRANCH_ID } });
+  if (!branch) {
+    return { removed: false, message: "No demo data found - nothing to remove." };
+  }
+
+  const blockedReasons = await getRemovalBlockers(branch.id);
+  if (blockedReasons.length > 0) {
+    return {
+      removed: false,
+      message: "Cannot remove demo data - real records exist on top of it. Remove/reassign those first, or keep the demo data.",
+      blockedReasons,
+    };
+  }
+
+  const demoBranchAdminStaff = await prisma.staff.findFirst({
+    where: { branchId: branch.id },
+    select: { id: true, userId: true },
+  });
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (demoBranchAdminStaff) {
+        await tx.staffDocument.deleteMany({ where: { staffId: demoBranchAdminStaff.id } });
+        await tx.subjectTeacher.deleteMany({ where: { staffId: demoBranchAdminStaff.id } });
+        await tx.staffAttendance.deleteMany({ where: { staffId: demoBranchAdminStaff.id } });
+        await tx.leaveApplication.deleteMany({ where: { staffId: demoBranchAdminStaff.id } });
+        await tx.salaryStructure.deleteMany({ where: { staffId: demoBranchAdminStaff.id } });
+        await tx.section.updateMany({ where: { classTeacherId: demoBranchAdminStaff.id }, data: { classTeacherId: null } });
+        await tx.staff.delete({ where: { id: demoBranchAdminStaff.id } });
+        await tx.user.delete({ where: { id: demoBranchAdminStaff.userId } });
+      }
+
+      const classIds = (await tx.class.findMany({ where: { branchId: branch.id }, select: { id: true } })).map((c) => c.id);
+      const subjectIds = (await tx.subject.findMany({ where: { branchId: branch.id }, select: { id: true } })).map((s) => s.id);
+      const academicYearIds = (await tx.academicYear.findMany({ where: { branchId: branch.id }, select: { id: true } })).map((a) => a.id);
+      const examIds = (await tx.exam.findMany({ where: { academicYearId: { in: academicYearIds } }, select: { id: true } })).map((e) => e.id);
+      const timetableIds = (await tx.timetable.findMany({ where: { academicYearId: { in: academicYearIds } }, select: { id: true } })).map((t) => t.id);
+
+      // IMPORTANT: children before parents, since neither the DB nor
+      // Prisma cascades deletes here. Timetable/TimetableSlot and
+      // Mark/Exam reference Section/Class/Subject respectively, so
+      // they must go first, or deleting Section/Class/Subject below
+      // would fail on a foreign-key violation.
+      await tx.timetableSlot.deleteMany({ where: { timetableId: { in: timetableIds } } });
+      await tx.timetable.deleteMany({ where: { id: { in: timetableIds } } });
+      await tx.mark.deleteMany({ where: { examId: { in: examIds } } });
+      await tx.exam.deleteMany({ where: { id: { in: examIds } } });
+      await tx.promotion.deleteMany({ where: { academicYearId: { in: academicYearIds } } });
+
+      await tx.classSubject.deleteMany({ where: { classId: { in: classIds } } });
+      await tx.subjectTeacher.deleteMany({ where: { OR: [{ classId: { in: classIds } }, { subjectId: { in: subjectIds } }] } });
+      await tx.feeInstallment.deleteMany({ where: { feeStructure: { branchId: branch.id } } });
+      await tx.feeStructure.deleteMany({ where: { branchId: branch.id } });
+      await tx.feeCategory.deleteMany({ where: { branchId: branch.id } });
+      await tx.section.deleteMany({ where: { branchId: branch.id } });
+      await tx.class.deleteMany({ where: { branchId: branch.id } });
+      await tx.subject.deleteMany({ where: { branchId: branch.id } });
+      await tx.account.deleteMany({ where: { branchId: branch.id } });
+      await tx.academicYear.deleteMany({ where: { branchId: branch.id } });
+
+      await tx.branch.delete({ where: { id: branch.id } });
+
+      // Only remove the demo Super Admin login if it's not the account
+      // making this request, and at least one OTHER Super Admin will
+      // still be able to log in afterwards.
+      const demoSuperAdmin = await tx.user.findUnique({ where: { email: DEMO_SUPER_ADMIN_EMAIL } });
+      if (demoSuperAdmin && demoSuperAdmin.id !== callerUserId) {
+        const otherSuperAdmins = await tx.user.count({
+          where: { role: UserRole.SUPER_ADMIN, id: { not: demoSuperAdmin.id } },
+        });
+        if (otherSuperAdmins > 0) {
+          await tx.user.delete({ where: { id: demoSuperAdmin.id } });
+        }
+      }
+
+      // Only remove the demo Organization if nothing else still
+      // references it (no remaining branches or users under it).
+      const remainingBranches = await tx.branch.count({ where: { organizationId: DEMO_ORG_ID } });
+      const remainingUsers = await tx.user.count({ where: { organizationId: DEMO_ORG_ID } });
+      if (remainingBranches === 0 && remainingUsers === 0) {
+        await tx.organization.deleteMany({ where: { id: DEMO_ORG_ID } });
+      }
+    });
+  } catch (error) {
+    return {
+      removed: false,
+      message:
+        "Failed to remove demo data - it may still have unexpected records attached to it. " +
+        (error as Error).message,
+    };
+  }
+
+  return { removed: true, message: "Demo data removed successfully." };
 };
