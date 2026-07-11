@@ -71,14 +71,23 @@ describe("feeStructure.controller - createFeeStructure", () => {
     expect(prisma.feeStructure.create).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: rejects a Branch Admin explicitly targeting a different branch", async () => {
+  it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
+    (prisma.feeStructure.findUnique as jest.Mock).mockReset();
+    (prisma.feeStructure.findUnique as jest.Mock).mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: "structure-1",
+      feeCategory: {},
+      class: {},
+      installments: [],
+    });
+    (prisma.feeStructure.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "structure-1", ...data }));
+
     const req = makeReq({ body: { ...baseBody, branchId: "branch-OTHER" } });
     const res = makeMockRes();
 
     await createFeeStructure(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(prisma.feeStructure.create).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect((prisma.feeStructure.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
   });
 
   it("rejects a duplicate structure for the same branch+year+class+category", async () => {

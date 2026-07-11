@@ -62,14 +62,14 @@ describe("accounting.controller", () => {
       expect(prisma.account.create).not.toHaveBeenCalled();
     });
 
-    it("SECURITY: rejects a Branch Admin explicitly targeting a different branch", async () => {
+    it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
       const req = makeReq({ body: { branchId: "branch-OTHER", name: "Cash", code: "1000", type: "ASSET" } });
       const res = makeMockRes();
 
       await createAccount(req, res);
 
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(prisma.account.create).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect((prisma.account.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
     });
   });
 
@@ -112,14 +112,13 @@ describe("accounting.controller", () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it("SECURITY: rejects a Branch Admin explicitly targeting a different branch", async () => {
+    it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
       const req = makeReq({ body: { branchId: "branch-OTHER", type: "PAYMENT", date: "2025-06-01", entries: validEntries } });
       const res = makeMockRes();
 
       await createVoucher(req, res);
 
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(201);
     });
 
     it("rejects when no entries are provided", async () => {

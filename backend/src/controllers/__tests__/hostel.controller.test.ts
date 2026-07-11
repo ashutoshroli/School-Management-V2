@@ -56,13 +56,13 @@ describe("hostel.controller - createBuilding", () => {
     expect(prisma.hostelBuilding.create).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: rejects a Branch Admin explicitly targeting a different branch (previously had NO check at all)", async () => {
-    const req = makeReq({ body: { branchId: "branch-OTHER", name: "Boys Hostel" } });
+  it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
+    const req = makeReq({ body: { branchId: "branch-OTHER", name: "Boys Hostel", type: "BOYS" } });
     const res = makeMockRes();
 
     await createBuilding(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(prisma.hostelBuilding.create).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect((prisma.hostelBuilding.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
   });
 });

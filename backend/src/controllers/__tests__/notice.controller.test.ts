@@ -64,13 +64,13 @@ describe("notice.controller - createNotice", () => {
     expect(prisma.notice.create).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: rejects a Branch Admin explicitly targeting a different branch", async () => {
+  it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
     const req = makeReq({ body: { ...baseBody, branchId: "branch-OTHER" } });
     const res = makeMockRes();
 
     await createNotice(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(prisma.notice.create).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect((prisma.notice.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
   });
 });

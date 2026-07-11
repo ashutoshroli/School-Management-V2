@@ -85,14 +85,15 @@ describe("feeCollection.controller - collectPayment", () => {
     expect(getValidatedFeeAssignment).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: rejects a Branch Admin explicitly targeting a different branch", async () => {
+  it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (falls back to their own branch)", async () => {
     const req = makeReq({ body: { ...baseBody, branchId: "branch-OTHER" } });
     const res = makeMockRes();
 
     await collectPayment(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(getValidatedFeeAssignment).not.toHaveBeenCalled();
+    // The malicious branchId is ignored - fee validation uses the caller's own branch
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(getValidatedFeeAssignment).toHaveBeenCalledWith("fa-1", "student-1", "branch-1");
   });
 
   it("rejects a non-positive amount", async () => {

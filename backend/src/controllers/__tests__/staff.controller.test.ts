@@ -87,14 +87,15 @@ describe("staff.controller - createStaff", () => {
     expect(prisma.staff.create).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: rejects a Branch Admin explicitly targeting a different branch", async () => {
+  it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
     const req = makeReq({ body: { ...baseBody, branchId: "branch-OTHER" } });
     const res = makeMockRes();
 
     await createStaff(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(prisma.staff.create).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(201);
+    const staffCreateCall = (prisma.staff.create as jest.Mock).mock.calls[0][0];
+    expect(staffCreateCall.data.branchId).toBe("branch-1");
   });
 
   it("rejects when the email already exists", async () => {

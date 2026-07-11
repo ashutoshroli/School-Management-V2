@@ -56,13 +56,13 @@ describe("inventory.controller - addItem", () => {
     expect(prisma.inventoryItem.create).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: rejects a Branch Admin explicitly targeting a different branch (previously had NO check at all)", async () => {
-    const req = makeReq({ body: { branchId: "branch-OTHER", name: "Notebooks" } });
+  it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
+    const req = makeReq({ body: { branchId: "branch-OTHER", name: "Notebooks", category: "stationery", unit: "pcs" } });
     const res = makeMockRes();
 
     await addItem(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(prisma.inventoryItem.create).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect((prisma.inventoryItem.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
   });
 });

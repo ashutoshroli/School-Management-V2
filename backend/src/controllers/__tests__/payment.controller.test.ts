@@ -80,13 +80,15 @@ describe("payment.controller - createRazorpayOrder", () => {
     expect(getValidatedFeeAssignment).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: rejects when the caller's own branch mismatches an explicitly-sent branchId (non-Super-Admin)", async () => {
+  it("SECURITY: silently neutralizes when the caller sends a different branchId (non-Super-Admin gets their own branch used)", async () => {
     const req = makeReq({ body: { ...baseBody, branchId: "branch-OTHER" } });
     const res = makeMockRes();
 
     await createRazorpayOrder(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(getValidatedFeeAssignment).not.toHaveBeenCalled();
+    // The malicious branchId is ignored - fee validation uses the caller's own branch
+    expect(res.status).not.toHaveBeenCalledWith(403);
+    expect(res.status).not.toHaveBeenCalledWith(400);
+    expect(getValidatedFeeAssignment).toHaveBeenCalledWith("fa-1", "student-1", "branch-1");
   });
 });

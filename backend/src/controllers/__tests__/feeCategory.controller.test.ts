@@ -57,14 +57,14 @@ describe("feeCategory.controller - createFeeCategory", () => {
     expect(prisma.feeCategory.create).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: rejects a Branch Admin explicitly targeting a different branch", async () => {
+  it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
     const req = makeReq({ body: { branchId: "branch-OTHER", name: "Activity Fee", code: "ACTIVITY" } });
     const res = makeMockRes();
 
     await createFeeCategory(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(prisma.feeCategory.create).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect((prisma.feeCategory.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
   });
 
   it("rejects a duplicate category code within the same branch", async () => {

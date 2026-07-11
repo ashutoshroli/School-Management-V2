@@ -61,14 +61,14 @@ describe("transport.controller", () => {
       expect(prisma.transportRoute.create).not.toHaveBeenCalled();
     });
 
-    it("SECURITY: rejects a Branch Admin explicitly targeting a different branch (previously had NO check at all)", async () => {
-      const req = makeReq({ body: { branchId: "branch-OTHER", name: "Route 1" } });
+    it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
+      const req = makeReq({ body: { branchId: "branch-OTHER", name: "Route 1", startPoint: "A", endPoint: "B", monthlyFee: 500 } });
       const res = makeMockRes();
 
       await createRoute(req, res);
 
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(prisma.transportRoute.create).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect((prisma.transportRoute.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
     });
   });
 
@@ -87,14 +87,14 @@ describe("transport.controller", () => {
       expect((prisma.vehicle.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
     });
 
-    it("SECURITY: rejects a Branch Admin explicitly targeting a different branch (previously had NO check at all)", async () => {
-      const req = makeReq({ body: { branchId: "branch-OTHER", vehicleNo: "DL01AB1234" } });
+    it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
+      const req = makeReq({ body: { branchId: "branch-OTHER", vehicleNo: "DL01AB1234", type: "Bus", capacity: 40 } });
       const res = makeMockRes();
 
       await addVehicle(req, res);
 
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(prisma.vehicle.create).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect((prisma.vehicle.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
     });
   });
 });

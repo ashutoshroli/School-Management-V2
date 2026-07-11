@@ -76,14 +76,19 @@ describe("academicYear.controller - createAcademicYear", () => {
     expect(prisma.academicYear.create).not.toHaveBeenCalled();
   });
 
-  it("SECURITY: still rejects a Branch Admin explicitly trying to target a different branch", async () => {
+  it("SECURITY: silently neutralizes a Branch Admin trying to target a different branch (creates under their own branch instead)", async () => {
+    (prisma.academicYear.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.academicYear.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "ay-1", ...data }));
+
     const req = makeReq({ body: { branchId: "branch-OTHER", name: "2025-26", startDate: "2025-04-01", endDate: "2026-03-31" } });
     const res = makeMockRes();
 
     await createAcademicYear(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(prisma.academicYear.create).not.toHaveBeenCalled();
+    // The malicious branchId is ignored - data is written to the caller's own branch
+    expect(res.status).toHaveBeenCalledWith(201);
+    const createCall = (prisma.academicYear.create as jest.Mock).mock.calls[0][0];
+    expect(createCall.data.branchId).toBe("branch-1");
   });
 
   it("rejects a duplicate academic year name within the same branch", async () => {

@@ -16,11 +16,12 @@ jest.mock("../../../config", () => ({
 }));
 
 import { config } from "../../../config";
-import { isPushConfigured, sendPush, sendPushToMany } from "../pushProvider";
+import { isPushConfigured, sendPush, sendPushToMany, _resetCachedToken } from "../pushProvider";
 
 describe("pushProvider", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    _resetCachedToken();
     (config as any).push = { projectId: "", clientEmail: "", privateKey: "" };
     // sendPushToMany intentionally logs a console.error per failed token
     // (see pushProvider.ts) so ops can spot dead/uninstalled-app tokens
