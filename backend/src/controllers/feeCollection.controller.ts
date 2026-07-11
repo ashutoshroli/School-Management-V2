@@ -298,17 +298,23 @@ export const assignTransportFee = async (req: AuthRequest, res: Response): Promi
 /**
  * Assign a transport route's fee to a specific, hand-picked list of
  * students - the transport counterpart to assignFeesToStudents
- * (class-wise). Used when only some of a route's allocated students
- * should get the fee right now (e.g. a mid-term admission whose fee
- * starts from next month, or a student whose transport fee is being
- * handled separately/already covered by a scholarship) rather than
- * everyone on the route at once via assignTransportFee.
+ * (class-wise). Used when only some students should get the fee right
+ * now rather than everyone currently on the route via
+ * assignTransportFee (e.g. a mid-term admission, or a student whose
+ * fee is being set up before their allocation is recorded elsewhere).
  *
- * Deliberately does NOT require the given students to be in
- * TransportAllocation for this route - an admin may want to assign the
- * fee ahead of the allocation being recorded, or for a student using
- * the route informally. It DOES still require every student to belong
- * to the route's branch (same defense as assignFeesToStudents).
+ * Deliberately does NOT require the given students to already be in
+ * TransportAllocation for this route - BUT it DOES ensure they end up
+ * allocated to it as a side effect (upsert, moving them off any other
+ * route they were on). Without this, a student picked here would get
+ * billed for the route yet never show up in its "N students
+ * allocated" count or the Transport page's roster, which is exactly
+ * the confusing state this used to leave things in - assigning a
+ * route's fee to a student and them not actually being on that route
+ * makes no sense for a transport fee specifically (unlike a generic
+ * class fee, which has no analogous "allocation" concept to sync).
+ * Still requires every student to belong to the route's branch (same
+ * defense as assignFeesToStudents).
  */
 export const assignTransportFeeToStudents = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -368,13 +374,42 @@ export const assignTransportFeeToStudents = async (req: AuthRequest, res: Respon
       });
     }
 
+    // Sync TransportAllocation for EVERY requested student (not just
+    // the newly fee-assigned ones) - a student who already had this
+    // fee assigned but was never actually allocated should still be
+    // fixed up here. TransportAllocation.studentId is @unique (one
+    // route per student), so this is a create for students with no
+    // allocation at all, or a route-reassignment for students
+    // currently on a different route - split into one createMany + one
+    // updateMany instead of a per-student upsert loop (N+1).
+    const existingAllocations = await prisma.transportAllocation.findMany({
+      where: { studentId: { in: studentIds } },
+      select: { studentId: true, routeId: true },
+    });
+    const allocatedElsewhere = existingAllocations.filter((a) => a.routeId !== routeId).map((a) => a.studentId);
+    const needsNewAllocation = studentIds.filter((id: string) => !existingAllocations.some((a) => a.studentId === id));
+
+    if (needsNewAllocation.length > 0) {
+      await prisma.transportAllocation.createMany({
+        data: needsNewAllocation.map((studentId: string) => ({ studentId, routeId })),
+      });
+    }
+    if (allocatedElsewhere.length > 0) {
+      await prisma.transportAllocation.updateMany({
+        where: { studentId: { in: allocatedElsewhere } },
+        data: { routeId },
+      });
+    }
+
     const created = toCreate.length;
     const skipped = students.length - created;
+    const allocationChanges = needsNewAllocation.length + allocatedElsewhere.length;
 
     sendSuccess(
       res,
       { created, skipped, total: students.length, feeStructureId: structure.id },
-      `Transport fee assigned to ${created} student(s) (${skipped} skipped - already assigned)`
+      `Transport fee assigned to ${created} student(s) (${skipped} skipped - already assigned)` +
+        (allocationChanges > 0 ? `. ${allocationChanges} student(s) allocated to this route.` : "")
     );
   } catch (error) {
     sendError(res, "Failed to assign transport fee", 500, (error as Error).message);

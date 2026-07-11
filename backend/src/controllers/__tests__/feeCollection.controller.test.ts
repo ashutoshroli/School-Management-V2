@@ -7,7 +7,7 @@ jest.mock("../../config/database", () => ({
     feeStructure: { findUnique: jest.fn(), create: jest.fn() },
     feeCategory: { findUnique: jest.fn(), create: jest.fn() },
     transportRoute: { findUnique: jest.fn() },
-    transportAllocation: { findMany: jest.fn() },
+    transportAllocation: { findMany: jest.fn(), createMany: jest.fn(), updateMany: jest.fn() },
     academicYear: { findUnique: jest.fn() },
     student: { findUnique: jest.fn(), findMany: jest.fn() },
     $transaction: jest.fn(),
@@ -447,6 +447,9 @@ describe("feeCollection.controller - assignTransportFeeToStudents", () => {
     ]);
     (prisma.feeAssignment.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.feeAssignment.createMany as jest.Mock).mockResolvedValue({ count: 2 });
+    (prisma.transportAllocation.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.transportAllocation.createMany as jest.Mock).mockResolvedValue({ count: 2 });
+    (prisma.transportAllocation.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
   });
 
   it("returns 400 when routeId is missing", async () => {
@@ -536,16 +539,17 @@ describe("feeCollection.controller - assignTransportFeeToStudents", () => {
   });
 
   // Deliberately does NOT require the students to already be in
-  // TransportAllocation for this route - see the controller's doc
-  // comment. No transportAllocation.findMany mock is even set up here,
-  // confirming the controller never calls it.
-  it("creates fee assignments for every requested student without requiring a TransportAllocation record", async () => {
+  // TransportAllocation for this route beforehand - see the
+  // controller's doc comment - but it DOES create the fee assignments
+  // AND allocate them to the route as a side effect (both students
+  // have no existing allocation in this test's default mock, so both
+  // should get a fresh TransportAllocation via createMany).
+  it("creates fee assignments for every requested student, allocating those with no existing allocation to this route", async () => {
     const req = makeReqStudents();
     const res = makeMockRes();
 
     await assignTransportFeeToStudents(req, res);
 
-    expect(prisma.transportAllocation.findMany).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
     expect(prisma.feeAssignment.createMany).toHaveBeenCalledWith({
       data: [
@@ -553,9 +557,71 @@ describe("feeCollection.controller - assignTransportFeeToStudents", () => {
         { studentId: "student-2", feeStructureId: "fs-transport-1", totalAmount: 1500, paidAmount: 0, discount: 0, lateFee: 0, status: "PENDING" },
       ],
     });
+    expect(prisma.transportAllocation.createMany).toHaveBeenCalledWith({
+      data: [
+        { studentId: "student-1", routeId: "route-1" },
+        { studentId: "student-2", routeId: "route-1" },
+      ],
+    });
+    expect(prisma.transportAllocation.updateMany).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ data: { created: 2, skipped: 0, total: 2, feeStructureId: "fs-transport-1" } })
     );
+  });
+
+  // BUG FIX: previously, picking specific students on the Transport
+  // Route Fee > Specific Students tab created their FeeAssignment but
+  // never touched TransportAllocation - so the route would still show
+  // "0 students" (the count the Transport page and the "Entire Route"
+  // tab both rely on) even though those students had just been billed
+  // for it. This is the regression test for the fix.
+  it("BUG FIX: leaves a student who already had this fee assigned but no allocation record correctly allocated too", async () => {
+    (prisma.feeAssignment.findMany as jest.Mock).mockResolvedValue([{ studentId: "student-1" }]);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    // student-1 is skipped for the fee (already assigned) but STILL
+    // gets allocated, since createMany targets every requested
+    // student with no existing allocation, not just the newly
+    // fee-assigned ones.
+    expect(prisma.transportAllocation.createMany).toHaveBeenCalledWith({
+      data: [
+        { studentId: "student-1", routeId: "route-1" },
+        { studentId: "student-2", routeId: "route-1" },
+      ],
+    });
+  });
+
+  it("re-allocates a student who was on a different route instead of creating a duplicate allocation", async () => {
+    (prisma.transportAllocation.findMany as jest.Mock).mockResolvedValue([
+      { studentId: "student-1", routeId: "route-OTHER" },
+    ]);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(prisma.transportAllocation.createMany).toHaveBeenCalledWith({ data: [{ studentId: "student-2", routeId: "route-1" }] });
+    expect(prisma.transportAllocation.updateMany).toHaveBeenCalledWith({
+      where: { studentId: { in: ["student-1"] } },
+      data: { routeId: "route-1" },
+    });
+  });
+
+  it("does not touch TransportAllocation at all when every student is already allocated to this exact route", async () => {
+    (prisma.transportAllocation.findMany as jest.Mock).mockResolvedValue([
+      { studentId: "student-1", routeId: "route-1" },
+      { studentId: "student-2", routeId: "route-1" },
+    ]);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(prisma.transportAllocation.createMany).not.toHaveBeenCalled();
+    expect(prisma.transportAllocation.updateMany).not.toHaveBeenCalled();
   });
 
   it("auto-creates the route's FeeStructure (via the shared helper) when none exists yet", async () => {
