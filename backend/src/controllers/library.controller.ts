@@ -2,11 +2,27 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
-import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 
 export const addBook = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { branchId, title, author, isbn, publisher, category, rackNo, shelfNo, totalCopies, price } = req.body;
+    const { title, author, isbn, publisher, category, rackNo, shelfNo, totalCopies, price } = req.body;
+    // BUG FIX + SECURITY: the "Add Book" form has no branch-picker, so
+    // req.body.branchId always arrived as "" - see
+    // resolveEffectiveBranchId's doc comment. Also adds the
+    // canAccessBranch check this endpoint was previously missing
+    // entirely.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
+
     const book = await prisma.libraryBook.create({
       data: { branchId, title, author, isbn, publisher, category, rackNo, shelfNo, totalCopies: totalCopies || 1, availableCopies: totalCopies || 1, price },
     });

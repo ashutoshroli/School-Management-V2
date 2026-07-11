@@ -27,8 +27,11 @@ export default function ClassesPage() {
   const [showClassModal, setShowClassModal] = useState(false);
   const [showSectionModal, setShowSectionModal] = useState(false);
   const [selectedClassId, setSelectedClassId] = useState("");
-  const [classForm, setClassForm] = useState({ name: "", numericOrder: 0, branchId: "" });
-  const [sectionForm, setSectionForm] = useState({ name: "", capacity: 40, branchId: "", classId: "" });
+  // Note: branchId is deliberately NOT part of these forms - the
+  // backend always scopes creation to the logged-in user's own branch
+  // (see resolveEffectiveBranchId in backend/src/utils/branchScope.ts).
+  const [classForm, setClassForm] = useState({ name: "", numericOrder: 0 });
+  const [sectionForm, setSectionForm] = useState({ name: "", capacity: 40, classId: "" });
 
   const [error, setError] = useState<string | null>(null);
 
@@ -53,7 +56,7 @@ export default function ClassesPage() {
     try {
       await api.post("/classes", classForm);
       setShowClassModal(false);
-      setClassForm({ name: "", numericOrder: 0, branchId: "" });
+      setClassForm({ name: "", numericOrder: 0 });
       fetchClasses();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed");
@@ -65,7 +68,7 @@ export default function ClassesPage() {
     try {
       await api.post("/classes/sections", { ...sectionForm, classId: selectedClassId });
       setShowSectionModal(false);
-      setSectionForm({ name: "", capacity: 40, branchId: "", classId: "" });
+      setSectionForm({ name: "", capacity: 40, classId: "" });
       fetchClasses();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed");

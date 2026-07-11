@@ -10,7 +10,9 @@ export default function NoticesPage() {
   const [notices, setNotices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ title: "", body: "", type: "ALL", expiryDate: "", branchId: "" });
+  // Note: branchId is deliberately NOT part of this form - the backend
+  // always scopes creation to the logged-in user's own branch.
+  const [form, setForm] = useState({ title: "", body: "", type: "ALL", expiryDate: "" });
 
   const fetch = async () => {
     setLoading(true);

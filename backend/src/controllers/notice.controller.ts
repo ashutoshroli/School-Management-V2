@@ -2,11 +2,17 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
-import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 
 export const createNotice = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { branchId, title, body, type, targetClass, attachmentUrl, isPinned, expiryDate } = req.body;
+    const { title, body, type, targetClass, attachmentUrl, isPinned, expiryDate } = req.body;
+    // BUG FIX: the "Create Notice" form has no branch-picker, so
+    // req.body.branchId always arrived as "" - see
+    // resolveEffectiveBranchId's doc comment.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+
+    if (!branchId) { sendError(res, "Branch ID could not be resolved - please select a branch", 400); return; }
     if (!canAccessBranch(req, branchId)) { sendError(res, "Access denied: branch mismatch", 403); return; }
     const notice = await prisma.notice.create({
       data: { branchId, title, body, type, targetClass, attachmentUrl, isPinned: isPinned || false, expiryDate: expiryDate ? new Date(expiryDate) : null, publishedBy: req.user!.userId },

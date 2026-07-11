@@ -27,8 +27,10 @@ export default function FeeStructuresPage() {
   const [classes, setClasses] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [years, setYears] = useState<any[]>([]);
+  // Note: branchId is deliberately NOT part of this form - the backend
+  // always scopes creation to the logged-in user's own branch.
   const [form, setForm] = useState({
-    branchId: "", classId: "", feeCategoryId: "", academicYearId: "",
+    classId: "", feeCategoryId: "", academicYearId: "",
     amount: "", frequency: "MONTHLY", dueDay: "10", lateFeeType: "NONE", lateFeeValue: "0",
   });
 

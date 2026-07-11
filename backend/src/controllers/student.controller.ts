@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
-import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
 import { logAuditFromRequest } from "../services/auditLog.service";
 import { notify } from "../services/notification.service";
@@ -32,7 +32,7 @@ const generateAdmissionNo = async (
 export const createStudent = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
-      branchId, classId, sectionId, name, email, phone,
+      classId, sectionId, name, email, phone,
       dateOfBirth, gender, bloodGroup, religion, caste, category,
       nationality, motherTongue, address, city, state, pincode,
       previousSchool, cardId,
@@ -40,6 +40,15 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
       fatherName, fatherEmail, fatherPhone, fatherOccupation,
       motherName, motherEmail, motherPhone, motherOccupation,
     } = req.body;
+    // BUG FIX: the "New Student Admission" form has no branch-picker,
+    // so req.body.branchId always arrived as "" - see
+    // resolveEffectiveBranchId's doc comment.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
 
     // SECURITY: Branch Admins may only admit students into their own branch.
     if (!canAccessBranch(req, branchId)) {

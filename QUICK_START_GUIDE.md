@@ -87,6 +87,29 @@ predictive/ML analytics, scheduled email delivery of reports - this
 pass covered the two most requested "quick win" analytics views instead
 of the full original Phase 6 scope.
 
+### ✅ BUG FIX: "Failed to create academic year" (and 12 other create forms) - RESOLVED
+
+```
+✓ Root cause: every "create X" form (Academic Years, Classes/Sections/
+  Subjects, Staff, Students, Fee Categories/Structures/Collection,
+  Chart of Accounts/Vouchers, Notices, Library Books, Transport
+  Routes/Vehicles, Hostel Buildings, Inventory Items) has no
+  branch-picker UI, so req.body.branchId was always sent as "".
+  Branch Admin -> silent 403; Super Admin -> 500 (invalid empty FK).
+✓ Fixed centrally via resolveEffectiveBranchId() in
+  backend/src/utils/branchScope.ts - falls back to the caller's own
+  branch when the client doesn't send one.
+✓ Bonus find while fixing: 7 of those endpoints (createClass,
+  createSection, createSubject, addBook, createRoute, addVehicle,
+  createBuilding, addItem) had NO branch-access check at all before
+  this fix - closed that gap too.
+✓ Removed the now-dead branchId:"" field from all 13 affected
+  frontend forms.
+✓ Regression tests added per-controller (13 new test files) covering
+  empty-branchId fallback, 400-when-unresolvable, and 403-on-explicit-
+  cross-branch for every fixed endpoint.
+```
+
 ---
 
 ## 📊 Current Status Summary

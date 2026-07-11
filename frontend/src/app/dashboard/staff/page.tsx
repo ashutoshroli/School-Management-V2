@@ -27,10 +27,12 @@ export default function StaffPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [showModal, setShowModal] = useState(false);
+  // Note: branchId is deliberately NOT part of this form - the backend
+  // always scopes creation to the logged-in user's own branch.
   const [form, setForm] = useState({
     name: "", email: "", phone: "", password: "Staff@123",
     designation: "", department: "", type: "TEACHING",
-    qualification: "", joiningDate: "", branchId: "",
+    qualification: "", joiningDate: "",
     panNumber: "", aadharNumber: "", cardId: "", role: "",
   });
 
@@ -64,7 +66,7 @@ export default function StaffPage() {
       setForm({
         name: "", email: "", phone: "", password: "Staff@123",
         designation: "", department: "", type: "TEACHING",
-        qualification: "", joiningDate: "", branchId: "",
+        qualification: "", joiningDate: "",
         panNumber: "", aadharNumber: "", cardId: "", role: "",
       });
       fetchStaff();

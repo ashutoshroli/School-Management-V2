@@ -2,7 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
-import { canAccessBranch } from "../utils/branchScope";
+import { canAccessBranch, resolveEffectiveBranchId } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
 import { getValidatedFeeAssignment, recordFeePayment, notifyPaymentConfirmation } from "../services/feePayment.service";
 import { logAuditFromRequest } from "../services/auditLog.service";
@@ -130,11 +130,22 @@ export const getStudentPendingFees = async (req: AuthRequest, res: Response): Pr
 export const collectPayment = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
-      branchId, studentId, feeAssignmentId, amount,
+      studentId, feeAssignmentId, amount,
       paymentMode, transactionId, chequeNo, chequeDate, bankName, remarks,
       waiveLateFee, // if true, admin waives late fee
     } = req.body;
+    // DEFENSE IN DEPTH: this endpoint's branchId normally comes from a
+    // real student record's branchId (frontend/dashboard/fees/collect
+    // sets it from the already-fetched selectedStudent), not a blank
+    // form field like the other endpoints fixed alongside this one -
+    // but falling back the same way if it's ever missing/blank costs
+    // nothing and keeps this endpoint consistent with the rest.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
 
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
     if (!canAccessBranch(req, branchId)) {
       sendError(res, "Access denied: branch mismatch", 403);
       return;

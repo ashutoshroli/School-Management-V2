@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
-import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create staff member
@@ -12,11 +12,20 @@ import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 export const createStaff = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
-      branchId, name, email, phone, password,
+      name, email, phone, password,
       designation, department, type, qualification, experience,
       joiningDate, bankAccount, bankName, ifscCode, panNumber,
       aadharNumber, address, city, state, pincode, cardId, role,
     } = req.body;
+    // BUG FIX: the "Add Staff" form has no branch-picker, so
+    // req.body.branchId always arrived as "" - see
+    // resolveEffectiveBranchId's doc comment.
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
 
     // SECURITY: Branch Admins may only create staff for their own branch.
     if (!canAccessBranch(req, branchId)) {

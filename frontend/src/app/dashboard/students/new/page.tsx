@@ -15,7 +15,7 @@ export default function NewAdmissionPage() {
     bloodGroup: "", religion: "", caste: "", category: "General",
     nationality: "Indian", motherTongue: "", address: "", city: "",
     state: "", pincode: "", previousSchool: "", cardId: "",
-    classId: "", sectionId: "", branchId: "",
+    classId: "", sectionId: "",
     fatherName: "", fatherEmail: "", fatherPhone: "", fatherOccupation: "",
     motherName: "", motherEmail: "", motherPhone: "", motherOccupation: "",
   });
