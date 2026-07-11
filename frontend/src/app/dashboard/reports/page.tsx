@@ -26,6 +26,22 @@ export default function ReportsPage() {
   };
   useEffect(() => { fetchData(); }, [tab, threshold]);
 
+  // Switching tabs updates `tab` synchronously, but the new tab's data
+  // only arrives after the async fetchData() call above resolves.
+  // Without this, React renders the newly-selected tab's JSX against
+  // the PREVIOUS tab's `data` shape for one frame (e.g. Overview's
+  // plain object still in state while the Attendance tab's code runs
+  // `data.map(...)` on it) - that shape mismatch throws and crashes
+  // the whole page ("Application error: a client-side exception").
+  // Clearing `data` and forcing `loading` true the instant a tab is
+  // clicked guarantees the loading spinner renders instead of stale
+  // data on every tab switch.
+  const handleTabClick = (key: typeof tab) => {
+    setData(null);
+    setLoading(true);
+    setTab(key);
+  };
+
   const downloadAttendanceDefaultersCsv = async () => {
     // The backend's `authenticate` middleware only reads the JWT from
     // the Authorization header (or a cookie) - not a query param - so
@@ -65,7 +81,7 @@ export default function ReportsPage() {
         {tabs.map(t => {
           const Icon = t.icon;
           return (
-            <button key={t.key} onClick={() => setTab(t.key as any)}
+            <button key={t.key} onClick={() => handleTabClick(t.key as any)}
               className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${tab === t.key ? "bg-primary-600 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}>
               <Icon className="h-4 w-4" /> {t.label}
             </button>
