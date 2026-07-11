@@ -110,14 +110,48 @@ all had **zero branch-access check**):
 
 ---
 
-## Phase 3: Attendance Devices + In-App Notifications 🟡 (Items #2, #3)
+## Phase 3: Attendance Devices + In-App Notifications ✅ COMPLETED (Items #2, #3)
 
 **Priority:** HIGH (security-relevant device management + cross-cutting UX gap)
-**Backend:** Fully ready for both
+**Status:** ✅ **DONE**
 
-### Scope:
-- New page `/dashboard/attendance-devices` - list, add device, reveal/regenerate API key, toggle active, delete
-- Notification bell in `dashboard/layout.tsx` header - unread badge, dropdown panel, calls `GET /communication/notifications`
+### Correction discovered during this phase:
+Item #3 (In-App Notification Center) was **already fully built** -
+`frontend/src/components/layout/NotificationBell.tsx` and its wiring into
+`Header.tsx` existed before this phase (dating back to PR #17, before the
+original gap-analysis audit). The audit missed it because it only checked
+`dashboard/layout.tsx` directly, not `Header.tsx` (which `layout.tsx` renders
+and which actually contains the bell). No changes were needed for that half
+of this phase - it works exactly as originally scoped (polls
+`GET /communication/notifications` every 60s, localStorage-tracked
+"unread since last opened" badge).
+
+### What was actually done (Item #2 - Attendance Devices):
+- **New page** `/dashboard/attendance-devices` (Admin-only):
+  - Device list table (name, location, device ID, active/inactive status, registered date)
+  - "Register Device" modal (name + location) -> on success, shows a
+    one-time API key reveal modal (masked by default, show/hide toggle,
+    copy-to-clipboard) with an explicit "won't be shown again" warning,
+    matching the backend's actual one-time-reveal behavior
+    (`createDevice`/`regenerateApiKey` are the only two responses that
+    ever include `apiKey` - `getDevices` never does)
+  - Per-device actions: toggle active/inactive, regenerate API key (with
+    a confirm warning that the old key stops working immediately), delete
+- Added to `frontend/src/lib/navigation.ts` (Admin-only, `Radio` icon)
+- No backend changes needed - `attendanceDevice.controller.ts` was already
+  complete and well-tested (6 existing tests, all still passing)
+
+### Verification performed:
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean,
+  `/dashboard/attendance-devices` builds as a static page (4.18 kB)
+- Backend: re-ran the full suite as a sanity check since this phase touched
+  no backend code - `npm test` (**60 suites / 562 tests**, unchanged) / `npm run build` - clean
+
+### Deliverables:
+- ✅ Attendance Devices admin UI live
+- ✅ Notification bell confirmed already working (audit correction)
+- ✅ Both builds clean
+- 🔲 Git branch + PR - pending user's "PR banao" instruction
 
 ---
 
