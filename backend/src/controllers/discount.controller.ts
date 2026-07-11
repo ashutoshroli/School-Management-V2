@@ -2,7 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
-import { canAccessBranch } from "../utils/branchScope";
+import { canAccessBranch, resolveBranchId } from "../utils/branchScope";
 
 /**
  * Assign discount to student
@@ -22,6 +22,48 @@ export const assignDiscount = async (req: AuthRequest, res: Response): Promise<v
     sendSuccess(res, discount, "Discount assigned", 201);
   } catch (error) {
     sendError(res, "Failed to assign discount", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Branch-wide discount list, for an accountant auditing every active
+ * (or, with `includeInactive=true`, every) concession currently
+ * granted - unlike getStudentDiscounts below (one student's own
+ * history, shown on their profile page), this is the "who has a
+ * discount at all" overview a finance office needs periodically.
+ * Optionally narrowed to a single `type` (SIBLING/RTE/etc).
+ */
+export const getAllDiscounts = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    if (!branchId) { sendError(res, "Branch ID required", 400); return; }
+
+    const includeInactive = req.query.includeInactive === "true";
+    const type = req.query.type as string | undefined;
+
+    const where: any = { student: { branchId } };
+    if (!includeInactive) where.isActive = true;
+    if (type) where.type = type;
+
+    const discounts = await prisma.studentDiscount.findMany({
+      where,
+      include: {
+        student: {
+          select: {
+            id: true,
+            admissionNo: true,
+            user: { select: { name: true } },
+            class: { select: { name: true } },
+            section: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    sendSuccess(res, discounts, "Discounts fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch discounts", 500, (error as Error).message);
   }
 };
 
