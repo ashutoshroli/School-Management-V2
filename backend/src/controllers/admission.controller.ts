@@ -4,6 +4,9 @@ import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 import { notify } from "../services/notification.service";
+import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, formatDate } from "../services/pdf.service";
+import { renderTemplateToPdf } from "../services/templateRenderer.service";
+import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
 
 /**
  * POST /api/admission/inquiries
@@ -129,6 +132,79 @@ export const getAdmissionInquiries = async (req: AuthRequest, res: Response): Pr
     sendPaginated(res, inquiries, total, page, limit, "Admission inquiries fetched");
   } catch (error) {
     sendError(res, "Failed to fetch inquiries", 500, (error as Error).message);
+  }
+};
+
+/**
+ * GET /api/admission/inquiries/:id/pdf
+ * Streams a printable summary of one admission inquiry - staff-only
+ * (same access level as viewing/updating the inquiry itself). Tries
+ * the admin-uploaded ADMISSION_FORM DocumentTemplate first (see
+ * templateRenderer.service.ts); falls back to a plain PDFKit layout
+ * below when no usable template is available.
+ */
+export const getAdmissionInquiryPdf = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const inquiry = await prisma.admissionInquiry.findUnique({
+      where: { id },
+      include: { branch: { select: { name: true, address: true, city: true, state: true, pincode: true, phone: true } } },
+    });
+    if (!inquiry) {
+      sendError(res, "Inquiry not found", 404);
+      return;
+    }
+
+    if (!canAccessBranch(req, inquiry.branchId)) {
+      sendError(res, "Inquiry not found", 404);
+      return;
+    }
+
+    const filename = `admission-inquiry-${inquiry.id}.pdf`;
+    const admissionFormTemplate = await getActiveDocumentTemplate("ADMISSION_FORM");
+    const fromTemplate = await renderTemplateToPdf(admissionFormTemplate?.templateUrl, {
+      studentName: inquiry.studentName,
+      dateOfBirth: formatDate(inquiry.dateOfBirth),
+      gender: inquiry.gender,
+      classAppliedFor: inquiry.classAppliedFor,
+      parentName: inquiry.parentName,
+      parentEmail: inquiry.parentEmail,
+      parentPhone: inquiry.parentPhone,
+      address: inquiry.address || "",
+      previousSchool: inquiry.previousSchool || "",
+      branchName: inquiry.branch.name,
+      branchAddress: [inquiry.branch.address, inquiry.branch.city, inquiry.branch.state, inquiry.branch.pincode].filter(Boolean).join(", "),
+      branchPhone: inquiry.branch.phone || "",
+    });
+    if (fromTemplate) {
+      sendPdfBuffer(res, filename, fromTemplate);
+      return;
+    }
+
+    const doc = startPdfResponse(res, filename);
+    drawHeader(doc, inquiry.branch.name, "Admission Inquiry Form");
+
+    const leftX = doc.page.margins.left;
+    let y = doc.y;
+    drawKeyValueRow(doc, "Applicant Name", inquiry.studentName, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Date of Birth", formatDate(inquiry.dateOfBirth), leftX, y); y += 18;
+    drawKeyValueRow(doc, "Gender", inquiry.gender, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Class Applied For", inquiry.classAppliedFor, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Parent/Guardian Name", inquiry.parentName, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Parent Email", inquiry.parentEmail, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Parent Phone", inquiry.parentPhone, leftX, y); y += 18;
+    if (inquiry.address) { drawKeyValueRow(doc, "Address", inquiry.address, leftX, y); y += 18; }
+    if (inquiry.previousSchool) { drawKeyValueRow(doc, "Previous School", inquiry.previousSchool, leftX, y); y += 18; }
+    drawKeyValueRow(doc, "Inquiry Status", inquiry.status, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Submitted On", formatDate(inquiry.createdAt), leftX, y); y += 18;
+    doc.y = y;
+
+    drawFooter(doc, `${inquiry.branch.name} - This is a computer-generated summary of an admission inquiry, not proof of admission.`);
+
+    doc.end();
+  } catch (error) {
+    sendError(res, "Failed to generate admission form PDF", 500, (error as Error).message);
   }
 };
 

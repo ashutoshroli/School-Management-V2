@@ -17,6 +17,16 @@ export interface StorageProvider {
   save(buffer: Buffer, originalName: string, subDir: string): Promise<{ url: string }>;
   /** Deletes a previously-saved file, given the URL returned by save(). */
   deleteByUrl(url: string): Promise<void>;
+  /**
+   * Reads back a previously-saved file's bytes, given the URL returned
+   * by save(). Needed by templateRenderer.service.ts to load an
+   * uploaded DOCX template's contents before filling in placeholders -
+   * unlike every other use of storage so far (write-once, serve via
+   * static file mount), template *generation* needs the raw bytes
+   * server-side, not just a public URL to redirect a browser to.
+   * Returns null if the file doesn't exist.
+   */
+  readByUrl(url: string): Promise<Buffer | null>;
 }
 
 const UPLOADS_URL_PREFIX = "/uploads/";
@@ -51,6 +61,17 @@ class LocalStorageProvider implements StorageProvider {
     if (fs.existsSync(resolvedTarget)) {
       fs.unlinkSync(resolvedTarget);
     }
+  }
+
+  async readByUrl(url: string): Promise<Buffer | null> {
+    if (!url.startsWith(UPLOADS_URL_PREFIX)) return null;
+    const relativePath = url.slice(UPLOADS_URL_PREFIX.length);
+    const fullPath = path.join(config.upload.dir, relativePath);
+    const resolvedUploadDir = path.resolve(config.upload.dir);
+    const resolvedTarget = path.resolve(fullPath);
+    if (!resolvedTarget.startsWith(resolvedUploadDir)) return null;
+    if (!fs.existsSync(resolvedTarget)) return null;
+    return fs.readFileSync(resolvedTarget);
   }
 }
 

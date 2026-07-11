@@ -28,6 +28,21 @@ export const startPdfResponse = (res: Response, filename: string): PDFDocument =
   return doc;
 };
 
+/**
+ * Sends an already-rendered PDF Buffer directly as the HTTP response,
+ * with the same headers `startPdfResponse` would set. Used by
+ * generators that now try an admin-uploaded .docx template FIRST (via
+ * `templateRenderer.service.ts`, which only ever returns a plain
+ * Buffer - it has no PDFDocument to stream) before falling back to the
+ * PDFKit `startPdfResponse`/`doc.end()` path used everywhere else in
+ * this file.
+ */
+export const sendPdfBuffer = (res: Response, filename: string, buffer: Buffer): void => {
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+  res.send(buffer);
+};
+
 export const drawHeader = (doc: PDFDocument, schoolName: string, subtitle: string) => {
   doc
     .fontSize(18)

@@ -107,6 +107,7 @@ export const generateCertificate = async (req: AuthRequest, res: Response): Prom
       issueDate,
       verifyUrl,
       purpose,
+      templateUrl: template.templateUrl,
       branch: student.branch,
       student: {
         admissionNo: student.admissionNo,
@@ -128,7 +129,8 @@ export const generateCertificate = async (req: AuthRequest, res: Response): Prom
       sendError(
         res,
         `Certificate type ${template.type} is not yet supported by the PDF generator. ` +
-          `Use the dedicated ID card endpoint for ID_CARD, or contact support for CUSTOM templates.`,
+          `Upload a .docx template for this type on the Templates page, or use the ` +
+          `dedicated ID card endpoint for ID_CARD.`,
         400
       );
       return;

@@ -98,23 +98,26 @@ describe("certificateGenerator.service", () => {
   });
 
   describe("renderCertificateByType", () => {
+    // None of these params include a templateUrl, so
+    // renderTemplateToPdf() short-circuits to null immediately and every
+    // case below falls straight through to the PDFKit renderers (or the
+    // "no fallback" null cases), exactly like before templates existed.
     it.each([
       ["TRANSFER_CERTIFICATE"],
       ["BONAFIDE"],
       ["CHARACTER"],
     ])("dispatches %s to a real renderer", async (type) => {
-      const result = renderCertificateByType(type as any, baseParams);
-      expect(result).not.toBeNull();
-      const buffer = await result!;
-      expect(buffer.subarray(0, 5).toString("ascii")).toBe(PDF_MAGIC_BYTES);
+      const buffer = await renderCertificateByType(type as any, baseParams);
+      expect(buffer).not.toBeNull();
+      expect(buffer!.subarray(0, 5).toString("ascii")).toBe(PDF_MAGIC_BYTES);
     });
 
-    it("returns null for ID_CARD (has its own dedicated generator, not this dispatcher)", () => {
-      expect(renderCertificateByType("ID_CARD" as any, baseParams)).toBeNull();
+    it("returns null for ID_CARD (has its own dedicated generator, not this dispatcher)", async () => {
+      expect(await renderCertificateByType("ID_CARD" as any, baseParams)).toBeNull();
     });
 
-    it("returns null for CUSTOM (no generic renderer implemented yet)", () => {
-      expect(renderCertificateByType("CUSTOM" as any, baseParams)).toBeNull();
+    it("returns null for CUSTOM when no template is uploaded (no generic PDFKit fallback exists)", async () => {
+      expect(await renderCertificateByType("CUSTOM" as any, baseParams)).toBeNull();
     });
   });
 });

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Wallet, Play, Check, IndianRupee } from "lucide-react";
+import { Wallet, Play, Check, IndianRupee, Download } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
+import { openPdfInNewTab } from "@/lib/pdf";
 
 export default function PayrollPage() {
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -102,6 +103,7 @@ export default function PayrollPage() {
               <th className="px-4 py-3 text-right">TDS</th>
               <th className="px-4 py-3 text-right">Net Pay</th>
               <th className="px-4 py-3 text-center">Status</th>
+              <th className="px-4 py-3 text-center">Payslip</th>
             </tr></thead>
             <tbody>
               {data.payslips.map((p: any) => (
@@ -120,6 +122,16 @@ export default function PayrollPage() {
                       p.status === "APPROVED" ? "bg-blue-100 text-blue-700" :
                       "bg-yellow-100 text-yellow-700"
                     }`}>{p.status}</span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      type="button"
+                      onClick={() => openPdfInNewTab(`/hr/payroll/payslip/${p.staffId}/${p.month}/${p.year}/pdf`)}
+                      className="text-primary-600 hover:text-primary-700"
+                      title="Download payslip PDF"
+                    >
+                      <Download className="h-4 w-4 inline" />
+                    </button>
                   </td>
                 </tr>
               ))}

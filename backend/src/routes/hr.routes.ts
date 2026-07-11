@@ -2,7 +2,7 @@ import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCalendar, getDateAttendance } from "../controllers/staffAttendance.controller";
 import { getLeaveTypes, applyLeave, getLeaveApplications, updateLeaveStatus, getLeaveBalance } from "../controllers/leave.controller";
-import { upsertSalaryStructure, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip } from "../controllers/payroll.controller";
+import { upsertSalaryStructure, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
 import { authenticate, authorize } from "../middleware/auth";
 
 const router = Router();
@@ -31,5 +31,6 @@ router.get("/payroll/payslips", authenticate, authorize(...ADMIN), getPayslips);
 router.patch("/payroll/payslip/:id/approve", authenticate, authorize(...ADMIN), approvePayslip);
 router.patch("/payroll/payslip/:id/paid", authenticate, authorize(...ADMIN), markPaid);
 router.get("/payroll/payslip/:staffId/:month/:year", authenticate, getStaffPayslip);
+router.get("/payroll/payslip/:staffId/:month/:year/pdf", authenticate, getPayslipPdf);
 
 export default router;

@@ -1,29 +1,30 @@
 import { CertificateType } from "@prisma/client";
 import { renderPdfToBuffer, drawFooter, formatDate } from "./pdf.service";
+import { renderTemplateToPdf, TemplateData } from "./templateRenderer.service";
 
 /**
- * Real PDF generation for the three "narrative" certificate types
- * (Transfer Certificate, Bonafide, Character) - replaces the previous
- * placeholder that just stored a fake `/certificates/<serial>.pdf` URL
- * without ever generating a file.
+ * PDF generation for certificates. Two sources, tried in order:
  *
- * Deliberately built with PDFKit (same as the fee-receipt/ID-card/
- * report-card generators in document.controller.ts) rather than a
- * DOCX-template + LibreOffice pipeline: it needs no system dependencies
- * (LibreOffice, a headless browser) and no new npm packages, so it
- * works identically in any Node deployment target. A DOCX-template
- * system remains a reasonable future upgrade for schools that want to
- * fully customize wording/layout without a code change - see the
- * `templateUrl` field still present on `CertificateTemplate`, which
- * this generator ignores for these three types (ID_CARD and CUSTOM
- * templates are handled elsewhere / not yet implemented).
+ *  1. The school's own uploaded .docx template (CertificateTemplate.
+ *     templateUrl, managed on the Templates page) - filled in with the
+ *     placeholders documented there ({{studentName}}, {{serialNo}},
+ *     etc.) and converted to PDF via LibreOffice. This is how a school
+ *     gets a certificate that matches their own letterhead/wording
+ *     instead of the generic layout below.
+ *  2. A hardcoded PDFKit layout (the three `render*Certificate`
+ *     functions below) - used whenever (1) isn't available: no
+ *     template uploaded yet, the template file is unreadable, or this
+ *     host has no LibreOffice installed (see docxToPdf.service.ts).
+ *     TRANSFER_CERTIFICATE/BONAFIDE/CHARACTER all have a PDFKit
+ *     fallback; ID_CARD and CUSTOM do not (ID_CARD has its own
+ *     structured generator in document.controller.ts, and CUSTOM has no
+ *     generic hardcoded layout at all - see renderCertificateByType).
  *
- * Each render function returns a Buffer (via renderPdfToBuffer) rather
- * than streaming to an HTTP response, because a generated certificate
- * is persisted (see certificate.controller.ts's use of
- * `services/storage.service.ts`) and re-downloaded later by staff, the
- * student, or a public verifier - none of whom are the original
- * request that triggered generation.
+ * Each render function returns a Buffer rather than streaming to an
+ * HTTP response, because a generated certificate is persisted (see
+ * certificate.controller.ts's use of `services/storage.service.ts`)
+ * and re-downloaded later by staff, the student, or a public verifier -
+ * none of whom are the original request that triggered generation.
  */
 
 export interface CertificateStudentInfo {
@@ -59,10 +60,42 @@ export interface CertificateRenderParams {
   verifyUrl: string;
   /** Free-text purpose, used by Bonafide (e.g. "applying for a passport"). */
   purpose?: string;
+  /** The admin-uploaded .docx template for this CertificateTemplate row, if any. */
+  templateUrl?: string | null;
 }
 
 const branchAddressLine = (branch: CertificateBranchInfo): string =>
   [branch.address, branch.city, branch.state, branch.pincode].filter(Boolean).join(", ");
+
+/**
+ * Maps CertificateRenderParams onto the flat placeholder keys documented
+ * on the Templates page's "Placeholder Guide" for certificates
+ * (studentName, admissionNo, fatherName, ... branchName, serialNo,
+ * issueDate, verifyUrl, purpose). Keeping this mapping in one place
+ * means the guide shown to admins and the data actually substituted at
+ * generation time can never silently drift apart.
+ */
+const toTemplateData = (params: CertificateRenderParams): TemplateData => ({
+  studentName: params.student.studentName,
+  admissionNo: params.student.admissionNo,
+  fatherName: params.student.fatherName,
+  motherName: params.student.motherName,
+  dateOfBirth: formatDate(params.student.dateOfBirth),
+  className: params.student.className,
+  sectionName: params.student.sectionName,
+  nationality: params.student.nationality || "Indian",
+  category: params.student.category || "-",
+  admissionDate: formatDate(params.student.admissionDate),
+  leavingDate: params.student.leavingDate ? formatDate(params.student.leavingDate) : "",
+  leavingReason: params.student.leavingReason || "",
+  branchName: params.branch.name,
+  branchAddress: branchAddressLine(params.branch),
+  branchPhone: params.branch.phone || "",
+  serialNo: params.serialNo,
+  issueDate: formatDate(params.issueDate),
+  verifyUrl: params.verifyUrl,
+  purpose: params.purpose || "",
+});
 
 /**
  * Shared letterhead + signature block used by all three certificate
@@ -219,17 +252,23 @@ export const renderCharacterCertificate = (params: CertificateRenderParams): Pro
 };
 
 /**
- * Dispatches to the correct renderer for a given CertificateType. Only
- * the three "narrative" types are handled here - ID_CARD has its own
- * generator (document.controller.ts's getStudentIdCardPdf /
- * getStaffIdCardPdf, which use structured layout, not prose) and CUSTOM
- * has no generic renderer (would need a real template engine - out of
- * scope for this phase, see file header comment).
+ * Dispatches to the correct renderer for a given CertificateType,
+ * always trying the school's own uploaded .docx template first (see
+ * file header comment). ID_CARD is NOT handled here - it has its own
+ * structured (non-prose) generator in document.controller.ts. CUSTOM
+ * has no hardcoded PDFKit fallback (there's no generic "narrative"
+ * layout that makes sense for an arbitrary certificate type), so for
+ * CUSTOM the uploaded template is the *only* way to generate a PDF -
+ * this returns null for CUSTOM if no template is uploaded/usable yet,
+ * same as it always has.
  */
-export const renderCertificateByType = (
+export const renderCertificateByType = async (
   type: CertificateType,
   params: CertificateRenderParams
-): Promise<Buffer> | null => {
+): Promise<Buffer | null> => {
+  const fromTemplate = await renderTemplateToPdf(params.templateUrl, toTemplateData(params));
+  if (fromTemplate) return fromTemplate;
+
   switch (type) {
     case "TRANSFER_CERTIFICATE":
       return renderTransferCertificate(params);

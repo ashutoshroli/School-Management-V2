@@ -4,7 +4,9 @@ import { AuthRequest } from "../types";
 import { sendError } from "../utils/response";
 import { canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
-import { startPdfResponse, drawHeader, drawFooter, drawKeyValueRow, formatMoney, formatDate } from "../services/pdf.service";
+import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, formatMoney, formatDate } from "../services/pdf.service";
+import { renderTemplateToPdf, TemplateData } from "../services/templateRenderer.service";
+import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
 
 /**
  * GET /api/fees/payments/:id/receipt
@@ -46,7 +48,30 @@ export const getPaymentReceiptPdf = async (req: AuthRequest, res: Response): Pro
       return;
     }
 
-    const doc = startPdfResponse(res, `${payment.receiptNo}.pdf`);
+    const filename = `${payment.receiptNo}.pdf`;
+    const feeReceiptTemplate = await getActiveDocumentTemplate("FEE_RECEIPT");
+    const fromTemplate = await renderTemplateToPdf(feeReceiptTemplate?.templateUrl, {
+      receiptNo: payment.receiptNo,
+      studentName: payment.student.user.name,
+      admissionNo: payment.student.admissionNo,
+      className: payment.student.class?.name || "-",
+      sectionName: payment.student.section?.name || "-",
+      feeCategoryName: payment.feeAssignment.feeStructure.feeCategory.name,
+      amount: formatMoney(payment.amount),
+      lateFeeCharged: Number(payment.lateFeeCharged) > 0 ? formatMoney(payment.lateFeeCharged) : "",
+      paymentMode: payment.paymentMode.replace(/_/g, " "),
+      transactionId: payment.transactionId || "",
+      paidAt: formatDate(payment.paidAt),
+      branchName: payment.branch.name,
+      branchAddress: [payment.branch.address, payment.branch.city, payment.branch.state, payment.branch.pincode].filter(Boolean).join(", "),
+      branchPhone: payment.branch.phone || "",
+    });
+    if (fromTemplate) {
+      sendPdfBuffer(res, filename, fromTemplate);
+      return;
+    }
+
+    const doc = startPdfResponse(res, filename);
 
     drawHeader(doc, payment.branch.name, "Fee Payment Receipt");
 
@@ -164,8 +189,12 @@ const drawIdCard = (
 
 /**
  * GET /api/students/:id/id-card
- * Streams a printable student ID card PDF (front side, single card
- * centered on an A4 page for simple home/office printing).
+ * Streams a printable student ID card PDF. Tries the admin-uploaded
+ * ID_CARD CertificateTemplate first (filled with this student's data
+ * and converted via LibreOffice - see templateRenderer.service.ts);
+ * falls back to the hardcoded card layout below when no usable
+ * template is available (nothing uploaded yet, or LibreOffice isn't
+ * installed on this host).
  */
 export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -177,7 +206,7 @@ export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Prom
         user: { select: { name: true } },
         class: { select: { name: true } },
         section: { select: { name: true } },
-        branch: { select: { name: true } },
+        branch: { select: { name: true, address: true, city: true, state: true, pincode: true, phone: true } },
       },
     });
 
@@ -191,7 +220,26 @@ export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const doc = startPdfResponse(res, `id-card-${student.admissionNo}.pdf`);
+    const filename = `id-card-${student.admissionNo}.pdf`;
+    const template = await prisma.certificateTemplate.findFirst({ where: { type: "ID_CARD", isActive: true } });
+    const fromTemplate = await renderTemplateToPdf(template?.templateUrl, {
+      studentName: student.user.name,
+      admissionNo: student.admissionNo,
+      className: student.class?.name || "-",
+      sectionName: student.section?.name || "-",
+      bloodGroup: student.bloodGroup || "-",
+      cardId: student.cardId || "-",
+      address: student.address || "-",
+      branchName: student.branch.name,
+      branchAddress: [student.branch.address, student.branch.city, student.branch.state, student.branch.pincode].filter(Boolean).join(", "),
+      branchPhone: student.branch.phone || "",
+    });
+    if (fromTemplate) {
+      sendPdfBuffer(res, filename, fromTemplate);
+      return;
+    }
+
+    const doc = startPdfResponse(res, filename);
     const startX = (doc.page.width - ID_CARD_WIDTH) / 2;
 
     const lines = [`Class: ${student.class?.name || "-"} - ${student.section?.name || "-"}`];
@@ -216,8 +264,9 @@ export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Prom
 
 /**
  * GET /api/staff/:id/id-card
- * Streams a printable staff ID card PDF, same layout convention as the
- * student ID card above.
+ * Streams a printable staff ID card PDF - same template-first, PDFKit-
+ * fallback convention as the student ID card above (shares the same
+ * ID_CARD CertificateTemplate slot).
  */
 export const getStaffIdCardPdf = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -227,7 +276,7 @@ export const getStaffIdCardPdf = async (req: AuthRequest, res: Response): Promis
       where: { id },
       include: {
         user: { select: { id: true, name: true } },
-        branch: { select: { name: true } },
+        branch: { select: { name: true, address: true, city: true, state: true, pincode: true, phone: true } },
       },
     });
 
@@ -244,7 +293,23 @@ export const getStaffIdCardPdf = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
-    const doc = startPdfResponse(res, `staff-id-card-${staff.employeeId}.pdf`);
+    const filename = `staff-id-card-${staff.employeeId}.pdf`;
+    const template = await prisma.certificateTemplate.findFirst({ where: { type: "ID_CARD", isActive: true } });
+    const fromTemplate = await renderTemplateToPdf(template?.templateUrl, {
+      studentName: staff.user.name,
+      admissionNo: staff.employeeId,
+      cardId: staff.cardId || "-",
+      address: staff.address || "-",
+      branchName: staff.branch.name,
+      branchAddress: [staff.branch.address, staff.branch.city, staff.branch.state, staff.branch.pincode].filter(Boolean).join(", "),
+      branchPhone: staff.branch.phone || "",
+    });
+    if (fromTemplate) {
+      sendPdfBuffer(res, filename, fromTemplate);
+      return;
+    }
+
+    const doc = startPdfResponse(res, filename);
     const startX = (doc.page.width - ID_CARD_WIDTH) / 2;
 
     drawIdCard(doc, startX, 150, {
@@ -387,7 +452,44 @@ export const getReportCardPdf = async (req: AuthRequest, res: Response): Promise
     const totalMax = marks.reduce((sum, m) => sum + Number(m.maxMarks), 0);
     const percentage = totalMax > 0 ? (totalObtained / totalMax) * 100 : 0;
 
-    const doc = startPdfResponse(res, `report-card-${student.admissionNo}-${exam.name}.pdf`);
+    const filename = `report-card-${student.admissionNo}-${exam.name}.pdf`;
+
+    // Report cards have one row per subject, which a flat placeholder
+    // map (a single {{subjectName}}) can't represent for more than one
+    // subject. docxtemplater's loop syntax ({#marks}...{/marks}) lets a
+    // school's template repeat a table row per subject - `marks` (an
+    // array) is passed alongside the flat top-level fields so a
+    // template can use either depending on how it was authored (a
+    // simple template with just {{subjectName}} for a single row, or a
+    // real per-subject table via the loop).
+    const reportCardTemplate = await getActiveDocumentTemplate("REPORT_CARD");
+    const fromTemplate = await renderTemplateToPdf(reportCardTemplate?.templateUrl, {
+      studentName: student.user.name,
+      admissionNo: student.admissionNo,
+      className: student.class?.name || "-",
+      sectionName: student.section?.name || "-",
+      examName: exam.name,
+      totalMarks: `${totalObtained} / ${totalMax}`,
+      percentage: `${percentage.toFixed(2)}%`,
+      // First subject's values, for templates that only expect a single
+      // {{subjectName}}/{{maxMarks}}/{{obtainedMarks}}/{{grade}} row.
+      subjectName: marks[0]?.subject.name || "-",
+      maxMarks: marks[0] ? String(marks[0].maxMarks) : "-",
+      obtainedMarks: marks[0] ? String(marks[0].obtainedMarks) : "-",
+      grade: marks[0]?.grade || "-",
+      marks: marks.map((m) => ({
+        subjectName: m.subject.name,
+        maxMarks: String(m.maxMarks),
+        obtainedMarks: String(m.obtainedMarks),
+        grade: m.grade || "-",
+      })),
+    });
+    if (fromTemplate) {
+      sendPdfBuffer(res, filename, fromTemplate);
+      return;
+    }
+
+    const doc = startPdfResponse(res, filename);
 
     drawHeader(doc, student.branch.name, `Report Card - ${exam.name} (${exam.academicYear.name})`);
 

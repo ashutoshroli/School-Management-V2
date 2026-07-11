@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Inbox } from "lucide-react";
+import { Inbox, Download } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import DataTable from "@/components/ui/DataTable";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import { openPdfInNewTab } from "@/lib/pdf";
 
 const STATUS_COLORS: Record<string, string> = {
   NEW: "bg-blue-100 text-blue-700",
@@ -92,6 +93,20 @@ export default function AdmissionInquiriesPage() {
           <option value="ADMITTED">Admitted</option>
           <option value="REJECTED">Rejected</option>
         </select>
+      ),
+    },
+    {
+      key: "pdf",
+      label: "Form",
+      render: (i: any) => (
+        <button
+          type="button"
+          onClick={() => openPdfInNewTab(`/admission/inquiries/${i.id}/pdf`)}
+          className="text-primary-600 hover:text-primary-700"
+          title="Download admission form PDF"
+        >
+          <Download className="h-4 w-4" />
+        </button>
       ),
     },
   ];

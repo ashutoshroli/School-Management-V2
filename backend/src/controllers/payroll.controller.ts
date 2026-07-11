@@ -3,6 +3,14 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, formatMoney } from "../services/pdf.service";
+import { renderTemplateToPdf } from "../services/templateRenderer.service";
+import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 
 /**
  * Create/Update salary structure for staff
@@ -191,4 +199,126 @@ export const getStaffPayslip = async (req: AuthRequest, res: Response): Promise<
     if (!payslip) { sendError(res, "Payslip not found", 404); return; }
     sendSuccess(res, payslip, "Payslip fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * GET /api/hr/payroll/payslip/:staffId/:month/:year/pdf
+ * Streams a printable payslip PDF for one staff member's payslip for a
+ * given month/year. Tries the admin-uploaded PAYSLIP DocumentTemplate
+ * first (see templateRenderer.service.ts); falls back to a plain
+ * PDFKit layout below when no usable template is available.
+ *
+ * Access: branch admin staff, or the staff member downloading their
+ * OWN payslip (same self-access convention already used by the ID card
+ * endpoints in document.controller.ts) - a payslip contains the same
+ * kind of sensitive financial data as a fee receipt, so it shouldn't be
+ * open to every authenticated user the way getStaffPayslip (JSON) is
+ * today.
+ */
+export const getPayslipPdf = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { staffId, month, year } = req.params;
+
+    const payslip = await prisma.payslip.findUnique({
+      where: { staffId_month_year: { staffId, month: parseInt(month), year: parseInt(year) } },
+      include: {
+        staff: {
+          include: {
+            user: { select: { id: true, name: true } },
+            branch: { select: { name: true, address: true, city: true, state: true, pincode: true, phone: true } },
+          },
+        },
+      },
+    });
+    if (!payslip) { sendError(res, "Payslip not found", 404); return; }
+
+    const isSelf = req.user?.userId === payslip.staff.user.id;
+    if (!canAccessBranch(req, payslip.staff.branchId) && !isSelf) {
+      sendError(res, "Payslip not found", 404);
+      return;
+    }
+
+    const monthLabel = MONTH_NAMES[payslip.month - 1] || String(payslip.month);
+    const filename = `payslip-${payslip.staff.employeeId}-${monthLabel}-${payslip.year}.pdf`;
+
+    const payslipTemplate = await getActiveDocumentTemplate("PAYSLIP");
+    const fromTemplate = await renderTemplateToPdf(payslipTemplate?.templateUrl, {
+      staffName: payslip.staff.user.name,
+      employeeId: payslip.staff.employeeId,
+      designation: payslip.staff.designation,
+      department: payslip.staff.department,
+      month: monthLabel,
+      year: String(payslip.year),
+      workingDays: String(payslip.workingDays),
+      presentDays: String(payslip.presentDays),
+      basic: "", // Basic/HRA/DA breakdown lives on SalaryStructure, not
+      hra: "",   // Payslip itself (which only stores the computed
+      da: "",    // totals) - left blank unless a future enhancement
+                 // joins SalaryStructure in here too.
+      grossEarning: formatMoney(payslip.grossEarning),
+      pfAmount: formatMoney(payslip.pfAmount),
+      esiAmount: formatMoney(payslip.esiAmount),
+      tdsAmount: formatMoney(payslip.tdsAmount),
+      totalDeduction: formatMoney(payslip.totalDeduction),
+      netPay: formatMoney(payslip.netPay),
+      branchName: payslip.staff.branch.name,
+      branchAddress: [payslip.staff.branch.address, payslip.staff.branch.city, payslip.staff.branch.state, payslip.staff.branch.pincode].filter(Boolean).join(", "),
+      branchPhone: payslip.staff.branch.phone || "",
+    });
+    if (fromTemplate) {
+      sendPdfBuffer(res, filename, fromTemplate);
+      return;
+    }
+
+    const doc = startPdfResponse(res, filename);
+    drawHeader(doc, payslip.staff.branch.name, `Payslip - ${monthLabel} ${payslip.year}`);
+
+    const leftX = doc.page.margins.left;
+    let y = doc.y;
+    drawKeyValueRow(doc, "Employee Name", payslip.staff.user.name, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Employee ID", payslip.staff.employeeId, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Designation", payslip.staff.designation, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Department", payslip.staff.department, leftX, y); y += 18;
+    drawKeyValueRow(doc, "Working Days", String(payslip.workingDays), leftX, y); y += 18;
+    drawKeyValueRow(doc, "Present Days", String(payslip.presentDays), leftX, y); y += 24;
+    doc.y = y;
+
+    doc.moveTo(leftX, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#cbd5e1").stroke();
+    doc.moveDown(0.5);
+
+    const amountRow = (label: string, value: string, color = "#0f172a") => {
+      const rowY = doc.y;
+      doc.fontSize(10).fillColor("#475569").text(label, leftX, rowY);
+      doc.fontSize(10).fillColor(color).text(value, leftX, rowY, { align: "right", width: doc.page.width - doc.page.margins.left - doc.page.margins.right });
+      doc.moveDown(0.6);
+    };
+
+    amountRow("Gross Earning", formatMoney(payslip.grossEarning));
+    amountRow("PF Deduction", `- ${formatMoney(payslip.pfAmount)}`, "#b91c1c");
+    amountRow("ESI Deduction", `- ${formatMoney(payslip.esiAmount)}`, "#b91c1c");
+    amountRow("TDS Deduction", `- ${formatMoney(payslip.tdsAmount)}`, "#b91c1c");
+
+    doc.moveTo(leftX, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#cbd5e1").stroke();
+    doc.moveDown(0.5);
+
+    const netY = doc.y;
+    doc.fontSize(12).fillColor("#0f172a").text("Net Pay", leftX, netY);
+    doc.fontSize(12).fillColor("#15803d").text(
+      formatMoney(payslip.netPay),
+      leftX,
+      netY,
+      { align: "right", width: doc.page.width - doc.page.margins.left - doc.page.margins.right }
+    );
+
+    doc.moveDown(2);
+    doc.fontSize(9).fillColor("#94a3b8").text(
+      `Payslip status: ${payslip.status}. This is a computer-generated payslip and does not require a signature.`
+    );
+
+    drawFooter(doc, `${payslip.staff.branch.name} - ${[payslip.staff.branch.address, payslip.staff.branch.city, payslip.staff.branch.state, payslip.staff.branch.pincode].filter(Boolean).join(", ")}`);
+
+    doc.end();
+  } catch (error) {
+    sendError(res, "Failed to generate payslip PDF", 500, (error as Error).message);
+  }
 };

@@ -6,7 +6,19 @@ jest.mock("../../config/database", () => ({
     staff: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     student: { findMany: jest.fn() },
+    certificateTemplate: { findFirst: jest.fn() },
   },
+}));
+
+// getStaffIdCardPdf/getStudentIdCardPdf now try an admin-uploaded
+// ID_CARD template first (see templateRenderer.service.ts) before
+// falling back to the PDFKit layout below. Mocked out to always report
+// "no usable template" so these access-control-focused tests keep
+// exercising the PDFKit fallback path (startPdfResponse) exactly as
+// before - template-rendering itself is covered separately by
+// templateRenderer.service.test.ts.
+jest.mock("../../services/templateRenderer.service", () => ({
+  renderTemplateToPdf: jest.fn().mockResolvedValue(null),
 }));
 
 // startPdfResponse normally pipes a real PDFKit document to an HTTP
@@ -74,8 +86,14 @@ describe("document.controller - ID card access control", () => {
       branchId,
       designation: "PGT",
       department: "Science",
+      cardId: null,
+      address: null,
       user: { id: userId, name: "Jane Teacher" },
-      branch: { name: "ABC School" },
+      branch: { name: "ABC School", address: null, city: null, state: null, pincode: null, phone: null },
+    });
+
+    beforeEach(() => {
+      (prisma.certificateTemplate.findFirst as jest.Mock).mockResolvedValue(null);
     });
 
     it("returns 404 for a staff member in a different branch when caller is not that staff member", async () => {

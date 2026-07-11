@@ -1,7 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { UserRole } from "@prisma/client";
-import { createAdmissionInquiry, getAdmissionInquiries, updateAdmissionInquiryStatus, getPublicBranchList } from "../controllers/admission.controller";
+import { createAdmissionInquiry, getAdmissionInquiries, updateAdmissionInquiryStatus, getPublicBranchList, getAdmissionInquiryPdf } from "../controllers/admission.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { createAdmissionInquirySchema, updateAdmissionInquiryStatusSchema } from "../validators/admission.validator";
@@ -26,6 +26,7 @@ router.post("/inquiries", inquiryLimiter, validate(createAdmissionInquirySchema)
 
 // Staff-only from here down.
 router.get("/inquiries", authenticate, authorize(...ADMIN), getAdmissionInquiries);
+router.get("/inquiries/:id/pdf", authenticate, authorize(...ADMIN), getAdmissionInquiryPdf);
 router.patch("/inquiries/:id/status", authenticate, authorize(...ADMIN), validate(updateAdmissionInquiryStatusSchema), updateAdmissionInquiryStatus);
 
 export default router;
