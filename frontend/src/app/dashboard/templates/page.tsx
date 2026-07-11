@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileStack, Upload, Trash2, FileDown, Loader2 } from "lucide-react";
+import { FileStack, Upload, Trash2, FileDown, Loader2, Info, Copy, Check } from "lucide-react";
 import api from "@/lib/api";
 import { resolveUploadUrl } from "@/lib/uploads";
 import { formatDate } from "@/lib/utils";
+import Modal from "@/components/ui/Modal";
 
 type Category = "certificate" | "document";
 
@@ -12,6 +13,18 @@ interface TemplateSlot {
   category: Category;
   type: string;
   label: string;
+  /** Short note on where/how this template type is used. */
+  description: string;
+  /**
+   * Placeholder fields available for this template type, based on the
+   * actual data the app has on hand for it (see
+   * CertificateStudentInfo/CertificateRenderParams in
+   * certificateGenerator.service.ts for the certificate fields, and the
+   * relevant Prisma models in db/prisma/schema.prisma for the rest).
+   * In the .docx file, write these wrapped in double curly braces,
+   * e.g. {{studentName}}, exactly as the "key" below (case-sensitive).
+   */
+  placeholders: { key: string; description: string }[];
 }
 
 // Every DOCX "slot" the app can hold a template for. Matches
@@ -19,17 +32,191 @@ interface TemplateSlot {
 // and CUSTOM certificate types don't have a real PDF generator wired up
 // yet (see certificateGenerator.service.ts), but the template file
 // itself can still be uploaded/stored here ahead of that work.
+const STUDENT_CORE_PLACEHOLDERS = [
+  { key: "studentName", description: "Student's full name" },
+  { key: "admissionNo", description: "Admission number" },
+  { key: "fatherName", description: "Father's name" },
+  { key: "motherName", description: "Mother's name" },
+  { key: "dateOfBirth", description: "Date of birth (DD-MM-YYYY)" },
+  { key: "className", description: "Class name, e.g. Class 5" },
+  { key: "sectionName", description: "Section name, e.g. A" },
+];
+
+const BRANCH_PLACEHOLDERS = [
+  { key: "branchName", description: "School/branch name" },
+  { key: "branchAddress", description: "Branch address (line + city, state, pincode)" },
+  { key: "branchPhone", description: "Branch contact phone number" },
+];
+
+const CERT_META_PLACEHOLDERS = [
+  { key: "serialNo", description: "Unique certificate serial number" },
+  { key: "issueDate", description: "Date the certificate was issued" },
+  { key: "verifyUrl", description: "Public link to verify this certificate's authenticity" },
+];
+
 const TEMPLATE_SLOTS: TemplateSlot[] = [
-  { category: "certificate", type: "TRANSFER_CERTIFICATE", label: "Transfer Certificate" },
-  { category: "certificate", type: "BONAFIDE", label: "Bonafide Certificate" },
-  { category: "certificate", type: "CHARACTER", label: "Character Certificate" },
-  { category: "certificate", type: "ID_CARD", label: "ID Card" },
-  { category: "certificate", type: "CUSTOM", label: "Custom Certificate" },
-  { category: "document", type: "FEE_RECEIPT", label: "Fee Receipt" },
-  { category: "document", type: "PAYSLIP", label: "Payslip" },
-  { category: "document", type: "REPORT_CARD", label: "Report Card" },
-  { category: "document", type: "ADMISSION_FORM", label: "Admission Form" },
-  { category: "document", type: "CUSTOM", label: "Custom Document" },
+  {
+    category: "certificate",
+    type: "TRANSFER_CERTIFICATE",
+    label: "Transfer Certificate",
+    description: "Issued when a student leaves the school (e.g. for transfer to another school).",
+    placeholders: [
+      ...STUDENT_CORE_PLACEHOLDERS,
+      { key: "nationality", description: "Nationality, e.g. Indian" },
+      { key: "category", description: "Category, e.g. General/OBC/SC/ST" },
+      { key: "admissionDate", description: "Date the student was admitted" },
+      { key: "leavingDate", description: "Date the student left the school" },
+      { key: "leavingReason", description: "Reason for leaving" },
+      ...BRANCH_PLACEHOLDERS,
+      ...CERT_META_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "certificate",
+    type: "BONAFIDE",
+    label: "Bonafide Certificate",
+    description: "Confirms a student is currently enrolled - commonly needed for passport/visa or official use.",
+    placeholders: [
+      ...STUDENT_CORE_PLACEHOLDERS,
+      { key: "purpose", description: "Purpose stated by the parent, e.g. \"applying for a passport\"" },
+      ...BRANCH_PLACEHOLDERS,
+      ...CERT_META_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "certificate",
+    type: "CHARACTER",
+    label: "Character Certificate",
+    description: "Confirms a student's conduct/character during their time at the school.",
+    placeholders: [
+      ...STUDENT_CORE_PLACEHOLDERS,
+      ...BRANCH_PLACEHOLDERS,
+      ...CERT_META_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "certificate",
+    type: "ID_CARD",
+    label: "ID Card",
+    description: "Student identity card layout. Note: ID cards are currently generated by a separate structured-layout PDF generator, not from this DOCX file.",
+    placeholders: [
+      ...STUDENT_CORE_PLACEHOLDERS,
+      { key: "photoUrl", description: "Student's photo" },
+      { key: "bloodGroup", description: "Blood group" },
+      { key: "cardId", description: "RFID card ID (if assigned)" },
+      { key: "address", description: "Residential address" },
+      ...BRANCH_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "certificate",
+    type: "CUSTOM",
+    label: "Custom Certificate",
+    description: "Any other certificate type not covered above - use whichever placeholders you need from this list.",
+    placeholders: [
+      ...STUDENT_CORE_PLACEHOLDERS,
+      { key: "nationality", description: "Nationality" },
+      { key: "category", description: "Category, e.g. General/OBC/SC/ST" },
+      { key: "admissionDate", description: "Date the student was admitted" },
+      ...BRANCH_PLACEHOLDERS,
+      ...CERT_META_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "document",
+    type: "FEE_RECEIPT",
+    label: "Fee Receipt",
+    description: "Given to a parent as proof of a fee payment.",
+    placeholders: [
+      { key: "receiptNo", description: "Unique receipt number" },
+      { key: "studentName", description: "Student's full name" },
+      { key: "admissionNo", description: "Admission number" },
+      { key: "className", description: "Class name" },
+      { key: "sectionName", description: "Section name" },
+      { key: "feeCategoryName", description: "Fee category, e.g. Tuition, Transport" },
+      { key: "amount", description: "Amount paid" },
+      { key: "lateFeeCharged", description: "Late fee charged, if any" },
+      { key: "paymentMode", description: "Payment mode, e.g. CASH, ONLINE, UPI" },
+      { key: "transactionId", description: "Online payment transaction reference" },
+      { key: "paidAt", description: "Date/time payment was made" },
+      ...BRANCH_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "document",
+    type: "PAYSLIP",
+    label: "Payslip",
+    description: "Monthly salary slip generated for a staff member.",
+    placeholders: [
+      { key: "staffName", description: "Staff member's full name" },
+      { key: "employeeId", description: "Employee ID" },
+      { key: "designation", description: "Designation, e.g. Teacher, Accountant" },
+      { key: "department", description: "Department" },
+      { key: "month", description: "Payslip month" },
+      { key: "year", description: "Payslip year" },
+      { key: "workingDays", description: "Total working days in the month" },
+      { key: "presentDays", description: "Days present" },
+      { key: "basic", description: "Basic salary" },
+      { key: "hra", description: "House Rent Allowance" },
+      { key: "da", description: "Dearness Allowance" },
+      { key: "grossEarning", description: "Total gross earning" },
+      { key: "pfAmount", description: "Provident Fund deduction" },
+      { key: "esiAmount", description: "ESI deduction" },
+      { key: "tdsAmount", description: "TDS deduction" },
+      { key: "totalDeduction", description: "Total deductions" },
+      { key: "netPay", description: "Final net pay" },
+      ...BRANCH_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "document",
+    type: "REPORT_CARD",
+    label: "Report Card",
+    description: "Exam result summary for a student, one subject row per exam.",
+    placeholders: [
+      { key: "studentName", description: "Student's full name" },
+      { key: "admissionNo", description: "Admission number" },
+      { key: "className", description: "Class name" },
+      { key: "sectionName", description: "Section name" },
+      { key: "examName", description: "Exam name, e.g. Half Yearly, Annual" },
+      { key: "subjectName", description: "Subject name (repeat row per subject)" },
+      { key: "maxMarks", description: "Maximum marks for the subject" },
+      { key: "obtainedMarks", description: "Marks obtained" },
+      { key: "grade", description: "Grade for the subject" },
+      { key: "totalMarks", description: "Total marks across all subjects" },
+      { key: "percentage", description: "Overall percentage" },
+      ...BRANCH_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "document",
+    type: "ADMISSION_FORM",
+    label: "Admission Form",
+    description: "Printable form summarizing a new admission inquiry/application.",
+    placeholders: [
+      { key: "studentName", description: "Applicant's full name" },
+      { key: "dateOfBirth", description: "Date of birth" },
+      { key: "gender", description: "Gender" },
+      { key: "classAppliedFor", description: "Class applied for" },
+      { key: "parentName", description: "Parent/guardian name" },
+      { key: "parentEmail", description: "Parent/guardian email" },
+      { key: "parentPhone", description: "Parent/guardian phone" },
+      { key: "address", description: "Residential address" },
+      { key: "previousSchool", description: "Previous school attended, if any" },
+      ...BRANCH_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "document",
+    type: "CUSTOM",
+    label: "Custom Document",
+    description: "Any other document type not covered above - use whichever placeholders you need from this list.",
+    placeholders: [
+      ...STUDENT_CORE_PLACEHOLDERS,
+      ...BRANCH_PLACEHOLDERS,
+      { key: "date", description: "Current date" },
+    ],
+  },
 ];
 
 interface TemplateRecord {
@@ -46,7 +233,21 @@ export default function TemplatesPage() {
   const [docTemplates, setDocTemplates] = useState<TemplateRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
+  const [guideSlot, setGuideSlot] = useState<TemplateSlot | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const copyPlaceholder = async (key: string) => {
+    const text = `{{${key}}}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
+    } catch {
+      // Clipboard API unavailable (e.g. insecure context) - the text is
+      // still visible in the modal for the admin to copy manually.
+    }
+  };
 
   const fetchTemplates = async () => {
     setLoading(true);
@@ -119,8 +320,18 @@ export default function TemplatesPage() {
       <div key={key} className="bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col gap-3">
         <div className="flex items-start gap-3">
           <FileStack className="h-8 w-8 text-primary-600 flex-shrink-0" />
-          <div className="min-w-0">
-            <p className="font-medium text-sm">{slot.label}</p>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-medium text-sm">{slot.label}</p>
+              <button
+                type="button"
+                onClick={() => setGuideSlot(slot)}
+                className="text-gray-400 hover:text-primary-600 flex-shrink-0"
+                title="View placeholder guide"
+              >
+                <Info className="h-4 w-4" />
+              </button>
+            </div>
             {existing ? (
               <p className="text-xs text-gray-500 mt-0.5">Uploaded {formatDate(existing.updatedAt)}</p>
             ) : (
@@ -215,6 +426,45 @@ export default function TemplatesPage() {
           </div>
         </>
       )}
+
+      <Modal
+        isOpen={!!guideSlot}
+        onClose={() => setGuideSlot(null)}
+        title={guideSlot ? `${guideSlot.label} - Placeholder Guide` : ""}
+        size="lg"
+      >
+        {guideSlot && (
+          <div>
+            <p className="text-sm text-gray-600 mb-4">{guideSlot.description}</p>
+            <p className="text-sm text-gray-600 mb-4">
+              While creating the <code className="bg-gray-100 px-1 rounded">.docx</code> file in Word (or Google Docs),
+              type these placeholders exactly as shown (including the double curly braces) wherever you want that
+              value to appear. They will be replaced with real data when the document is generated. Click a
+              placeholder below to copy it.
+            </p>
+            <div className="border rounded-lg divide-y">
+              {guideSlot.placeholders.map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => copyPlaceholder(p.key)}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-50"
+                >
+                  <div className="min-w-0">
+                    <code className="text-sm font-mono text-primary-700">{`{{${p.key}}}`}</code>
+                    <p className="text-xs text-gray-500 mt-0.5">{p.description}</p>
+                  </div>
+                  {copiedKey === p.key ? (
+                    <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
+                  ) : (
+                    <Copy className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
