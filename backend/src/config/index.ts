@@ -35,6 +35,26 @@ export const config = {
     dir: process.env.UPLOAD_DIR || "./uploads",
     maxSize: parseInt(process.env.MAX_FILE_SIZE || "10485760", 10),
   },
+  s3: {
+    // Optional cloud storage (Phase 6). Leave STORAGE_PROVIDER unset
+    // (or "local") to keep using the local-disk provider - see
+    // storage.service.ts's getStorageProvider(). Any S3-API-compatible
+    // service works (AWS S3, Cloudflare R2, MinIO, DigitalOcean
+    // Spaces, Backblaze B2) - set S3_ENDPOINT for anything that isn't
+    // real AWS S3.
+    provider: process.env.STORAGE_PROVIDER || "local",
+    bucket: process.env.S3_BUCKET || "",
+    region: process.env.S3_REGION || "us-east-1",
+    accessKeyId: process.env.S3_ACCESS_KEY_ID || "",
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "",
+    // Custom endpoint for S3-compatible providers other than AWS
+    // itself; leave unset for real AWS S3.
+    endpoint: process.env.S3_ENDPOINT || "",
+    // Optional CDN/CloudFront domain to serve files from instead of
+    // the raw bucket URL (e.g. "https://cdn.myschool.com"). Falls back
+    // to the bucket's own public URL when unset.
+    publicUrl: process.env.S3_PUBLIC_URL || "",
+  },
   smtp: {
     host: process.env.SMTP_HOST || "",
     port: parseInt(process.env.SMTP_PORT || "587", 10),

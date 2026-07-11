@@ -11,6 +11,39 @@ import { sendError } from "../utils/response";
 
 const router = Router();
 
+/**
+ * @swagger
+ * /auth/login:
+ *   post:
+ *     summary: Login with email/password
+ *     description: Credentials login for admin/teacher/accountant/staff roles. Students/parents typically use Google OAuth instead (see /auth/google).
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/LoginRequest'
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/LoginResponseData'
+ *       401:
+ *         description: Invalid credentials
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
 // Credentials login (admin/teacher/accountant/staff)
 router.post("/login", validate(loginSchema), login);
 
@@ -43,10 +76,93 @@ router.get(
   googleCallback
 );
 
+/**
+ * @swagger
+ * /auth/profile:
+ *   get:
+ *     summary: Get the current logged-in user's profile
+ *     tags: [Auth]
+ *     responses:
+ *       200:
+ *         description: Current user's profile
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/UserSummary'
+ *       401:
+ *         description: Missing/invalid token
+ */
 // Protected routes
 router.get("/profile", authenticate, getProfile);
+
+/**
+ * @swagger
+ * /auth/switch-branch:
+ *   post:
+ *     summary: Switch the current session's active branch
+ *     description: For SUPER_ADMIN users (or any user with access to multiple branches) - changes which branch subsequent requests are scoped to.
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/SwitchBranchRequest'
+ *     responses:
+ *       200:
+ *         description: Branch switched
+ *       403:
+ *         description: No access to the requested branch
+ */
 router.post("/switch-branch", authenticate, validate(switchBranchSchema), switchBranch);
+
+/**
+ * @swagger
+ * /auth/change-password:
+ *   put:
+ *     summary: Change the current user's password
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ChangePasswordRequest'
+ *     responses:
+ *       200:
+ *         description: Password changed
+ *       400:
+ *         description: Current password incorrect, or new password doesn't meet requirements
+ */
 router.put("/change-password", authenticate, validate(changePasswordSchema), changePassword);
+
+/**
+ * @swagger
+ * /auth/avatar:
+ *   post:
+ *     summary: Upload/replace the current user's profile photo
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Avatar updated
+ *       400:
+ *         description: No file uploaded / invalid file type
+ */
 router.post("/avatar", authenticate, handleUploadErrors(uploadAvatar), uploadOwnAvatar);
 
 export default router;

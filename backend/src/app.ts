@@ -4,11 +4,13 @@ import helmet from "helmet";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
+import swaggerUi from "swagger-ui-express";
 import passport from "./config/passport";
 import routes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { config } from "./config";
 import { initSentry, setupSentryErrorHandler } from "./config/sentry";
+import { swaggerSpec, isDocsEnabled } from "./docs/swagger";
 
 const app = express();
 
@@ -60,6 +62,15 @@ app.use(passport.initialize());
 
 // API routes
 app.use("/api", routes);
+
+// API documentation (Phase 6) - GET /api/docs (Swagger UI) and
+// GET /api/docs.json (raw OpenAPI spec, e.g. for importing into
+// Postman/Insomnia). Disabled in production by default - see
+// docs/swagger.ts's isDocsEnabled().
+if (isDocsEnabled()) {
+  app.get("/api/docs.json", (_req, res) => res.json(swaggerSpec));
+  app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+}
 
 // Static files (uploads)
 app.use("/uploads", express.static(config.upload.dir));
