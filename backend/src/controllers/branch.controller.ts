@@ -185,8 +185,15 @@ export const createBranchAdmin = async (req: AuthRequest, res: Response): Promis
       return;
     }
 
+    // BUG FIX: Staff.employeeId is globally unique (see identical fix
+    // + comment in staff.controller.ts's createStaff) - a branch-scoped
+    // count alone collides across branches (e.g. two different
+    // branches both minting "EMP-0001") and crashes with a Prisma
+    // unique-constraint violation ("Failed to create Branch Admin").
+    // Including the branch's own unique code keeps this unique
+    // org-wide.
     const count = await prisma.staff.count({ where: { branchId } });
-    const employeeId = `EMP-${String(count + 1).padStart(4, "0")}`;
+    const employeeId = `EMP-${branch.code}-${String(count + 1).padStart(4, "0")}`;
     const hashedPassword = await bcrypt.hash(password || "Admin@123", 12);
 
     const user = await prisma.user.create({

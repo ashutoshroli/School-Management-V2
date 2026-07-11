@@ -9,6 +9,7 @@ jest.mock("../../config/database", () => ({
   default: {
     user: { findUnique: jest.fn(), create: jest.fn() },
     staff: { count: jest.fn(), create: jest.fn(), findUnique: jest.fn() },
+    branch: { findUnique: jest.fn() },
   },
 }));
 
@@ -50,6 +51,48 @@ describe("staff.controller - createStaff", () => {
     (prisma.user.create as jest.Mock).mockResolvedValue({ id: "user-1" });
     (prisma.staff.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "staff-1", ...data }));
     (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ id: "branch-1", code: "MAIN" });
+  });
+
+  it("returns 404 when the resolved branch does not exist", async () => {
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue(null);
+
+    const req = makeReq({ body: { ...baseBody, branchId: "" } });
+    const res = makeMockRes();
+
+    await createStaff(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.staff.create).not.toHaveBeenCalled();
+  });
+
+  // BUG FIX: Staff.employeeId is globally unique (not scoped per
+  // branch), but was previously generated from a branch-scoped count
+  // alone (e.g. "EMP-0001") - the first staff member created in ANY
+  // second branch collided with an identical employeeId already used
+  // by the first branch and crashed with a Prisma unique-constraint
+  // violation ("Failed to create staff"). This regression-tests that
+  // the branch's own (globally unique) code is now included, so two
+  // different branches never generate the same employeeId even when
+  // both are creating their very first staff member.
+  it("BUG FIX: generates a branch-code-qualified employeeId so it can't collide across branches", async () => {
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ id: "branch-2", code: "NORTH" });
+    (prisma.staff.count as jest.Mock).mockResolvedValue(0);
+
+    const req = makeReq({
+      body: { ...baseBody, branchId: "" },
+      user: { userId: "admin-2", email: "admin2@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-2" },
+    });
+    const res = makeMockRes();
+
+    await createStaff(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const staffCreateCall = (prisma.staff.create as jest.Mock).mock.calls[0][0];
+    expect(staffCreateCall.data.employeeId).toBe("EMP-NORTH-0001");
+    // Explicitly NOT the bare "EMP-0001" a first branch would also
+    // generate for its own first staff member with count=0.
+    expect(staffCreateCall.data.employeeId).not.toBe("EMP-0001");
   });
 
   it("BUG FIX: creates staff under the caller's own branch when the client sends an empty branchId", async () => {

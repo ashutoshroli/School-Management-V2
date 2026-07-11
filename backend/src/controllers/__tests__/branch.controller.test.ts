@@ -36,7 +36,7 @@ const makeReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
 describe("branch.controller - createBranchAdmin", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ id: "branch-2", name: "North Campus" });
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ id: "branch-2", name: "North Campus", code: "NORTH" });
     (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
     (prisma.staff.count as jest.Mock).mockResolvedValue(0);
     (prisma.user.create as jest.Mock).mockResolvedValue({ id: "user-1" });
@@ -91,6 +91,40 @@ describe("branch.controller - createBranchAdmin", () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+
+  // BUG FIX: Staff.employeeId is globally unique, but was previously
+  // generated from a branch-scoped count alone (e.g. "EMP-0001") - the
+  // first Branch Admin created for ANY second branch collided with an
+  // identical employeeId already used elsewhere and crashed with a
+  // Prisma unique-constraint violation ("Failed to create Branch
+  // Admin"). Regression-tests that the branch's own (globally unique)
+  // code is now included in the generated employeeId.
+  it("BUG FIX: generates a branch-code-qualified employeeId so it can't collide across branches", async () => {
+    const req = makeReq({ body: { branchId: "branch-2", name: "Priya Admin", email: "priya@test.com" } });
+    const res = makeMockRes();
+
+    await createBranchAdmin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const staffCreateCall = (prisma.staff.create as jest.Mock).mock.calls[0][0];
+    expect(staffCreateCall.data.employeeId).toBe("EMP-NORTH-0001");
+    expect(staffCreateCall.data.employeeId).not.toBe("EMP-0001");
+  });
+
+  // Blank-password regression - the "Add Branch Admin" form leaves
+  // password blank by default (submits as "" not undefined); this
+  // confirms the controller's own fallback still kicks in once the
+  // (already-fixed) validator lets "" through.
+  it("falls back to the default password when an empty string is sent", async () => {
+    const bcrypt = require("bcryptjs");
+    const req = makeReq({ body: { branchId: "branch-2", name: "Priya Admin", email: "priya@test.com", password: "" } });
+    const res = makeMockRes();
+
+    await createBranchAdmin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(bcrypt.hash).toHaveBeenCalledWith("Admin@123", 12);
   });
 });
 

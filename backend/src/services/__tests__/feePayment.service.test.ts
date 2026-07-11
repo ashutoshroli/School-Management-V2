@@ -38,6 +38,9 @@ const makeMockTx = () => {
   };
 
   return {
+    branch: {
+      findUnique: jest.fn().mockResolvedValue({ code: "MAIN" }),
+    },
     payment: {
       count: jest.fn().mockResolvedValue(payments.length),
       create: jest.fn().mockImplementation(({ data }) => {
@@ -154,7 +157,7 @@ describe("recordFeePayment", () => {
     ).rejects.toThrow(/Accounting not configured/);
   });
 
-  it("generates a zero-padded receipt number based on the existing payment count", async () => {
+  it("generates a zero-padded receipt number based on the existing payment count, qualified by branch code", async () => {
     const tx = makeMockTx();
     tx.payment.count.mockResolvedValue(41); // simulate 41 existing payments
     const assignment = makeAssignment();
@@ -167,6 +170,44 @@ describe("recordFeePayment", () => {
       paymentMode: "CASH" as any,
     });
 
-    expect(result.payment.receiptNo).toBe("RCP-000042");
+    expect(result.payment.receiptNo).toBe("RCP-MAIN-000042");
+  });
+
+  // BUG FIX: Payment.receiptNo is globally unique, but was previously
+  // generated from a branch-scoped count alone (e.g. "RCP-000001") -
+  // the first payment collected in a second branch collided with an
+  // identical receiptNo already used by another branch and crashed
+  // with a Prisma unique-constraint violation. This regression-tests
+  // that two different branches, both recording their very first
+  // payment (count=0), now generate different receipt numbers.
+  it("BUG FIX: two different branches recording their first payment never generate the same receiptNo", async () => {
+    const txBranchA = makeMockTx();
+    txBranchA.branch.findUnique.mockResolvedValue({ code: "MAIN" });
+    txBranchA.payment.count.mockResolvedValue(0);
+
+    const txBranchB = makeMockTx();
+    txBranchB.branch.findUnique.mockResolvedValue({ code: "NORTH" });
+    txBranchB.payment.count.mockResolvedValue(0);
+
+    const assignment = makeAssignment();
+
+    const resultA = await recordFeePayment(txBranchA, assignment, {
+      branchId: "branch-a",
+      studentId: "student-1",
+      feeAssignmentId: "fa-1",
+      amount: 1000,
+      paymentMode: "CASH" as any,
+    });
+    const resultB = await recordFeePayment(txBranchB, assignment, {
+      branchId: "branch-b",
+      studentId: "student-2",
+      feeAssignmentId: "fa-2",
+      amount: 1000,
+      paymentMode: "CASH" as any,
+    });
+
+    expect(resultA.payment.receiptNo).toBe("RCP-MAIN-000001");
+    expect(resultB.payment.receiptNo).toBe("RCP-NORTH-000001");
+    expect(resultA.payment.receiptNo).not.toBe(resultB.payment.receiptNo);
   });
 });

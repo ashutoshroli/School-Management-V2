@@ -15,6 +15,17 @@ import { config } from "../config";
  * Generate unique admission number.
  * Accepts an optional transaction client so the count read happens
  * consistently with the student.create() that follows it.
+ *
+ * BUG FIX: Student.admissionNo is globally unique (@unique, not
+ * @@unique([branchId, ...])). This used to prefix with only the first
+ * 4 characters of the branch code (branch?.code?.slice(0, 4)) - two
+ * branches whose codes share the same first 4 characters (e.g. "MAIN1"
+ * and "MAIN2", or simply two branches created before a distinct code
+ * scheme was settled on) would generate colliding admissionNo values
+ * and crash with a Prisma unique-constraint violation, surfacing as a
+ * generic "Failed to create student". Using the FULL branch code (which
+ * is itself globally unique - see the Branch model) guarantees the
+ * resulting admissionNo can never collide across branches.
  */
 const generateAdmissionNo = async (
   branchId: string,
@@ -22,7 +33,7 @@ const generateAdmissionNo = async (
 ): Promise<string> => {
   const branch = await client.branch.findUnique({ where: { id: branchId } });
   const count = await client.student.count({ where: { branchId } });
-  const prefix = branch?.code?.slice(0, 4) || "STD";
+  const prefix = branch?.code || "STD";
   return `${prefix}-${String(count + 1).padStart(5, "0")}`;
 };
 

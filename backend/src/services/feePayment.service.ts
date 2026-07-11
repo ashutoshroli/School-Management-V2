@@ -124,8 +124,16 @@ export const recordFeePayment = async (
   const total = Number(assignment.totalAmount) - Number(assignment.discount) + newLateFee;
   const newStatus = newPaid >= total ? "PAID" : "PARTIAL";
 
+  // BUG FIX: Payment.receiptNo is globally unique (@unique, not
+  // @@unique([branchId, ...])), but this used to generate it from a
+  // branch-scoped count alone (e.g. "RCP-000001") - the first payment
+  // collected in ANY second branch collided with the first branch's
+  // "RCP-000001" and crashed with a Prisma unique-constraint violation.
+  // Including the branch's own (globally unique) code makes this
+  // string unique across branches too.
+  const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { code: true } });
   const count = await tx.payment.count({ where: { branchId } });
-  const receiptNo = `RCP-${String(count + 1).padStart(6, "0")}`;
+  const receiptNo = `RCP-${branch?.code || "STD"}-${String(count + 1).padStart(6, "0")}`;
 
   const payment = await tx.payment.create({
     data: {

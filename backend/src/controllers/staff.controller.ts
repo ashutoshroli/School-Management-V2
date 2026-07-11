@@ -57,6 +57,12 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
+    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+    if (!branch) {
+      sendError(res, "Branch not found", 404);
+      return;
+    }
+
     // Determine user role
     const requestedRole: UserRole | undefined = role;
     const defaultRole = type === "TEACHING" ? UserRole.TEACHER : UserRole.STAFF;
@@ -90,9 +96,16 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    // Generate employee ID
+    // BUG FIX: Staff.employeeId is globally unique (@unique, not
+    // @@unique([branchId, ...])), but this used to generate it from a
+    // branch-scoped count alone (e.g. "EMP-0001") - the first staff
+    // member created in ANY second branch collided with the first
+    // branch's "EMP-0001" and crashed with a Prisma unique-constraint
+    // violation, surfacing as a generic "Failed to create staff".
+    // Including the branch's own (globally unique) code makes this
+    // string unique across branches too.
     const count = await prisma.staff.count({ where: { branchId } });
-    const employeeId = `EMP-${String(count + 1).padStart(4, "0")}`;
+    const employeeId = `EMP-${branch.code}-${String(count + 1).padStart(4, "0")}`;
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password || "Staff@123", 12);

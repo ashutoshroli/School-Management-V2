@@ -147,4 +147,48 @@ describe("student.controller - createStudent", () => {
     expect(res.status).toHaveBeenCalledWith(201);
     expect(prisma.branch.findUnique).toHaveBeenCalledWith({ where: { id: "branch-target" } });
   });
+
+  // BUG FIX: Student.admissionNo is globally unique, but was previously
+  // generated using only the first 4 characters of the branch code
+  // (e.g. branch code "MAIN1" and "MAIN2" both slice to "MAIN" and
+  // produce identical admissionNo values for each branch's first
+  // student). Using the FULL branch code instead guarantees no
+  // collision, since Branch.code itself is globally unique.
+  it("BUG FIX: generates an admissionNo using the FULL branch code, not just its first 4 characters", async () => {
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ code: "NORTHCAMPUS" });
+    (prisma.student.count as jest.Mock).mockResolvedValue(0);
+
+    let capturedAdmissionNo: string | undefined;
+    (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) => {
+      const tx = {
+        branch: prisma.branch,
+        student: {
+          ...prisma.student,
+          create: jest.fn().mockImplementation(({ data }: any) => {
+            capturedAdmissionNo = data.admissionNo;
+            return Promise.resolve({ id: "student-1", ...data });
+          }),
+        },
+        user: {
+          create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: "user-1", ...data })),
+          findUnique: jest.fn().mockResolvedValue(null),
+        },
+        parent: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        studentParent: { create: jest.fn().mockResolvedValue({}) },
+      };
+      return callback(tx);
+    });
+
+    const req = makeReq({ body: { ...baseBody, branchId: "" } });
+    const res = makeMockRes();
+
+    await createStudent(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(capturedAdmissionNo).toBe("NORTHCAMPUS-00001");
+    // Explicitly NOT truncated to the first 4 characters ("NORT-00001"),
+    // which is what would collide with another branch code also
+    // starting with "NORT".
+    expect(capturedAdmissionNo).not.toBe("NORT-00001");
+  });
 });
