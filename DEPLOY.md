@@ -150,9 +150,8 @@ etc. with the seeded demo data.
 ## Local development database (docker-compose)
 
 For local development (not the trial deployment above), `docker-compose.yml`
-at the repo root gives every contributor a one-command Postgres (+ Redis,
-reserved for a later caching/background-jobs phase) instead of everyone
-installing Postgres by hand:
+at the repo root gives every contributor a one-command Postgres + Redis
+instead of everyone installing them by hand:
 
 ```bash
 docker compose up -d
@@ -162,8 +161,12 @@ This starts Postgres on `localhost:5432` with:
 ```
 DATABASE_URL="postgresql://school_erp:dev_password_123@localhost:5432/school_erp_dev?schema=public"
 ```
+and Redis on `localhost:6379` with:
+```
+REDIS_URL="redis://localhost:6379"
+```
 
-Put that in `backend/.env` (or `db/.env`), then run the usual:
+Put both in `backend/.env` (or `db/.env` for `DATABASE_URL`), then run the usual:
 ```bash
 npm run db:generate
 npm run db:migrate      # or: cd db && npx prisma db push
@@ -171,8 +174,41 @@ npm run db:seed
 npm run dev:backend
 ```
 
+Setting `REDIS_URL` activates two optional features (both fully OFF/inline
+when it's unset - see `backend/src/config/redis.ts`):
+- **Caching** (Phase 4) - `backend/src/services/cache.service.ts` caches
+  branches/classes/fee-structures reads instead of hitting the database
+  every time.
+- **Background job queues** (Phase 5) - see "Background worker process" below.
+
 This is **local development only** - it is not used for the trial/production
 deployment described above, which uses a managed Postgres (Neon) instead.
+For production, provision a managed Redis too (Upstash/Redis Cloud both
+have free tiers) if you want either of these features live.
+
+## Background worker process (Phase 5)
+
+Some operations (bulk fee reminders to every parent of every defaulting
+student, CSV report generation for large branches) risk taking long enough
+to hit an HTTP request timeout if run inline within the API request. When
+`REDIS_URL` is configured, these are queued (via `backend/src/queues/`)
+instead of run inline, and a **separate worker process** picks them up:
+
+```bash
+npm run dev:worker          # local dev (ts-node-dev, auto-restart)
+npm run worker:start --prefix backend   # production (after npm run build)
+```
+
+This must run as its own process/container, not inside the API server -
+see `backend/src/workers/index.ts`'s header comment for why. For a
+production deployment, add it as a second service (e.g. a second Render
+"Background Worker" service, or a second container in your compose/
+Kubernetes setup) pointed at the same `DATABASE_URL` and `REDIS_URL` as
+the API server.
+
+If `REDIS_URL` isn't set at all (no Redis provisioned), none of this
+applies - the affected endpoints simply run the same work inline/
+synchronously as before Phase 5, and there's no worker process to run.
 
 ## Database backups & restore
 

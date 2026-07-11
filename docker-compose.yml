@@ -40,10 +40,10 @@ services:
       retries: 5
       start_period: 10s
 
-  # Not consumed by any backend code yet (that lands in a later phase -
-  # Redis caching / Bull background jobs) - included here now so the
-  # same `docker compose up` a developer already runs for Postgres also
-  # brings this up, with no extra step needed once that phase lands.
+  # Used by the caching layer (backend/src/services/cache.service.ts,
+  # Phase 4) and the background job queues (backend/src/queues/,
+  # Phase 5) - both are entirely optional and no-op if REDIS_URL isn't
+  # set, but this is what makes them actually active locally.
   redis:
     image: redis:7-alpine
     container_name: school_erp_redis

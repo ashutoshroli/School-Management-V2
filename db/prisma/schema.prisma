@@ -518,6 +518,11 @@ model FeeAssignment {
   payments     Payment[]
 
   @@unique([studentId, feeStructureId])
+  // Phase 5 (Performance): the defaulters list/CSV/fee-reminder flows
+  // (fetchDefaulters in feeReports.controller.ts, sendFeeReminders in
+  // feeReminder.service.ts) all filter FeeAssignment by status - this
+  // is the single most repeated WHERE clause against this table.
+  @@index([status])
 }
 
 enum FeeStatus {
@@ -576,6 +581,15 @@ model Payment {
   feeAssignment FeeAssignment @relation(fields: [feeAssignmentId], references: [id])
   voucherEntry  Voucher?      // auto-posted to accounting
   refund        Refund?
+
+  // Phase 5 (Performance): paidAt/status are the two columns nearly
+  // every fee-reports query (day book, collection trend, payment mode
+  // breakdown - see feeReports.controller.ts) filters on, always
+  // scoped to a branch. studentId speeds up "this student's payment
+  // history" lookups (getStudentPayments).
+  @@index([branchId, paidAt])
+  @@index([branchId, status])
+  @@index([studentId])
 }
 
 enum PaymentMode {
@@ -769,6 +783,11 @@ model StaffAttendance {
   staff Staff @relation(fields: [staffId], references: [id])
 
   @@unique([staffId, date])
+  // Phase 5 (Performance): getDateAttendance (staffAttendance.
+  // controller.ts) queries "every staff member's record for date X"
+  // branch-wide - the existing @@unique([staffId, date]) is staffId-
+  // first and doesn't help a date-only/date-first lookup.
+  @@index([date])
 }
 
 enum AttendanceStatus {
@@ -846,6 +865,12 @@ model StudentAttendance {
   section Section @relation(fields: [sectionId], references: [id])
 
   @@unique([studentId, date, period])
+  // Phase 5 (Performance): getClassAttendance (studentAttendance.
+  // controller.ts) looks up "this section, this date" on every
+  // attendance-marking page load; getStudentAttendanceHistory looks up
+  // "this student, date range" for the parent/student portal view.
+  @@index([sectionId, date])
+  @@index([studentId, date])
 }
 
 model AttendanceDevice {

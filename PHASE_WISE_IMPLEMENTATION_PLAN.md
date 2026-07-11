@@ -200,76 +200,93 @@ SCAN, and the disabled/no-Redis-configured path)
 
 ---
 
-## Phase 5: Background Jobs + Performance (Day 10-11) 🟡
+## Phase 5: Background Jobs + Performance ✅ COMPLETED
 
 **Priority:** HIGH  
-**Duration:** 2 days  
-**Status:** 🔴 Not Started
+**Duration:** ~1 day (actual)  
+**Status:** ✅ **DONE**
 
-### Tasks:
+### What was actually done:
 
-#### 1. Setup Bull Queue System
-**New Files:**
+#### 1. Bull queue system
 ```
 backend/src/queues/
-├── index.ts
-├── notification.queue.ts
-├── report.queue.ts
-└── email.queue.ts
+├── index.ts               (getQueue/QUEUE_NAMES, opt-in via REDIS_URL)
+├── notification.queue.ts   (enqueueFeeReminders - queues or runs inline)
+└── report.queue.ts         (enqueueDefaultersCsvExport)
 ```
+Deliberately did NOT add a separate `email.queue.ts` - emails are already
+sent as part of `notification.service.ts`'s multi-channel `notify()` per
+recipient, which the notification queue's job (fee reminders) already
+calls; a distinct email-only queue would just be a second path to the
+same delivery code with no clear separate use case yet.
 
-**Will Queue:**
-- Bulk SMS sending
-- Bulk email sending
-- PDF report generation
-- Data exports
-
-#### 2. Create Queue Workers
-**New Files:**
+#### 2. Queue workers (standalone process, not inside the API server)
 ```
 backend/src/workers/
-├── notificationWorker.ts
-├── reportWorker.ts
-└── emailWorker.ts
+├── index.ts                 (standalone entrypoint - run separately from server.ts)
+├── notificationWorker.ts    (processes "fee-reminders" jobs)
+└── reportWorker.ts          (processes "defaulters-csv" jobs, saves via storage.service.ts)
 ```
+No separate `emailWorker.ts` for the same reason as above.
 
-#### 3. Update Controllers for Async Operations
-**Files to Update:**
-- `feeReports.controller.ts`
-- `notification.controller.ts`
-- `certificate.controller.ts`
+#### 3. Updated controller for async operation
+`feeCollection.controller.ts`'s `sendFeeRemindersHandler` now calls
+`enqueueFeeReminders()`: with Redis configured, returns `202 { queued: true, jobId }`
+immediately; without Redis, runs `sendFeeReminders()` inline exactly as
+before (identical response shape/behavior to pre-Phase-5).
 
-**Change:**
-```typescript
-// Before: Synchronous
-const pdf = await generateReport();
-res.send(pdf);
+`feeReports.controller.ts`'s `fetchDefaulters`/`DEFAULTER_CSV_COLUMNS` were
+exported (not duplicated) so `reportWorker.ts` builds the exact same CSV
+a background job would as the existing synchronous
+`exportDefaultersCsv` endpoint - didn't wire a new queued HTTP endpoint
+for this in this phase (the existing synchronous CSV export endpoint is
+untouched/still works), the worker + queue infrastructure is ready for a
+future "queue this if it's a big branch" endpoint to use.
 
-// After: Async with job queue
-const job = await reportQueue.add({ reportId });
-res.json({ jobId: job.id, status: 'processing' });
+#### 4. Database indexes (schema.prisma, not a separate .sql file -
+Prisma migrations/db push apply them the same way as any other schema
+change):
+```prisma
+model Payment          { @@index([branchId, paidAt]) @@index([branchId, status]) @@index([studentId]) }
+model FeeAssignment     { @@index([status]) }
+model StudentAttendance { @@index([sectionId, date]) @@index([studentId, date]) }
+model StaffAttendance   { @@index([date]) }
 ```
+Each targets a real, named query site (see the doc-comments next to each
+index in schema.prisma) - the fee reports/day-book/collection-trend
+queries, the defaulters list, and the attendance-marking/history views.
 
-#### 4. Add Database Indexes
-**New File:** `db/prisma/indexes.sql`
+#### 5. Query optimization - NOT done broadly in this phase (scoped out)
+A full audit of `select`/`include` usage and cursor pagination across
+~20 files was judged lower-value than the queue+index work for the time
+available, and risks introducing subtle behavior changes (dropped fields
+a frontend page depends on) without a much larger review. Left as a
+future incremental improvement, not blocking.
 
-**Will Add:**
-```sql
-CREATE INDEX idx_payment_paid_at ON "Payment"("paidAt");
-CREATE INDEX idx_payment_status ON "Payment"("status");
-CREATE INDEX idx_student_attendance_date ON "StudentAttendance"("date");
-CREATE INDEX idx_fee_assignment_status ON "FeeAssignment"("status");
-```
-
-#### 5. Optimize Prisma Queries
-**Files to Update (~20 files):**
-- Add `select` for specific fields
-- Use `include` judiciously
-- Implement cursor pagination
+### Verification performed (real, not just unit tests):
+- `npx tsc --noEmit` / `npm test` (56 suites / 485 tests, up from 51/470 -
+  5 new suites: `queues/__tests__/index.test.ts`,
+  `queues/__tests__/notification.queue.test.ts`,
+  `queues/__tests__/report.queue.test.ts`,
+  `workers/__tests__/notificationWorker.test.ts`,
+  `workers/__tests__/reportWorker.test.ts`) / `npm run build` - all clean
+- `npx prisma validate` + `npx prisma generate` - schema with new indexes
+  is valid, client regenerates and links into backend/node_modules cleanly
+- **Real Bull + Redis end-to-end test**: started the Phase 3
+  docker-compose Redis service, ran a Node script requiring the actual
+  *compiled* `dist/queues/index.js` (not just the bare Bull library) -
+  confirmed `isRedisConfigured() === true`, `getQueue()` returns a real
+  Bull queue, and a job added via `queue.add()` was picked up by a
+  `queue.process()` handler and returned its result via
+  `job.finished()` - the exact producer/consumer pattern
+  `notification.queue.ts`/`notificationWorker.ts` use.
 
 ### Deliverables:
-- ✅ Background jobs working
-- ✅ No request timeouts
+- ✅ Background job queue working (real Redis test passed)
+- ✅ Fee reminders no longer risk a request timeout when Redis is configured
+- ✅ Database indexes added for the highest-traffic query patterns
+- 🔲 Git branch + PR - pending user's "PR banao" instruction
 - ✅ Database optimized
 - ✅ Git branch: `feat/phase-6-background-jobs`
 

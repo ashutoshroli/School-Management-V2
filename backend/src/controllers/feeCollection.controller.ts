@@ -6,7 +6,7 @@ import { canAccessBranch, resolveEffectiveBranchId } from "../utils/branchScope"
 import { canAccessStudentRecord } from "../utils/studentAccess";
 import { getValidatedFeeAssignment, recordFeePayment, notifyPaymentConfirmation } from "../services/feePayment.service";
 import { logAuditFromRequest } from "../services/auditLog.service";
-import { sendFeeReminders } from "../services/feeReminder.service";
+import { enqueueFeeReminders } from "../queues/notification.queue";
 import { resolveBranchId } from "../utils/branchScope";
 
 /**
@@ -707,11 +707,26 @@ export const sendFeeRemindersHandler = async (req: AuthRequest, res: Response): 
       return;
     }
 
-    const result = await sendFeeReminders(branchId);
+    // Phase 5: if a Redis-backed queue is available, this runs on a
+    // separate worker process instead of blocking this request - a
+    // branch with thousands of defaulters sending Email+SMS to each
+    // parent can otherwise take long enough to risk a request timeout.
+    // Falls back to running inline (today's pre-Phase-5 behavior) when
+    // REDIS_URL isn't configured - see queues/notification.queue.ts.
+    const outcome = await enqueueFeeReminders(branchId);
 
-    logAuditFromRequest(req, "CREATE", "feeReminder", branchId, { newData: result });
+    if (outcome.queued) {
+      logAuditFromRequest(req, "CREATE", "feeReminder", branchId, { newData: { jobId: outcome.jobId } });
+      sendSuccess(res, { queued: true, jobId: outcome.jobId }, "Fee reminders queued for background delivery", 202);
+      return;
+    }
 
-    sendSuccess(res, result, `Reminders sent to ${result.notified} parent(s) across ${result.totalDefaulters} defaulting student(s)`);
+    logAuditFromRequest(req, "CREATE", "feeReminder", branchId, { newData: outcome.result });
+    sendSuccess(
+      res,
+      outcome.result,
+      `Reminders sent to ${outcome.result.notified} parent(s) across ${outcome.result.totalDefaulters} defaulting student(s)`
+    );
   } catch (error) {
     sendError(res, "Failed to send fee reminders", 500, (error as Error).message);
   }
