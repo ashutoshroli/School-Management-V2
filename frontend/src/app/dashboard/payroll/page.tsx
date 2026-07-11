@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Wallet, Play, Check, IndianRupee, Download } from "lucide-react";
+import Link from "next/link";
+import { Wallet, Play, Check, IndianRupee, Download, Users } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 import { openPdfInNewTab } from "@/lib/pdf";
@@ -63,6 +64,9 @@ export default function PayrollPage() {
           <p className="text-gray-500 mt-1">Monthly salary processing</p>
         </div>
         <div className="flex items-center gap-3">
+          <Link href="/dashboard/payroll/bulk-assign" className="btn-secondary flex items-center gap-2 text-sm">
+            <Users className="h-4 w-4" /> Bulk Assign Salary
+          </Link>
           <select className="input-field w-auto" value={month} onChange={e => setMonth(parseInt(e.target.value))}>
             {Array.from({length: 12}, (_, i) => <option key={i+1} value={i+1}>{new Date(0, i).toLocaleString("en", {month: "long"})}</option>)}
           </select>

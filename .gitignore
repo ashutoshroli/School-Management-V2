@@ -50,3 +50,8 @@ backend/uploads/
 # are runtime artifacts (potentially containing real student/staff PII),
 # never source, and must never be committed.
 backups/
+
+
+# Next.js auto-generated TypeScript declaration file (regenerated on
+# every `npm run dev`/`next build` - never hand-edited, never committed).
+next-env.d.ts
