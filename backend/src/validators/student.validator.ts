@@ -2,7 +2,12 @@ import { z } from "zod";
 
 export const createStudentSchema = z.object({
   body: z.object({
-    branchId: z.string().min(1, "branchId is required"),
+    // Optional: the "New Admission" form has no branch-picker - the
+    // backend always resolves the effective branchId server-side from
+    // the caller's own branch (see resolveEffectiveBranchId in
+    // utils/branchScope.ts). Requiring it here would reject every
+    // request from that form before it even reaches the controller.
+    branchId: z.string().optional(),
     classId: z.string().min(1, "classId is required"),
     sectionId: z.string().min(1, "sectionId is required"),
     name: z.string().min(1, "Student name is required"),

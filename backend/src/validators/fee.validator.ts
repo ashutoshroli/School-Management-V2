@@ -7,7 +7,11 @@ const positiveAmount = z
 
 export const collectPaymentSchema = z.object({
   body: z.object({
-    branchId: z.string().min(1, "branchId is required"),
+    // Optional: collectPayment resolves the effective branchId
+    // server-side (resolveEffectiveBranchId) and falls back to the
+    // caller's own branch if this is ever missing/blank - matches the
+    // rest of the create-X endpoints fixed for the same reason.
+    branchId: z.string().optional(),
     studentId: z.string().min(1, "studentId is required"),
     feeAssignmentId: z.string().min(1, "feeAssignmentId is required"),
     amount: positiveAmount,
@@ -39,7 +43,8 @@ export const bulkAssignFeesSchema = z.object({
 
 export const createRazorpayOrderSchema = z.object({
   body: z.object({
-    branchId: z.string().min(1, "branchId is required"),
+    // Optional - see collectPaymentSchema's comment above.
+    branchId: z.string().optional(),
     studentId: z.string().min(1, "studentId is required"),
     feeAssignmentId: z.string().min(1, "feeAssignmentId is required"),
   }),
@@ -47,7 +52,8 @@ export const createRazorpayOrderSchema = z.object({
 
 export const verifyRazorpayPaymentSchema = z.object({
   body: z.object({
-    branchId: z.string().min(1, "branchId is required"),
+    // Optional - see collectPaymentSchema's comment above.
+    branchId: z.string().optional(),
     studentId: z.string().min(1, "studentId is required"),
     feeAssignmentId: z.string().min(1, "feeAssignmentId is required"),
     razorpay_order_id: z.string().min(1, "razorpay_order_id is required"),

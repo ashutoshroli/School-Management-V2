@@ -33,7 +33,16 @@ export const createBranchAdminSchema = z.object({
     name: z.string().min(1, "Name is required"),
     email: z.string().email("Valid email required"),
     phone: z.string().optional(),
-    password: z.string().min(6, "Password must be at least 6 characters").optional(),
+    // The "Add Branch Admin" form's password field is intentionally
+    // left blank by default ("Leave blank for default: Admin@123"),
+    // which submits it as "" - NOT undefined. `.optional()` alone only
+    // allows undefined; an empty string still has to satisfy
+    // `.min(6)` and fails, rejecting every request that leaves this
+    // field blank with a generic "Validation failed". Accepting the
+    // empty string here too (via `.or(z.literal(""))`) lets
+    // createBranchAdmin's own `password || "Admin@123"` fallback
+    // actually run.
+    password: z.string().min(6, "Password must be at least 6 characters").optional().or(z.literal("")),
   }),
 });
 

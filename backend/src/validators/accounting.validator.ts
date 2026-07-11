@@ -7,7 +7,12 @@ const positiveAmount = z
 
 export const createAccountSchema = z.object({
   body: z.object({
-    branchId: z.string().min(1, "branchId is required"),
+    // Optional: the "Add Account" form has no branch-picker - the
+    // backend always resolves the effective branchId server-side from
+    // the caller's own branch (see resolveEffectiveBranchId in
+    // utils/branchScope.ts). Requiring it here would reject every
+    // request from that form before it even reaches the controller.
+    branchId: z.string().optional(),
     name: z.string().min(1, "Account name is required"),
     code: z.string().min(1, "Account code is required"),
     type: z.enum(["ASSET", "LIABILITY", "INCOME", "EXPENSE", "CAPITAL"]),
@@ -24,7 +29,9 @@ const voucherEntrySchema = z.object({
 
 export const createVoucherSchema = z.object({
   body: z.object({
-    branchId: z.string().min(1, "branchId is required"),
+    // Optional - see createAccountSchema's comment above; the "New
+    // Voucher" form has no branch-picker either.
+    branchId: z.string().optional(),
     type: z.enum(["PAYMENT", "RECEIPT", "JOURNAL", "CONTRA"]),
     date: z.coerce.date({ errorMap: () => ({ message: "Valid date is required" }) }),
     narration: z.string().optional(),
