@@ -3,7 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
-import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, formatMoney } from "../services/pdf.service";
+import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, drawQrCode, formatMoney } from "../services/pdf.service";
 import { renderTemplateToPdf } from "../services/templateRenderer.service";
 import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
 
@@ -332,6 +332,18 @@ export const getPayslipPdf = async (req: AuthRequest, res: Response): Promise<vo
     doc.moveDown(2);
     doc.fontSize(9).fillColor("#94a3b8").text(
       `Payslip status: ${payslip.status}. This is a computer-generated payslip and does not require a signature.`
+    );
+
+    // QR code summarizing the payslip, fixed to the bottom-right of the
+    // page (independent of the content flow above it).
+    const qrSize = 60;
+    await drawQrCode(
+      doc,
+      `Payslip: ${monthLabel} ${payslip.year}\n${payslip.staff.branch.name}\nEmployee: ${payslip.staff.user.name} (${payslip.staff.employeeId})\nNet Pay: ${formatMoney(payslip.netPay)}`,
+      doc.page.width - doc.page.margins.right - qrSize,
+      doc.page.height - doc.page.margins.bottom - qrSize - 26,
+      qrSize,
+      "Scan for payslip summary"
     );
 
     drawFooter(doc, `${payslip.staff.branch.name} - ${[payslip.staff.branch.address, payslip.staff.branch.city, payslip.staff.branch.state, payslip.staff.branch.pincode].filter(Boolean).join(", ")}`);

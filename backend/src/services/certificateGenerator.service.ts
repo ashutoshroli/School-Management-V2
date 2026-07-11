@@ -1,5 +1,5 @@
 import { CertificateType } from "@prisma/client";
-import { renderPdfToBuffer, drawFooter, formatDate } from "./pdf.service";
+import { renderPdfToBuffer, drawFooter, drawQrCode, formatDate } from "./pdf.service";
 import { renderTemplateToPdf, TemplateData } from "./templateRenderer.service";
 
 /**
@@ -123,7 +123,18 @@ const drawSignatureBlock = (doc: any) => {
   doc.fontSize(9).fillColor("#475569").text("Principal / Head of Institution", rightX, y + 4, { width: 160, align: "center" });
 };
 
-const drawVerificationFooter = (doc: any, serialNo: string, issueDate: Date, verifyUrl: string) => {
+/**
+ * Draws a scannable QR code (linking to verifyUrl) in the bottom-right
+ * corner of the certificate, alongside the existing text footer - lets
+ * a bank/employer/other school holding a printed copy verify it with a
+ * phone camera instead of typing the URL/serial number by hand.
+ */
+const drawVerificationFooter = async (doc: any, serialNo: string, issueDate: Date, verifyUrl: string) => {
+  const qrSize = 60;
+  const qrX = doc.page.width - doc.page.margins.right - qrSize;
+  const qrY = doc.page.height - doc.page.margins.bottom - qrSize - 26;
+  await drawQrCode(doc, verifyUrl, qrX, qrY, qrSize, "Scan to verify");
+
   drawFooter(
     doc,
     `Serial No: ${serialNo}  |  Issued: ${formatDate(issueDate)}  |  Verify at: ${verifyUrl}`
@@ -133,7 +144,7 @@ const drawVerificationFooter = (doc: any, serialNo: string, issueDate: Date, ver
 export const renderTransferCertificate = (params: CertificateRenderParams): Promise<Buffer> => {
   const { branch, student, serialNo, issueDate, verifyUrl } = params;
 
-  return renderPdfToBuffer((doc) => {
+  return renderPdfToBuffer(async (doc) => {
     drawLetterhead(doc, branch, "TRANSFER CERTIFICATE");
 
     const leftX = doc.page.margins.left;
@@ -168,14 +179,14 @@ export const renderTransferCertificate = (params: CertificateRenderParams): Prom
     );
 
     drawSignatureBlock(doc);
-    drawVerificationFooter(doc, serialNo, issueDate, verifyUrl);
+    await drawVerificationFooter(doc, serialNo, issueDate, verifyUrl);
   });
 };
 
 export const renderBonafideCertificate = (params: CertificateRenderParams): Promise<Buffer> => {
   const { branch, student, serialNo, issueDate, verifyUrl, purpose } = params;
 
-  return renderPdfToBuffer((doc) => {
+  return renderPdfToBuffer(async (doc) => {
     drawLetterhead(doc, branch, "BONAFIDE CERTIFICATE");
 
     const leftX = doc.page.margins.left;
@@ -207,14 +218,14 @@ export const renderBonafideCertificate = (params: CertificateRenderParams): Prom
     );
 
     drawSignatureBlock(doc);
-    drawVerificationFooter(doc, serialNo, issueDate, verifyUrl);
+    await drawVerificationFooter(doc, serialNo, issueDate, verifyUrl);
   });
 };
 
 export const renderCharacterCertificate = (params: CertificateRenderParams): Promise<Buffer> => {
   const { branch, student, serialNo, issueDate, verifyUrl } = params;
 
-  return renderPdfToBuffer((doc) => {
+  return renderPdfToBuffer(async (doc) => {
     drawLetterhead(doc, branch, "CHARACTER CERTIFICATE");
 
     const leftX = doc.page.margins.left;
@@ -247,7 +258,7 @@ export const renderCharacterCertificate = (params: CertificateRenderParams): Pro
     );
 
     drawSignatureBlock(doc);
-    drawVerificationFooter(doc, serialNo, issueDate, verifyUrl);
+    await drawVerificationFooter(doc, serialNo, issueDate, verifyUrl);
   });
 };
 

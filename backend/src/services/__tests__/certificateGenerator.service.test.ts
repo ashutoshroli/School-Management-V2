@@ -97,6 +97,25 @@ describe("certificateGenerator.service", () => {
     });
   });
 
+  describe("QR code verification", () => {
+    // Every certificate now embeds a scannable QR code (linking to
+    // verifyUrl) alongside the existing text footer - a real PDF image
+    // XObject, not just a URL printed as text. Checked across all
+    // three renderers since drawVerificationFooter/drawQrCode is shared
+    // by all of them.
+    it.each([
+      ["renderTransferCertificate", renderTransferCertificate],
+      ["renderBonafideCertificate", renderBonafideCertificate],
+      ["renderCharacterCertificate", renderCharacterCertificate],
+    ])("%s embeds a real QR code image in the PDF", async (_name, renderFn) => {
+      const buffer = await (renderFn as (p: CertificateRenderParams) => Promise<Buffer>)(baseParams);
+      const text = buffer.toString("latin1");
+      expect(text).toContain("/Image");
+      expect(text).toContain("/Width");
+      expect(text).toContain("/Height");
+    });
+  });
+
   describe("renderCertificateByType", () => {
     // None of these params include a templateUrl, so
     // renderTemplateToPdf() short-circuits to null immediately and every

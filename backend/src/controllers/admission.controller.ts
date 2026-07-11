@@ -4,7 +4,7 @@ import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 import { notify } from "../services/notification.service";
-import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, formatDate } from "../services/pdf.service";
+import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, drawQrCode, formatDate } from "../services/pdf.service";
 import { renderTemplateToPdf } from "../services/templateRenderer.service";
 import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
 
@@ -199,6 +199,18 @@ export const getAdmissionInquiryPdf = async (req: AuthRequest, res: Response): P
     drawKeyValueRow(doc, "Inquiry Status", inquiry.status, leftX, y); y += 18;
     drawKeyValueRow(doc, "Submitted On", formatDate(inquiry.createdAt), leftX, y); y += 18;
     doc.y = y;
+
+    // QR code summarizing the inquiry, fixed to the bottom-right of the
+    // page (independent of the content flow above it).
+    const qrSize = 60;
+    await drawQrCode(
+      doc,
+      `Admission Inquiry: ${inquiry.id}\n${inquiry.branch.name}\nApplicant: ${inquiry.studentName}\nClass Applied For: ${inquiry.classAppliedFor}\nStatus: ${inquiry.status}`,
+      doc.page.width - doc.page.margins.right - qrSize,
+      doc.page.height - doc.page.margins.bottom - qrSize - 26,
+      qrSize,
+      "Scan for inquiry summary"
+    );
 
     drawFooter(doc, `${inquiry.branch.name} - This is a computer-generated summary of an admission inquiry, not proof of admission.`);
 

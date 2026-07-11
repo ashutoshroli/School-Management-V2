@@ -4,7 +4,7 @@ import { AuthRequest } from "../types";
 import { sendError } from "../utils/response";
 import { canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
-import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, formatMoney, formatDate } from "../services/pdf.service";
+import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, drawQrCode, formatMoney, formatDate } from "../services/pdf.service";
 import { renderTemplateToPdf, TemplateData } from "../services/templateRenderer.service";
 import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
 
@@ -125,6 +125,22 @@ export const getPaymentReceiptPdf = async (req: AuthRequest, res: Response): Pro
       { align: "left" }
     );
 
+    // QR code summarizing the payment, so the receipt can be verified
+    // at a glance (e.g. by a parent double-checking a printed copy)
+    // without a dedicated "verify receipt" web page. Placed at a fixed
+    // bottom-right position (independent of the content flow above) so
+    // it can never overlap the amount table regardless of how many
+    // optional rows were rendered.
+    const qrSize = 60;
+    await drawQrCode(
+      doc,
+      `Fee Receipt: ${payment.receiptNo}\n${payment.branch.name}\nStudent: ${payment.student.user.name} (${payment.student.admissionNo})\nAmount: ${formatMoney(payment.amount)}\nMode: ${payment.paymentMode.replace(/_/g, " ")}\nDate: ${formatDate(payment.paidAt)}`,
+      doc.page.width - doc.page.margins.right - qrSize,
+      doc.page.height - doc.page.margins.bottom - qrSize - 26,
+      qrSize,
+      "Scan for receipt summary"
+    );
+
     drawFooter(doc, `${payment.branch.name} - ${[payment.branch.address, payment.branch.city, payment.branch.state, payment.branch.pincode].filter(Boolean).join(", ")}`);
 
     doc.end();
@@ -139,12 +155,23 @@ const ID_CARD_WIDTH = 320;
 const ID_CARD_HEIGHT = 200;
 
 /**
+ * Builds the plain-text payload encoded into an ID card's QR code.
+ * There's no dedicated public "verify this ID card" web page (unlike
+ * certificates, which link to /verify-certificate/:serialNo) - a
+ * scanned ID card just needs to show the holder's identity at a
+ * glance (e.g. a security guard scanning it), so a short structured
+ * text blob is enough and needs no new backend endpoint.
+ */
+const buildIdCardQrData = (branchName: string, role: string, fullName: string, idValue: string): string =>
+  `${branchName}\n${role}: ${fullName}\nID: ${idValue}`;
+
+/**
  * Draws a single ID card (student or staff) at a given position on an
  * already-started PDFDocument. Shared by getStudentIdCardPdf,
  * getStaffIdCardPdf, and the batch class-ID-card generator below so all
  * three produce a visually identical card layout.
  */
-const drawIdCard = (
+const drawIdCard = async (
   doc: any,
   startX: number,
   startY: number,
@@ -156,9 +183,10 @@ const drawIdCard = (
     idValue: string;
     lines: string[];
     footerNote: string;
+    qrData: string;
   }
 ) => {
-  const { branchName, cardTitle, fullName, idLabel, idValue, lines, footerNote } = params;
+  const { branchName, cardTitle, fullName, idLabel, idValue, lines, footerNote, qrData } = params;
 
   doc.roundedRect(startX, startY, ID_CARD_WIDTH, ID_CARD_HEIGHT, 10).fillAndStroke("#f8fafc", "#cbd5e1");
 
@@ -176,13 +204,18 @@ const drawIdCard = (
 
   let infoY = startY + 65;
   const infoX = startX + 90;
-  doc.fontSize(11).fillColor("#0f172a").text(fullName, infoX, infoY, { width: ID_CARD_WIDTH - 105 });
+  const infoWidth = ID_CARD_WIDTH - 105 - 55; // leave room for the QR box on the right
+  doc.fontSize(11).fillColor("#0f172a").text(fullName, infoX, infoY, { width: infoWidth });
   infoY += 20;
-  doc.fontSize(8).fillColor("#64748b").text(`${idLabel}: ${idValue}`, infoX, infoY); infoY += 13;
+  doc.fontSize(8).fillColor("#64748b").text(`${idLabel}: ${idValue}`, infoX, infoY, { width: infoWidth }); infoY += 13;
   for (const line of lines) {
-    doc.fontSize(8).fillColor("#64748b").text(line, infoX, infoY);
+    doc.fontSize(8).fillColor("#64748b").text(line, infoX, infoY, { width: infoWidth });
     infoY += 13;
   }
+
+  // Small QR code in the card's top-right area, scannable to confirm
+  // the holder's identity without needing to read the printed text.
+  await drawQrCode(doc, qrData, startX + ID_CARD_WIDTH - 60, startY + 65, 45);
 
   doc.fontSize(7).fillColor("#94a3b8").text(footerNote, startX + 15, startY + ID_CARD_HEIGHT - 20, { width: ID_CARD_WIDTH - 30, align: "center" });
 };
@@ -246,7 +279,7 @@ export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Prom
     if (student.rollNo) lines.push(`Roll No: ${student.rollNo}`);
     if (student.bloodGroup) lines.push(`Blood Group: ${student.bloodGroup}`);
 
-    drawIdCard(doc, startX, 150, {
+    await drawIdCard(doc, startX, 150, {
       branchName: student.branch.name,
       cardTitle: "STUDENT IDENTITY CARD",
       fullName: student.user.name,
@@ -254,6 +287,7 @@ export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Prom
       idValue: student.admissionNo,
       lines,
       footerNote: "If found, please return to the school office.",
+      qrData: buildIdCardQrData(student.branch.name, "Student", student.user.name, student.admissionNo),
     });
 
     doc.end();
@@ -312,7 +346,7 @@ export const getStaffIdCardPdf = async (req: AuthRequest, res: Response): Promis
     const doc = startPdfResponse(res, filename);
     const startX = (doc.page.width - ID_CARD_WIDTH) / 2;
 
-    drawIdCard(doc, startX, 150, {
+    await drawIdCard(doc, startX, 150, {
       branchName: staff.branch.name,
       cardTitle: "STAFF IDENTITY CARD",
       fullName: staff.user.name,
@@ -320,6 +354,7 @@ export const getStaffIdCardPdf = async (req: AuthRequest, res: Response): Promis
       idValue: staff.employeeId,
       lines: [`Designation: ${staff.designation}`, `Department: ${staff.department}`],
       footerNote: "If found, please return to the school office.",
+      qrData: buildIdCardQrData(staff.branch.name, "Staff", staff.user.name, staff.employeeId),
     });
 
     doc.end();
@@ -374,14 +409,18 @@ export const getClassIdCardsBatchPdf = async (req: AuthRequest, res: Response): 
     const doc = startPdfResponse(res, `id-cards-${cls.name.replace(/\s+/g, "-")}.pdf`);
     const startX = (doc.page.width - ID_CARD_WIDTH) / 2;
 
-    students.forEach((student, index) => {
+    // Sequential for..of (not forEach/Promise.all) since drawIdCard is
+    // now async (draws a QR code per card) and each card must finish
+    // drawing on the current page before addPage() starts the next one.
+    for (let index = 0; index < students.length; index++) {
+      const student = students[index];
       if (index > 0) doc.addPage();
 
       const lines = [`Class: ${student.class?.name || "-"} - ${student.section?.name || "-"}`];
       if (student.rollNo) lines.push(`Roll No: ${student.rollNo}`);
       if (student.bloodGroup) lines.push(`Blood Group: ${student.bloodGroup}`);
 
-      drawIdCard(doc, startX, 150, {
+      await drawIdCard(doc, startX, 150, {
         branchName: student.branch.name,
         cardTitle: "STUDENT IDENTITY CARD",
         fullName: student.user.name,
@@ -389,8 +428,9 @@ export const getClassIdCardsBatchPdf = async (req: AuthRequest, res: Response): 
         idValue: student.admissionNo,
         lines,
         footerNote: "If found, please return to the school office.",
+        qrData: buildIdCardQrData(student.branch.name, "Student", student.user.name, student.admissionNo),
       });
-    });
+    }
 
     doc.end();
   } catch (error) {
@@ -533,6 +573,18 @@ export const getReportCardPdf = async (req: AuthRequest, res: Response): Promise
     doc.fontSize(11).fillColor(percentage >= 33 ? "#15803d" : "#b91c1c").text(
       percentage >= 33 ? "Result: PASS" : "Result: NEEDS IMPROVEMENT",
       leftX
+    );
+
+    // QR code summarizing the result, fixed to the bottom-right of the
+    // page so it's unaffected by however many subject rows preceded it.
+    const qrSize = 60;
+    await drawQrCode(
+      doc,
+      `Report Card: ${exam.name} (${exam.academicYear.name})\n${student.branch.name}\nStudent: ${student.user.name} (${student.admissionNo})\nClass: ${student.class?.name || "-"} - ${student.section?.name || "-"}\nTotal: ${totalObtained}/${totalMax} (${percentage.toFixed(2)}%)`,
+      doc.page.width - doc.page.margins.right - qrSize,
+      doc.page.height - doc.page.margins.bottom - qrSize - 26,
+      qrSize,
+      "Scan for result summary"
     );
 
     drawFooter(doc, "This is a computer-generated report card.");

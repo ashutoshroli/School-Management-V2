@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import { Response } from "express";
+import QRCode from "qrcode";
 
 // pdfkit's default export is a value (the constructor), not a type -
 // `import PDFDocument from "pdfkit"` alone can't be used in type
@@ -83,6 +84,59 @@ export const formatDate = (d: Date): string =>
   new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(d);
 
 /**
+ * Renders `data` (typically a verification/detail URL) as a QR code PNG
+ * data buffer, ready to hand to PDFKit's `doc.image()`. Used by every
+ * generated PDF in this app (certificates, ID cards, fee receipts,
+ * payslips, report cards, admission forms) so a printed document can be
+ * scanned on a phone to jump straight to its digital record/verification
+ * page, instead of a human having to type a long URL/serial number by
+ * hand.
+ *
+ * Returns null instead of throwing on failure (e.g. an unexpectedly
+ * huge payload that can't fit any QR version) - a missing QR image
+ * should never take down PDF generation for a document that's still
+ * perfectly usable without one; callers should skip drawing it when
+ * this resolves to null.
+ */
+export const generateQrCodeBuffer = async (data: string): Promise<Buffer | null> => {
+  try {
+    return await QRCode.toBuffer(data, {
+      type: "png",
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 200,
+    });
+  } catch (error) {
+    console.error("Failed to generate QR code:", (error as Error).message);
+    return null;
+  }
+};
+
+/**
+ * Draws a QR code (built from `data`) plus an optional caption at
+ * (x, y) on an in-progress PDFKit document, sized `size` points square.
+ * Silently draws nothing if QR generation fails (see
+ * generateQrCodeBuffer) - never throws, so one bad QR payload can't
+ * blank out an otherwise-complete document.
+ */
+export const drawQrCode = async (
+  doc: PDFDocument,
+  data: string,
+  x: number,
+  y: number,
+  size = 80,
+  caption?: string
+): Promise<void> => {
+  const qrBuffer = await generateQrCodeBuffer(data);
+  if (!qrBuffer) return;
+
+  doc.image(qrBuffer, x, y, { width: size, height: size });
+  if (caption) {
+    doc.fontSize(6).fillColor("#94a3b8").text(caption, x - 10, y + size + 2, { width: size + 20, align: "center" });
+  }
+};
+
+/**
  * Builds a PDFDocument that is NOT piped to an HTTP response - instead
  * it accumulates its output in memory and resolves to a single Buffer
  * once the caller calls `doc.end()`.
@@ -97,15 +151,21 @@ export const formatDate = (d: Date): string =>
  * controller store them (e.g. via `StorageProvider.save`) instead of
  * writing directly to that one response.
  */
-export const renderPdfToBuffer = (build: (doc: PDFDocument) => void): Promise<Buffer> => {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 40 });
-    const chunks: Buffer[] = [];
-    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+export const renderPdfToBuffer = async (build: (doc: PDFDocument) => void | Promise<void>): Promise<Buffer> => {
+  const doc = new PDFDocument({ size: "A4", margin: 40 });
+  const chunks: Buffer[] = [];
+  doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+  const donePromise = new Promise<Buffer>((resolve, reject) => {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
-
-    build(doc);
-    doc.end();
   });
+
+  // `build` now draws a QR code (drawQrCode, above), which is async -
+  // await it before calling doc.end() so the QR image is fully written
+  // into the document stream first.
+  await build(doc);
+  doc.end();
+
+  return donePromise;
 };

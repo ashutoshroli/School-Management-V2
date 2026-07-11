@@ -46,6 +46,10 @@ jest.mock("../../services/pdf.service", () => {
     fill: jest.fn().mockReturnThis(),
     moveDown: jest.fn().mockReturnThis(),
     addPage: jest.fn().mockReturnThis(),
+    // drawIdCard (document.controller.ts) now draws a QR code per card
+    // via drawQrCode/doc.image() - the fake doc needs this method too,
+    // or the real qrcode-generation call inside drawQrCode throws.
+    image: jest.fn().mockReturnThis(),
     end: jest.fn(),
     y: 100,
   });
