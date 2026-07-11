@@ -85,6 +85,13 @@ cp .env.example .env
 # - DATABASE_URL (Neon connection string)
 # - GOOGLE_CLIENT_ID & GOOGLE_CLIENT_SECRET
 # - JWT_SECRET (generate a strong random string)
+#
+# Optional (communication integrations - the app runs fine without
+# these, sends will just fail with a clear "not configured" error):
+# - SMS_API_KEY / SMS_TEMPLATE_ID (MSG91 - https://msg91.com)
+# - WHATSAPP_API_KEY (Interakt - https://www.interakt.shop)
+# - FCM_PROJECT_ID / FCM_CLIENT_EMAIL / FCM_PRIVATE_KEY (Firebase
+#   service account JSON, for push notifications)
 ```
 
 ### 3. Database Setup
@@ -129,16 +136,17 @@ After seeding:
 | 4 | Student Attendance (Card-tap + Manual), Exams, Timetable | Done |
 | 5 | Library, Inventory, Transport, Hostel | Done |
 | 6 | Communication (Notices, Messages), Certificates | Done |
-| 6b | SMS/WhatsApp/Email delivery integrations | Pending |
+| 6b | SMS/WhatsApp/Email delivery integrations | Done |
 | 7 | Reports, Analytics, Multi-branch Dashboard | Done |
 | 8 | Production Deployment (Hostinger VPS) | Pending |
 
 | 9 | Online payments (Razorpay checkout + webhook), PDF receipts/ID cards/report cards | Done |
 | 10 | File uploads (student/staff documents, avatars) | Done |
 | 11 | Parent/Student self-service portal (fees, attendance, homework, exams) | Done |
-| 12 | Notifications (real email, SMS/WhatsApp stubs, in-app) | Done |
+| 12 | Notifications (real email, SMS/WhatsApp, push, in-app) | Done |
 | 13 | Automated tests (Jest) + CI (GitHub Actions) | Done |
 | 14 | Public online admission form + inquiry pipeline, Audit log viewer | Done |
+| 15 | Fee reminder automation (defaulter Email/SMS blast) | Done |
 
 > Note: "Done" means the backend API and a corresponding frontend page
 > exist and are functional for local/dev use. It does not imply the
@@ -148,11 +156,23 @@ After seeding:
 
 ### Known limitations / stubs (by design)
 
-- **SMS/WhatsApp notifications** are stub providers that log what would
-  be sent (see `backend/src/services/notification/{sms,whatsapp}Provider.ts`) -
-  no real gateway credentials are wired up. Email (SMTP) is real.
-  Swapping in a real SMS/WhatsApp provider only requires editing those
-  two files.
+- **SMS/WhatsApp/Push notifications** are real integrations (MSG91,
+  Interakt, and Firebase Cloud Messaging respectively - see
+  `backend/src/services/notification/{sms,whatsapp,push}Provider.ts`)
+  but require your own gateway credentials in `.env` to actually send
+  anything; with no credentials set, sends fail fast with a clear
+  "not configured" error and the corresponding `Notification` row is
+  marked `FAILED` (the triggering action, e.g. a fee payment, still
+  succeeds either way). Email (SMTP) is real and unaffected. Swapping
+  to a different SMS/WhatsApp gateway only requires editing those
+  provider files - `notification.service.ts` only depends on each
+  provider's function signature.
+- **Fee reminders** (`POST /api/fees/reminders/send`, exposed via a
+  "Send Reminders" button on Dashboard > Fees > Reports > Defaulters)
+  are triggered manually or by an external scheduler hitting that same
+  endpoint on a cron - no in-process scheduler (e.g. node-cron) is
+  bundled, since that requires the server process to never scale to
+  zero/restart, which doesn't hold on typical PaaS free tiers.
 - **Notification "read" state** isn't tracked server-side (the schema's
   `Notification.status` field tracks delivery, not read/unread) - the
   frontend bell approximates "unread" via a client-side last-seen
@@ -196,6 +216,14 @@ After seeding:
 - DOCX template -> PDF generation (receipts, payslips, TC, ID cards, report cards)
 - Online payment gateway (Razorpay/PayU) for fee collection
 - Role-based access control with dynamic permissions
+- Multi-channel notifications: Email (SMTP, rich HTML templates), SMS
+  (MSG91), WhatsApp (Interakt), and Push (Firebase Cloud Messaging) -
+  all driven through one `notify()`/`notifyParentsOfStudent()` service
+  so every module (fee payments, admissions, reminders) gets delivery
+  tracking and graceful per-channel failure handling for free
+- Automated fee-defaulter reminders (Email + SMS) triggerable on-demand
+  from Dashboard > Fees > Reports, or via an external cron hitting the
+  same API endpoint
 
 ## API Endpoints
 
@@ -226,10 +254,19 @@ Additional route groups are mounted for the modules below - see
 | /hr | Staff attendance, leave, payroll |
 | /academics | Student attendance, timetable, exams, homework, promotion |
 | /facilities | Library, inventory, transport, hostel |
-| /communication | Notices, messages, certificates |
+| /communication | Notices, messages, certificates, notifications, push device registration |
 | /reports | Dashboards, multi-branch summary, analytics, audit log |
 | /parent | Parent/student self-service (linked children, dashboard summary) |
 | /admission | Public admission inquiry form (no auth) + staff review |
+
+Notable additions under `/fees` and `/communication` for the
+communication integrations (Phase 1):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /fees/reminders/send | Send Email+SMS fee reminders to every parent of every defaulting student in the branch |
+| POST | /communication/notifications/devices/register | Register (or re-link) an FCM push token for the current user |
+| DELETE | /communication/notifications/devices/:token | Unregister a push token (e.g. on logout) |
 
 ## Testing & CI
 
@@ -242,8 +279,12 @@ npm run test:coverage # with coverage report
 Tests cover the security-critical branch/student access-control helpers
 (`utils/branchScope.ts`, `utils/studentAccess.ts`), the fee-payment
 validators, the core atomic payment-recording logic in
-`services/feePayment.service.ts`, and a handful of HTTP-level smoke
-tests against the real Express app.
+`services/feePayment.service.ts`, the communication providers
+(`services/notification/{sms,whatsapp,push}Provider.ts` and the shared
+`utils/httpClient.ts`), the fee-reminder defaulter logic
+(`services/feeReminder.service.ts`), the HTML email templates
+(`services/notification/emailTemplates.ts`), and a handful of
+HTTP-level smoke tests against the real Express app.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR to
 `main`:

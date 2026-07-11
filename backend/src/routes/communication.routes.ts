@@ -4,6 +4,7 @@ import { createNotice, getNotices, deleteNotice, togglePin } from "../controller
 import { sendMessage, getConversation, getInbox } from "../controllers/message.controller";
 import { createTemplate, getTemplates, generateCertificate, getGeneratedCertificates } from "../controllers/certificate.controller";
 import { getMyNotifications } from "../controllers/notification.controller";
+import { registerDeviceToken, unregisterDeviceToken } from "../controllers/deviceToken.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 
 const router = Router();
@@ -14,6 +15,8 @@ router.use(authenticate);
 
 // === NOTIFICATIONS (self-service) ===
 router.get("/notifications", getMyNotifications);
+router.post("/notifications/devices/register", registerDeviceToken);
+router.delete("/notifications/devices/:token", unregisterDeviceToken);
 
 // === NOTICES ===
 router.post("/notices", authorize(...STAFF), branchAccess, createNotice);

@@ -132,6 +132,7 @@ model User {
   student      Student?
   parent       Parent?
   permissions  UserPermission[]
+  deviceTokens DeviceToken[]
 }
 
 
@@ -1313,12 +1314,39 @@ enum NotificationChannel {
   WHATSAPP
   EMAIL
   IN_APP
+  PUSH
 }
 
 enum NotificationStatus {
   PENDING
   SENT
   FAILED
+}
+
+// Registered mobile/web push tokens for a user (Phase 1 - Push
+// Notifications). A user can have multiple tokens (e.g. phone + tablet,
+// or a re-installed app generating a new token) - all active tokens
+// for a user receive every push sent to that user. Tokens are looked up
+// by their raw value (not just userId) so re-registering the same
+// physical device/app-install after logout/login updates the existing
+// row instead of creating a duplicate.
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  platform  DevicePlatform
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+  WEB
 }
 
 

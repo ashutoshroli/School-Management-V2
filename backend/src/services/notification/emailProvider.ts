@@ -29,6 +29,10 @@ export interface SendEmailParams {
   to: string;
   subject: string;
   body: string;
+  /** Optional pre-rendered HTML - if omitted, falls back to escaping
+   *  `body` with <br/> line breaks (previous behavior). */
+  html?: string;
+  attachments?: Array<{ filename: string; content: Buffer; contentType?: string }>;
 }
 
 /**
@@ -38,7 +42,7 @@ export interface SendEmailParams {
  * crashing the request that triggered it (e.g. a fee payment should
  * still succeed even if the confirmation email fails to send).
  */
-export const sendEmail = async ({ to, subject, body }: SendEmailParams): Promise<void> => {
+export const sendEmail = async ({ to, subject, body, html, attachments }: SendEmailParams): Promise<void> => {
   if (!isEmailConfigured()) {
     throw new Error("Email is not configured (missing SMTP_HOST/SMTP_USER/SMTP_PASS)");
   }
@@ -48,6 +52,7 @@ export const sendEmail = async ({ to, subject, body }: SendEmailParams): Promise
     to,
     subject,
     text: body,
-    html: `<p>${body.replace(/\n/g, "<br/>")}</p>`,
+    html: html || `<p>${body.replace(/\n/g, "<br/>")}</p>`,
+    attachments,
   });
 };

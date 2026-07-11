@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BarChart3, AlertCircle } from "lucide-react";
+import { BarChart3, AlertCircle, Send } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 
@@ -10,6 +10,22 @@ export default function FeeReportsPage() {
   const [summary, setSummary] = useState<any>(null);
   const [defaulters, setDefaulters] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [sendingReminders, setSendingReminders] = useState(false);
+  const [reminderResult, setReminderResult] = useState<string | null>(null);
+
+  const sendReminders = async () => {
+    setSendingReminders(true);
+    setReminderResult(null);
+    try {
+      const res = await api.post("/fees/reminders/send");
+      const { notified, totalDefaulters } = res.data.data;
+      setReminderResult(`Reminders sent to ${notified} parent(s) across ${totalDefaulters} student(s).`);
+    } catch (err: any) {
+      setReminderResult(err?.response?.data?.message || "Failed to send reminders");
+    } finally {
+      setSendingReminders(false);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -73,7 +89,22 @@ export default function FeeReportsPage() {
         </div>
       ) : tab === "defaulters" && defaulters ? (
         <div>
-          <div className="card mb-4 flex items-center gap-3"><AlertCircle className="h-5 w-5 text-red-500" /><span className="font-medium text-red-700">{defaulters.totalDefaulters} defaulters | Pending: {formatCurrency(defaulters.totalPending)}</span></div>
+          <div className="card mb-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-red-500" />
+              <span className="font-medium text-red-700">{defaulters.totalDefaulters} defaulters | Pending: {formatCurrency(defaulters.totalPending)}</span>
+            </div>
+            <button
+              onClick={sendReminders}
+              disabled={sendingReminders || defaulters.totalDefaulters === 0}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary-600 text-white disabled:opacity-50"
+            >
+              <Send className="h-4 w-4" /> {sendingReminders ? "Sending..." : "Send Reminders (Email + SMS)"}
+            </button>
+          </div>
+          {reminderResult && (
+            <div className="mb-4 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-4 py-2">{reminderResult}</div>
+          )}
           <div className="card overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="border-b bg-gray-50"><th className="px-4 py-3 text-left">Student</th><th className="px-4 py-3 text-left">Class</th><th className="px-4 py-3 text-left">Fee</th><th className="px-4 py-3 text-right">Pending</th><th className="px-4 py-3">Status</th></tr></thead>

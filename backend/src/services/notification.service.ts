@@ -3,14 +3,19 @@ import prisma from "../config/database";
 import { sendEmail } from "./notification/emailProvider";
 import { sendSms } from "./notification/smsProvider";
 import { sendWhatsapp } from "./notification/whatsappProvider";
+import { sendPushToMany } from "./notification/pushProvider";
+import { genericNotificationEmail, EmailTemplateResult } from "./notification/emailTemplates";
 
 export interface NotifyParams {
   userId: string;
   type: NotificationType;
   title: string;
   body: string;
-  /** Defaults to ["EMAIL"] - pass additional channels (SMS/WHATSAPP) explicitly. */
+  /** Defaults to ["EMAIL"] - pass additional channels (SMS/WHATSAPP/PUSH) explicitly. */
   channels?: NotificationChannel[];
+  /** Optional pre-rendered HTML email (see notification/emailTemplates.ts).
+   *  If omitted, a generic templated email using `title`/`body` is used. */
+  emailTemplate?: EmailTemplateResult;
 }
 
 /**
@@ -27,7 +32,14 @@ export interface NotifyParams {
  * etc), and a failed SMS/email must never roll back or fail the
  * primary action that triggered it.
  */
-export const notify = async ({ userId, type, title, body, channels = [NotificationChannel.EMAIL] }: NotifyParams): Promise<void> => {
+export const notify = async ({
+  userId,
+  type,
+  title,
+  body,
+  channels = [NotificationChannel.EMAIL],
+  emailTemplate,
+}: NotifyParams): Promise<void> => {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, phone: true } });
   if (!user) return;
 
@@ -39,10 +51,12 @@ export const notify = async ({ userId, type, title, body, channels = [Notificati
 
       try {
         switch (channel) {
-          case NotificationChannel.EMAIL:
+          case NotificationChannel.EMAIL: {
             if (!user.email) throw new Error("User has no email on file");
-            await sendEmail({ to: user.email, subject: title, body });
+            const tmpl = emailTemplate || genericNotificationEmail({ title, body });
+            await sendEmail({ to: user.email, subject: tmpl.subject, body: tmpl.text, html: tmpl.html });
             break;
+          }
           case NotificationChannel.SMS:
             if (!user.phone) throw new Error("User has no phone on file");
             await sendSms({ to: user.phone, body: `${title}: ${body}` });
@@ -51,6 +65,21 @@ export const notify = async ({ userId, type, title, body, channels = [Notificati
             if (!user.phone) throw new Error("User has no phone on file");
             await sendWhatsapp({ to: user.phone, body: `${title}: ${body}` });
             break;
+          case NotificationChannel.PUSH: {
+            const tokens = await prisma.deviceToken.findMany({ where: { userId }, select: { token: true } });
+            if (tokens.length === 0) throw new Error("User has no registered device tokens");
+            const { sent, failedTokens } = await sendPushToMany(
+              tokens.map((t) => t.token),
+              { title, body }
+            );
+            if (failedTokens.length > 0) {
+              // Stale/uninstalled tokens - remove them so future sends
+              // don't keep retrying a dead token.
+              await prisma.deviceToken.deleteMany({ where: { token: { in: failedTokens } } });
+            }
+            if (sent === 0) throw new Error("Push delivery failed for all registered devices");
+            break;
+          }
           case NotificationChannel.IN_APP:
             // IN_APP notifications ARE the Notification row itself -
             // nothing further to dispatch, just mark as sent.

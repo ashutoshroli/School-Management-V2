@@ -6,6 +6,8 @@ import { canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
 import { getValidatedFeeAssignment, recordFeePayment, notifyPaymentConfirmation } from "../services/feePayment.service";
 import { logAuditFromRequest } from "../services/auditLog.service";
+import { sendFeeReminders } from "../services/feeReminder.service";
+import { resolveBranchId } from "../utils/branchScope";
 
 /**
  * Bulk assign fee structure to all students of a class
@@ -303,5 +305,36 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
     sendSuccess(res, refund, "Refund processed", 201);
   } catch (error) {
     sendError(res, "Failed to process refund", 500, (error as Error).message);
+  }
+};
+
+/**
+ * POST /api/fees/reminders/send
+ * Sends fee-payment reminders (Email + SMS) to every parent of every
+ * student in the branch with a pending/partial/overdue fee assignment.
+ * Triggerable on-demand by branch finance staff, or by an external
+ * scheduler hitting this same endpoint on a cron (see
+ * feeReminder.service.ts's header comment for why no in-process
+ * scheduler is bundled).
+ */
+export const sendFeeRemindersHandler = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    if (!branchId) {
+      sendError(res, "Branch ID required", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
+
+    const result = await sendFeeReminders(branchId);
+
+    logAuditFromRequest(req, "CREATE", "feeReminder", branchId, { newData: result });
+
+    sendSuccess(res, result, `Reminders sent to ${result.notified} parent(s) across ${result.totalDefaulters} defaulting student(s)`);
+  } catch (error) {
+    sendError(res, "Failed to send fee reminders", 500, (error as Error).message);
   }
 };

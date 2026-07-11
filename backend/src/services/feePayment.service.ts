@@ -1,4 +1,4 @@
-import { Prisma, PaymentMode } from "@prisma/client";
+import { Prisma, PaymentMode, NotificationChannel } from "@prisma/client";
 import prisma from "../config/database";
 
 type FeeAssignmentWithStructure = Prisma.FeeAssignmentGetPayload<{
@@ -38,6 +38,13 @@ export const getValidatedFeeAssignment = async (
  * (not from inside recordFeePayment) - notification delivery is a side
  * effect that should never hold open a DB transaction or roll back a
  * successful payment if it fails.
+ *
+ * Sends via EMAIL (rich HTML receipt) and SMS - WhatsApp is
+ * intentionally left out here since a payment confirmation is a
+ * business-initiated message outside any customer session window, and
+ * would need a pre-approved WhatsApp template
+ * (see notification/whatsappProvider.ts's sendWhatsappTemplate) rather
+ * than the free-text path.
  */
 export const notifyPaymentConfirmation = async (
   studentId: string,
@@ -45,14 +52,22 @@ export const notifyPaymentConfirmation = async (
   amount: number,
   receiptNo: string
 ): Promise<void> => {
-  // Lazy import to avoid a circular dependency (notification.service.ts
+  // Lazy imports to avoid a circular dependency (notification.service.ts
   // doesn't depend on this file, but keeping the import local here
   // makes the dependency direction obvious at the call site).
   const { notifyParentsOfStudent } = await import("./notification.service");
+  const { feePaymentReceiptEmail } = await import("./notification/emailTemplates");
+
+  const title = "Fee Payment Received";
+  const body = `We have received a payment of Rs ${amount.toLocaleString("en-IN")} for ${studentName}. Receipt No: ${receiptNo}.`;
+  const emailTemplate = feePaymentReceiptEmail({ studentName, amount, receiptNo, paidAt: new Date() });
+
   await notifyParentsOfStudent(studentId, {
     type: "FEE_PAID",
-    title: "Fee Payment Received",
-    body: `We have received a payment of Rs ${amount.toLocaleString("en-IN")} for ${studentName}. Receipt No: ${receiptNo}.`,
+    title,
+    body,
+    channels: [NotificationChannel.EMAIL, NotificationChannel.SMS],
+    emailTemplate,
   }).catch((err) => console.error("Failed to send fee-payment notification:", err));
 };
 

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { getFeeCategories, createFeeCategory, updateFeeCategory, toggleFeeCategory } from "../controllers/feeCategory.controller";
 import { createFeeStructure, getFeeStructures, updateFeeStructure, deleteFeeStructure } from "../controllers/feeStructure.controller";
-import { bulkAssignFees, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund } from "../controllers/feeCollection.controller";
+import { bulkAssignFees, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund, sendFeeRemindersHandler } from "../controllers/feeCollection.controller";
 import { createRazorpayOrder, verifyRazorpayPayment, razorpayWebhook } from "../controllers/payment.controller";
 import { getPaymentReceiptPdf } from "../controllers/document.controller";
 import { assignDiscount, getStudentDiscounts, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
@@ -71,5 +71,8 @@ router.delete("/discounts/:id", authorize(...ADMIN), deleteDiscount);
 router.get("/reports/daybook", authorize(...FINANCE), getCollectionDayBook);
 router.get("/reports/defaulters", authorize(...FINANCE), getDefaultersList);
 router.get("/reports/class-summary", authorize(...FINANCE), getClassWiseSummary);
+
+// Reminders (Phase 1 - Communication)
+router.post("/reminders/send", authorize(...FINANCE), sendFeeRemindersHandler);
 
 export default router;
