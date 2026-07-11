@@ -1,14 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BarChart3, Users, GraduationCap, IndianRupee, ClipboardCheck, Building2 } from "lucide-react";
+import { BarChart3, Users, GraduationCap, IndianRupee, ClipboardCheck, Building2, AlertTriangle, Download } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 
 export default function ReportsPage() {
-  const [tab, setTab] = useState<"dashboard" | "attendance" | "academic" | "hr" | "branches">("dashboard");
+  const [tab, setTab] = useState<"dashboard" | "attendance" | "academic" | "hr" | "branches" | "attendanceDefaulters">("dashboard");
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [threshold, setThreshold] = useState(75);
 
   const fetchData = async () => {
     setLoading(true);
@@ -16,17 +17,39 @@ export default function ReportsPage() {
       let res;
       if (tab === "dashboard") res = await api.get("/reports/dashboard");
       else if (tab === "attendance") res = await api.get("/reports/attendance-analytics");
+      else if (tab === "attendanceDefaulters") res = await api.get("/reports/attendance-defaulters", { params: { threshold } });
       else if (tab === "academic") res = await api.get("/reports/academic-analytics");
       else if (tab === "hr") res = await api.get("/reports/hr-analytics");
       else res = await api.get("/reports/multi-branch");
       setData(res.data.data);
     } catch {} finally { setLoading(false); }
   };
-  useEffect(() => { fetchData(); }, [tab]);
+  useEffect(() => { fetchData(); }, [tab, threshold]);
+
+  const downloadAttendanceDefaultersCsv = async () => {
+    // The backend's `authenticate` middleware only reads the JWT from
+    // the Authorization header (or a cookie) - not a query param - so
+    // a plain <a href>/window.open navigation can't authenticate.
+    // Fetching as a blob via the authenticated axios client and
+    // triggering a client-side download works around that.
+    const res = await api.get("/reports/attendance-defaulters/export", {
+      params: { threshold },
+      responseType: "blob",
+    });
+    const url = window.URL.createObjectURL(new Blob([res.data]));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `attendance-defaulters-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
 
   const tabs = [
     { key: "dashboard", label: "Overview", icon: BarChart3 },
     { key: "attendance", label: "Attendance", icon: ClipboardCheck },
+    { key: "attendanceDefaulters", label: "At-Risk Students", icon: AlertTriangle },
     { key: "academic", label: "Academic", icon: GraduationCap },
     { key: "hr", label: "HR/Payroll", icon: Users },
     { key: "branches", label: "Multi-Branch", icon: Building2 },
@@ -97,6 +120,66 @@ export default function ReportsPage() {
                     </div></td></tr>
                 ))}
               </tbody></table>
+            </div>
+          )}
+
+          {/* AT-RISK STUDENTS (ATTENDANCE DEFAULTERS) TAB */}
+          {tab === "attendanceDefaulters" && (
+            <div>
+              <div className="card mb-4 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="h-5 w-5 text-amber-500" />
+                  <span className="font-medium text-amber-700">
+                    {data.count ?? data.students?.length ?? 0} student(s) below {threshold}% attendance
+                    {data.workingDays ? ` (out of ${data.workingDays} working day(s) this month)` : ""}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-sm text-gray-600 flex items-center gap-2">
+                    Threshold:
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={threshold}
+                      onChange={(e) => setThreshold(Number(e.target.value))}
+                      className="input-field w-20 py-1"
+                    />%
+                  </label>
+                  <button
+                    onClick={downloadAttendanceDefaultersCsv}
+                    disabled={!data.students?.length}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                  >
+                    <Download className="h-4 w-4" /> Export CSV
+                  </button>
+                </div>
+              </div>
+              <div className="card overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b bg-gray-50">
+                    <th className="px-4 py-3 text-left">Student</th><th className="px-4 py-3 text-left">Class</th>
+                    <th className="px-4 py-3 text-center">Present / Working Days</th><th className="px-4 py-3 text-center">Attendance %</th>
+                  </tr></thead>
+                  <tbody>
+                    {(data.students || []).map((s: any) => (
+                      <tr key={s.studentId} className="border-b">
+                        <td className="px-4 py-3"><p className="font-medium">{s.name}</p><p className="text-xs text-gray-500">{s.phone}</p></td>
+                        <td className="px-4 py-3">{s.className}-{s.sectionName}</td>
+                        <td className="px-4 py-3 text-center">{s.presentDays} / {s.workingDays}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.percentage < 50 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                            {s.percentage}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {(!data.students || data.students.length === 0) && (
+                      <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400">No students below this threshold</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 

@@ -55,6 +55,38 @@ README's "Known limitations").
 **Same verification caveat as Phase 1 applies** - could not run
 `npm install`/`tsc`/`jest` in this sandbox; confirm CI is green.
 
+### ✅ PHASE 5: RFID Attendance - CODE COMPLETE (security-focused)
+
+```
+✓ Self-service device management (create/list/update/rotate-key/delete) - backend/src/controllers/attendanceDevice.controller.ts
+✓ SECURITY FIX: card-tap endpoints now require the device's apiKey
+  (previously only checked deviceId - not a secret, never actually
+  validated as a credential) - backend/src/utils/deviceAuth.ts
+✓ Real-time parent SMS on student card-tap entry/exit
+✓ Regression tests specifically covering the pre-fix vulnerability
+```
+
+**Not done** (deferred - see IMPLEMENTATION_PHASES.md's original Phase 5
+scope): real hardware SDK integration (ZKTeco/ESSL adapters), WebSocket
+push for live dashboard updates, face recognition. This pass focused on
+making the *existing* generic card-tap endpoint actually secure and
+manageable, which was a bigger gap than the hardware-specific adapters.
+
+### ✅ PHASE 6: Analytics & Reports - CODE COMPLETE (subset)
+
+```
+✓ Fee collection trend (daily, zero-filled) - GET /fees/reports/collection-trend
+✓ Payment mode breakdown - GET /fees/reports/payment-mode-breakdown
+✓ Attendance "at-risk students" list (configurable threshold) - GET /reports/attendance-defaulters
+✓ CSV export for both defaulters lists (no new npm dependency - hand-rolled RFC 4180 CSV)
+✓ Frontend: new tabs on Dashboard > Reports and Dashboard > Fees > Reports
+```
+
+**Not done** (deferred): a full drag-and-drop custom report builder,
+predictive/ML analytics, scheduled email delivery of reports - this
+pass covered the two most requested "quick win" analytics views instead
+of the full original Phase 6 scope.
+
 ---
 
 ## 📊 Current Status Summary

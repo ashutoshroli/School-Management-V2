@@ -6,7 +6,7 @@ import { bulkAssignFees, getStudentPendingFees, collectPayment, getStudentPaymen
 import { createRazorpayOrder, verifyRazorpayPayment, razorpayWebhook } from "../controllers/payment.controller";
 import { getPaymentReceiptPdf } from "../controllers/document.controller";
 import { assignDiscount, getStudentDiscounts, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
-import { getCollectionDayBook, getDefaultersList, getClassWiseSummary } from "../controllers/feeReports.controller";
+import { getCollectionDayBook, getDefaultersList, getClassWiseSummary, getFeeCollectionTrend, getPaymentModeBreakdown, exportDefaultersCsv } from "../controllers/feeReports.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import {
@@ -71,6 +71,9 @@ router.delete("/discounts/:id", authorize(...ADMIN), deleteDiscount);
 router.get("/reports/daybook", authorize(...FINANCE), getCollectionDayBook);
 router.get("/reports/defaulters", authorize(...FINANCE), getDefaultersList);
 router.get("/reports/class-summary", authorize(...FINANCE), getClassWiseSummary);
+router.get("/reports/collection-trend", authorize(...FINANCE), getFeeCollectionTrend);
+router.get("/reports/payment-mode-breakdown", authorize(...FINANCE), getPaymentModeBreakdown);
+router.get("/reports/defaulters/export", authorize(...FINANCE), exportDefaultersCsv);
 
 // Reminders (Phase 1 - Communication)
 router.post("/reminders/send", authorize(...FINANCE), sendFeeRemindersHandler);

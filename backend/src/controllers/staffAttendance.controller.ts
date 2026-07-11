@@ -3,6 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
+import { authenticateDevice, extractDeviceApiKey } from "../utils/deviceAuth";
 
 /**
  * Mark staff attendance (manual - admin/HR marks)
@@ -61,19 +62,24 @@ export const bulkMarkAttendance = async (req: AuthRequest, res: Response): Promi
 };
 
 /**
- * Card-tap attendance endpoint (generic device integration)
+ * Card-tap attendance endpoint (generic device integration).
+ *
+ * Deliberately not behind `authenticate` (see deviceAuth.ts) - a
+ * physical RFID reader authenticates via its own apiKey, not a user
+ * JWT. Also scoped to the device's own branch as defense in depth
+ * beyond the apiKey check itself.
  */
 export const cardTapAttendance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { cardId, deviceId, timestamp } = req.body;
 
-    // Validate device
-    const device = await prisma.attendanceDevice.findUnique({ where: { deviceId } });
-    if (!device || !device.isActive) { sendError(res, "Invalid or inactive device", 403); return; }
+    const device = await authenticateDevice(deviceId, extractDeviceApiKey(req), res);
+    if (!device) return;
 
     // Find staff by cardId
     const staff = await prisma.staff.findUnique({ where: { cardId } });
     if (!staff) { sendError(res, "Card not registered to any staff", 404); return; }
+    if (staff.branchId !== device.branchId) { sendError(res, "Card not registered to any staff", 404); return; }
 
     const tapTime = timestamp ? new Date(timestamp) : new Date();
     const today = new Date(tapTime.getFullYear(), tapTime.getMonth(), tapTime.getDate());

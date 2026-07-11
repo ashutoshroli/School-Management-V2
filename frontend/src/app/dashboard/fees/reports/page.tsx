@@ -1,17 +1,31 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BarChart3, AlertCircle, Send } from "lucide-react";
+import { BarChart3, AlertCircle, Send, TrendingUp, Download } from "lucide-react";
 import api from "@/lib/api";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
 
 export default function FeeReportsPage() {
-  const [tab, setTab] = useState<"summary" | "defaulters">("summary");
+  const [tab, setTab] = useState<"summary" | "defaulters" | "trend">("summary");
   const [summary, setSummary] = useState<any>(null);
   const [defaulters, setDefaulters] = useState<any>(null);
+  const [trend, setTrend] = useState<any>(null);
+  const [trendDays, setTrendDays] = useState(30);
   const [loading, setLoading] = useState(true);
   const [sendingReminders, setSendingReminders] = useState(false);
   const [reminderResult, setReminderResult] = useState<string | null>(null);
+
+  const downloadDefaultersCsv = async () => {
+    const res = await api.get("/fees/reports/defaulters/export", { responseType: "blob" });
+    const url = window.URL.createObjectURL(new Blob([res.data]));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `fee-defaulters-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
 
   const sendReminders = async () => {
     setSendingReminders(true);
@@ -33,6 +47,9 @@ export default function FeeReportsPage() {
       if (tab === "summary") {
         const res = await api.get("/fees/reports/class-summary");
         setSummary(res.data.data);
+      } else if (tab === "trend") {
+        const res = await api.get("/fees/reports/collection-trend", { params: { days: trendDays } });
+        setTrend(res.data.data);
       } else {
         const res = await api.get("/fees/reports/defaulters");
         setDefaulters(res.data.data);
@@ -40,7 +57,7 @@ export default function FeeReportsPage() {
     } catch (err) {} finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchData(); }, [tab]);
+  useEffect(() => { fetchData(); }, [tab, trendDays]);
 
   return (
     <div>
@@ -57,6 +74,10 @@ export default function FeeReportsPage() {
         <button onClick={() => setTab("defaulters")}
           className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "defaulters" ? "bg-red-600 text-white" : "bg-gray-100 text-gray-700"}`}>
           Defaulters
+        </button>
+        <button onClick={() => setTab("trend")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${tab === "trend" ? "bg-primary-600 text-white" : "bg-gray-100 text-gray-700"}`}>
+          <TrendingUp className="h-4 w-4" /> Collection Trend
         </button>
       </div>
 
@@ -94,13 +115,22 @@ export default function FeeReportsPage() {
               <AlertCircle className="h-5 w-5 text-red-500" />
               <span className="font-medium text-red-700">{defaulters.totalDefaulters} defaulters | Pending: {formatCurrency(defaulters.totalPending)}</span>
             </div>
-            <button
-              onClick={sendReminders}
-              disabled={sendingReminders || defaulters.totalDefaulters === 0}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary-600 text-white disabled:opacity-50"
-            >
-              <Send className="h-4 w-4" /> {sendingReminders ? "Sending..." : "Send Reminders (Email + SMS)"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={downloadDefaultersCsv}
+                disabled={defaulters.totalDefaulters === 0}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+              >
+                <Download className="h-4 w-4" /> Export CSV
+              </button>
+              <button
+                onClick={sendReminders}
+                disabled={sendingReminders || defaulters.totalDefaulters === 0}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary-600 text-white disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" /> {sendingReminders ? "Sending..." : "Send Reminders (Email + SMS)"}
+              </button>
+            </div>
           </div>
           {reminderResult && (
             <div className="mb-4 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-4 py-2">{reminderResult}</div>
@@ -117,6 +147,44 @@ export default function FeeReportsPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      ) : tab === "trend" && trend ? (
+        <div>
+          <div className="card mb-4 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-sm text-gray-500">Total Collected (last {trend.days} days)</p>
+              <p className="text-xl font-bold text-green-700">{formatCurrency(trend.totalCollected)}</p>
+            </div>
+            <select className="input-field w-auto" value={trendDays} onChange={(e) => setTrendDays(Number(e.target.value))}>
+              <option value={7}>Last 7 days</option>
+              <option value={30}>Last 30 days</option>
+              <option value={90}>Last 90 days</option>
+            </select>
+          </div>
+          <div className="card">
+            <h3 className="font-semibold mb-4">Daily Collection</h3>
+            {/* Plain CSS bar chart - deliberately avoids adding a
+                charting library dependency for a single simple trend
+                view; each bar's height is scaled relative to the
+                max day's collection in the current range. */}
+            <div className="flex items-end gap-1 h-48 overflow-x-auto pb-2">
+              {(() => {
+                const max = Math.max(...trend.trend.map((t: any) => t.amount), 1);
+                return trend.trend.map((t: any) => (
+                  <div key={t.date} className="flex flex-col items-center justify-end h-full min-w-[8px] flex-1 group relative">
+                    <div className="hidden group-hover:block absolute -top-8 bg-gray-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap z-10">
+                      {formatDate(t.date)}: {formatCurrency(t.amount)}
+                    </div>
+                    <div
+                      className={`w-full rounded-t ${t.amount > 0 ? "bg-primary-500" : "bg-gray-100"}`}
+                      style={{ height: `${Math.max((t.amount / max) * 100, 2)}%` }}
+                    />
+                  </div>
+                ));
+              })()}
+            </div>
+            <p className="text-xs text-gray-400 mt-2 text-center">Hover over a bar to see the exact date and amount</p>
           </div>
         </div>
       ) : null}
