@@ -5,14 +5,24 @@ import { Award, Plus, FileDown } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+import { resolveUploadUrl } from "@/lib/uploads";
+
+// Only these three types have a real PDF generator wired up (see
+// backend/src/services/certificateGenerator.service.ts) - ID_CARD has
+// its own dedicated endpoint (per-student "ID Card" button on the
+// student profile page) and CUSTOM has no generic renderer yet.
+const SUPPORTED_TYPES = ["TRANSFER_CERTIFICATE", "BONAFIDE", "CHARACTER"];
 
 export default function CertificatesPage() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [generated, setGenerated] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ templateId: "", studentSearch: "", studentId: "" });
+  const [form, setForm] = useState({ templateId: "", studentSearch: "", studentId: "", purpose: "" });
   const [students, setStudents] = useState<any[]>([]);
+  const [generating, setGenerating] = useState(false);
+
+  const selectedTemplate = templates.find((t) => t.id === form.templateId);
 
   const fetch = async () => {
     setLoading(true);
@@ -32,11 +42,22 @@ export default function CertificatesPage() {
 
   const generate = async () => {
     if (!form.templateId || !form.studentId) { alert("Select template and student"); return; }
+    setGenerating(true);
     try {
-      const res = await api.post("/communication/certificates/generate", { templateId: form.templateId, studentId: form.studentId });
+      const res = await api.post("/communication/certificates/generate", {
+        templateId: form.templateId,
+        studentId: form.studentId,
+        ...(form.purpose ? { purpose: form.purpose } : {}),
+      });
       alert(`Certificate generated! Serial: ${res.data.data.serialNo}`);
-      setShowModal(false); fetch();
-    } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
+      setShowModal(false);
+      setForm({ templateId: "", studentSearch: "", studentId: "", purpose: "" });
+      fetch();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to generate certificate");
+    } finally {
+      setGenerating(false);
+    }
   };
 
   return (
@@ -67,15 +88,20 @@ export default function CertificatesPage() {
           <h3 className="font-semibold mb-3">Generated Certificates ({generated.length})</h3>
           <table className="w-full text-sm">
             <thead><tr className="border-b bg-gray-50">
-              <th className="px-4 py-3 text-left">Serial No</th><th className="px-4 py-3 text-left">Type</th>
+              <th className="px-4 py-3 text-left">Serial No</th><th className="px-4 py-3 text-left">Student</th><th className="px-4 py-3 text-left">Type</th>
               <th className="px-4 py-3 text-left">Date</th><th className="px-4 py-3 text-center">Download</th>
             </tr></thead>
             <tbody>
               {generated.map(c => (
                 <tr key={c.id} className="border-b"><td className="px-4 py-3 font-mono text-xs">{c.serialNo}</td>
+                  <td className="px-4 py-3">{c.student?.user?.name || "-"}</td>
                   <td className="px-4 py-3">{c.template?.name}</td>
                   <td className="px-4 py-3 text-xs">{formatDate(c.createdAt)}</td>
-                  <td className="px-4 py-3 text-center"><a href={c.pdfUrl} className="text-primary-600"><FileDown className="h-4 w-4 mx-auto" /></a></td>
+                  <td className="px-4 py-3 text-center">
+                    <a href={resolveUploadUrl(c.pdfUrl)} target="_blank" rel="noreferrer" className="text-primary-600">
+                      <FileDown className="h-4 w-4 mx-auto" />
+                    </a>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -88,14 +114,28 @@ export default function CertificatesPage() {
           <div><label className="block text-sm font-medium mb-1">Template *</label>
             <select className="input-field" value={form.templateId} onChange={e => setForm({...form, templateId: e.target.value})}>
               <option value="">Select</option>{templates.map(t => <option key={t.id} value={t.id}>{t.name} ({t.type})</option>)}
-            </select></div>
+            </select>
+            {selectedTemplate && !SUPPORTED_TYPES.includes(selectedTemplate.type) && (
+              <p className="text-xs text-amber-600 mt-1">
+                PDF generation for &quot;{selectedTemplate.type}&quot; isn&apos;t available yet - only Transfer Certificate, Bonafide, and Character certificates generate a real PDF today.
+              </p>
+            )}
+          </div>
           <div><label className="block text-sm font-medium mb-1">Student *</label>
             <div className="flex gap-2"><input className="input-field" placeholder="Search student..." value={form.studentSearch} onChange={e => setForm({...form, studentSearch: e.target.value})} onKeyDown={e => e.key === "Enter" && searchStudents()} /><button type="button" onClick={searchStudents} className="btn-secondary text-sm">Find</button></div>
             {students.length > 0 && <div className="mt-2 border rounded max-h-32 overflow-y-auto">{students.map(s => (
               <button key={s.id} onClick={() => { setForm({...form, studentId: s.id, studentSearch: s.user.name}); setStudents([]); }} className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b last:border-0">{s.user.name} ({s.admissionNo})</button>
             ))}</div>}
           </div>
-          <div className="flex justify-end gap-3 pt-4 border-t"><button onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button><button onClick={generate} className="btn-primary">Generate</button></div>
+          {selectedTemplate?.type === "BONAFIDE" && (
+            <div><label className="block text-sm font-medium mb-1">Purpose (optional)</label>
+              <input className="input-field" placeholder="e.g., applying for a passport" value={form.purpose} onChange={e => setForm({...form, purpose: e.target.value})} />
+            </div>
+          )}
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button>
+            <button onClick={generate} disabled={generating} className="btn-primary disabled:opacity-50">{generating ? "Generating..." : "Generate"}</button>
+          </div>
         </div>
       </Modal>
     </div>

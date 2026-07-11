@@ -34,6 +34,27 @@ cd ../db && npm install && npx prisma generate
 **Next priority**: Phase 2 (Certificates & Documents) or Phase 3
 (Mobile Apps) - see below.
 
+### ✅ PHASE 2: Certificates & Documents - CODE COMPLETE
+
+```
+✓ Real TC/Bonafide/Character PDF generation - backend/src/services/certificateGenerator.service.ts
+✓ Public certificate verification (endpoint + frontend page) - GET /communication/certificates/verify/:serialNo
+✓ Staff ID card PDF - GET /staff/:id/id-card
+✓ Batch class ID cards (multi-page PDF) - GET /students/id-cards/batch
+✓ Fixed 2 pre-existing security bugs: generateCertificate had no
+  branch-access check at all; getGeneratedCertificates had no branch
+  filter. Both now properly scoped.
+✓ Unit tests for generators + access control
+```
+
+No new npm dependencies were needed (built on the existing `pdfkit`
+already used for receipts/report cards) - `ID_CARD` and `CUSTOM`
+certificate types still aren't handled by the generic generator (see
+README's "Known limitations").
+
+**Same verification caveat as Phase 1 applies** - could not run
+`npm install`/`tsc`/`jest` in this sandbox; confirm CI is green.
+
 ---
 
 ## 📊 Current Status Summary

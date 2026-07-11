@@ -4,13 +4,7 @@ import { AuthRequest } from "../types";
 import { sendError } from "../utils/response";
 import { canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
-import { startPdfResponse, drawHeader, drawFooter, drawKeyValueRow } from "../services/pdf.service";
-
-const formatMoney = (n: number | string | { toString(): string }): string =>
-  `Rs ${Number(n.toString()).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-
-const formatDate = (d: Date): string =>
-  new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(d);
+import { startPdfResponse, drawHeader, drawFooter, drawKeyValueRow, formatMoney, formatDate } from "../services/pdf.service";
 
 /**
  * GET /api/fees/payments/:id/receipt
@@ -114,6 +108,60 @@ export const getPaymentReceiptPdf = async (req: AuthRequest, res: Response): Pro
   }
 };
 
+// Card dimensions roughly matching a standard ID card (in points,
+// scaled up ~2x for print clarity).
+const ID_CARD_WIDTH = 320;
+const ID_CARD_HEIGHT = 200;
+
+/**
+ * Draws a single ID card (student or staff) at a given position on an
+ * already-started PDFDocument. Shared by getStudentIdCardPdf,
+ * getStaffIdCardPdf, and the batch class-ID-card generator below so all
+ * three produce a visually identical card layout.
+ */
+const drawIdCard = (
+  doc: any,
+  startX: number,
+  startY: number,
+  params: {
+    branchName: string;
+    cardTitle: string;
+    fullName: string;
+    idLabel: string;
+    idValue: string;
+    lines: string[];
+    footerNote: string;
+  }
+) => {
+  const { branchName, cardTitle, fullName, idLabel, idValue, lines, footerNote } = params;
+
+  doc.roundedRect(startX, startY, ID_CARD_WIDTH, ID_CARD_HEIGHT, 10).fillAndStroke("#f8fafc", "#cbd5e1");
+
+  doc.fontSize(13).fillColor("#1e293b").text(branchName, startX + 15, startY + 15, { width: ID_CARD_WIDTH - 30, align: "center" });
+  doc.fontSize(9).fillColor("#64748b").text(cardTitle, startX + 15, startY + 34, { width: ID_CARD_WIDTH - 30, align: "center" });
+
+  doc.moveTo(startX + 15, startY + 52).lineTo(startX + ID_CARD_WIDTH - 15, startY + 52).strokeColor("#cbd5e1").stroke();
+
+  // Placeholder avatar box (actual photo upload is a future
+  // enhancement - once a photo URL is reliably available via the
+  // upload service for every student/staff record, this box can be
+  // replaced with doc.image(photoPath, ...)).
+  doc.roundedRect(startX + 15, startY + 62, 60, 70, 4).fillAndStroke("#e2e8f0", "#cbd5e1");
+  doc.fontSize(7).fillColor("#94a3b8").text("PHOTO", startX + 15, startY + 92, { width: 60, align: "center" });
+
+  let infoY = startY + 65;
+  const infoX = startX + 90;
+  doc.fontSize(11).fillColor("#0f172a").text(fullName, infoX, infoY, { width: ID_CARD_WIDTH - 105 });
+  infoY += 20;
+  doc.fontSize(8).fillColor("#64748b").text(`${idLabel}: ${idValue}`, infoX, infoY); infoY += 13;
+  for (const line of lines) {
+    doc.fontSize(8).fillColor("#64748b").text(line, infoX, infoY);
+    infoY += 13;
+  }
+
+  doc.fontSize(7).fillColor("#94a3b8").text(footerNote, startX + 15, startY + ID_CARD_HEIGHT - 20, { width: ID_CARD_WIDTH - 30, align: "center" });
+};
+
 /**
  * GET /api/students/:id/id-card
  * Streams a printable student ID card PDF (front side, single card
@@ -144,50 +192,144 @@ export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Prom
     }
 
     const doc = startPdfResponse(res, `id-card-${student.admissionNo}.pdf`);
+    const startX = (doc.page.width - ID_CARD_WIDTH) / 2;
 
-    // Card dimensions roughly matching a standard ID card (in points,
-    // scaled up ~2x for print clarity), centered on the A4 page.
-    const cardWidth = 320;
-    const cardHeight = 200;
-    const startX = (doc.page.width - cardWidth) / 2;
-    const startY = 150;
+    const lines = [`Class: ${student.class?.name || "-"} - ${student.section?.name || "-"}`];
+    if (student.rollNo) lines.push(`Roll No: ${student.rollNo}`);
+    if (student.bloodGroup) lines.push(`Blood Group: ${student.bloodGroup}`);
 
-    doc.roundedRect(startX, startY, cardWidth, cardHeight, 10).fillAndStroke("#f8fafc", "#cbd5e1");
-
-    doc.fontSize(13).fillColor("#1e293b").text(student.branch.name, startX + 15, startY + 15, { width: cardWidth - 30, align: "center" });
-    doc.fontSize(9).fillColor("#64748b").text("STUDENT IDENTITY CARD", startX + 15, startY + 34, { width: cardWidth - 30, align: "center" });
-
-    doc.moveTo(startX + 15, startY + 52).lineTo(startX + cardWidth - 15, startY + 52).strokeColor("#cbd5e1").stroke();
-
-    // Placeholder avatar box (actual photo upload is Phase 3 - once a
-    // student photo URL is available via the upload service, this box
-    // can be replaced with doc.image(photoPath, ...)).
-    doc.roundedRect(startX + 15, startY + 62, 60, 70, 4).fillAndStroke("#e2e8f0", "#cbd5e1");
-    doc.fontSize(7).fillColor("#94a3b8").text("PHOTO", startX + 15, startY + 92, { width: 60, align: "center" });
-
-    let infoY = startY + 65;
-    const infoX = startX + 90;
-    doc.fontSize(11).fillColor("#0f172a").text(student.user.name, infoX, infoY, { width: cardWidth - 105 });
-    infoY += 20;
-    doc.fontSize(8).fillColor("#64748b").text(`Admission No: ${student.admissionNo}`, infoX, infoY); infoY += 13;
-    doc.fontSize(8).fillColor("#64748b").text(`Class: ${student.class?.name || "-"} - ${student.section?.name || "-"}`, infoX, infoY); infoY += 13;
-    if (student.rollNo) {
-      doc.fontSize(8).fillColor("#64748b").text(`Roll No: ${student.rollNo}`, infoX, infoY); infoY += 13;
-    }
-    if (student.bloodGroup) {
-      doc.fontSize(8).fillColor("#64748b").text(`Blood Group: ${student.bloodGroup}`, infoX, infoY);
-    }
-
-    doc.fontSize(7).fillColor("#94a3b8").text(
-      "If found, please return to the school office.",
-      startX + 15,
-      startY + cardHeight - 20,
-      { width: cardWidth - 30, align: "center" }
-    );
+    drawIdCard(doc, startX, 150, {
+      branchName: student.branch.name,
+      cardTitle: "STUDENT IDENTITY CARD",
+      fullName: student.user.name,
+      idLabel: "Admission No",
+      idValue: student.admissionNo,
+      lines,
+      footerNote: "If found, please return to the school office.",
+    });
 
     doc.end();
   } catch (error) {
     sendError(res, "Failed to generate ID card", 500, (error as Error).message);
+  }
+};
+
+/**
+ * GET /api/staff/:id/id-card
+ * Streams a printable staff ID card PDF, same layout convention as the
+ * student ID card above.
+ */
+export const getStaffIdCardPdf = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const staff = await prisma.staff.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, name: true } },
+        branch: { select: { name: true } },
+      },
+    });
+
+    if (!staff) {
+      sendError(res, "Staff not found", 404);
+      return;
+    }
+
+    // Staff can download their own card; branch admin staff can
+    // download any card within their branch.
+    const isSelf = req.user?.userId === staff.user.id;
+    if (!canAccessBranch(req, staff.branchId) && !isSelf) {
+      sendError(res, "Staff not found", 404);
+      return;
+    }
+
+    const doc = startPdfResponse(res, `staff-id-card-${staff.employeeId}.pdf`);
+    const startX = (doc.page.width - ID_CARD_WIDTH) / 2;
+
+    drawIdCard(doc, startX, 150, {
+      branchName: staff.branch.name,
+      cardTitle: "STAFF IDENTITY CARD",
+      fullName: staff.user.name,
+      idLabel: "Employee ID",
+      idValue: staff.employeeId,
+      lines: [`Designation: ${staff.designation}`, `Department: ${staff.department}`],
+      footerNote: "If found, please return to the school office.",
+    });
+
+    doc.end();
+  } catch (error) {
+    sendError(res, "Failed to generate ID card", 500, (error as Error).message);
+  }
+};
+
+/**
+ * GET /api/students/id-cards/batch?classId=&sectionId=
+ * Streams a single multi-page PDF containing one ID card per page for
+ * every active student in the given class (optionally narrowed to one
+ * section) - lets office staff print an entire class's cards in one
+ * job instead of downloading each student's card individually.
+ * Branch-admin/teacher only (bulk PII export), unlike the single-card
+ * endpoint which self-service students/parents can also hit.
+ */
+export const getClassIdCardsBatchPdf = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { classId, sectionId } = req.query as { classId?: string; sectionId?: string };
+    if (!classId) {
+      sendError(res, "classId query parameter is required", 400);
+      return;
+    }
+
+    const cls = await prisma.class.findUnique({ where: { id: classId }, select: { branchId: true, name: true } });
+    if (!cls) {
+      sendError(res, "Class not found", 404);
+      return;
+    }
+    if (!canAccessBranch(req, cls.branchId)) {
+      sendError(res, "Class not found", 404);
+      return;
+    }
+
+    const students = await prisma.student.findMany({
+      where: { classId, ...(sectionId ? { sectionId } : {}), isActive: true },
+      include: {
+        user: { select: { name: true } },
+        class: { select: { name: true } },
+        section: { select: { name: true } },
+        branch: { select: { name: true } },
+      },
+      orderBy: [{ section: { name: "asc" } }, { rollNo: "asc" }],
+    });
+
+    if (students.length === 0) {
+      sendError(res, "No active students found for this class/section", 404);
+      return;
+    }
+
+    const doc = startPdfResponse(res, `id-cards-${cls.name.replace(/\s+/g, "-")}.pdf`);
+    const startX = (doc.page.width - ID_CARD_WIDTH) / 2;
+
+    students.forEach((student, index) => {
+      if (index > 0) doc.addPage();
+
+      const lines = [`Class: ${student.class?.name || "-"} - ${student.section?.name || "-"}`];
+      if (student.rollNo) lines.push(`Roll No: ${student.rollNo}`);
+      if (student.bloodGroup) lines.push(`Blood Group: ${student.bloodGroup}`);
+
+      drawIdCard(doc, startX, 150, {
+        branchName: student.branch.name,
+        cardTitle: "STUDENT IDENTITY CARD",
+        fullName: student.user.name,
+        idLabel: "Admission No",
+        idValue: student.admissionNo,
+        lines,
+        footerNote: "If found, please return to the school office.",
+      });
+    });
+
+    doc.end();
+  } catch (error) {
+    sendError(res, "Failed to generate batch ID cards", 500, (error as Error).message);
   }
 };
 

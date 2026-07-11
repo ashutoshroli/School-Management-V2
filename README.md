@@ -147,6 +147,7 @@ After seeding:
 | 13 | Automated tests (Jest) + CI (GitHub Actions) | Done |
 | 14 | Public online admission form + inquiry pipeline, Audit log viewer | Done |
 | 15 | Fee reminder automation (defaulter Email/SMS blast) | Done |
+| 16 | Real certificate generation (TC/Bonafide/Character PDFs), staff & batch ID cards, public certificate verification | Done |
 
 > Note: "Done" means the backend API and a corresponding frontend page
 > exist and are functional for local/dev use. It does not imply the
@@ -177,10 +178,17 @@ After seeding:
   `Notification.status` field tracks delivery, not read/unread) - the
   frontend bell approximates "unread" via a client-side last-seen
   timestamp.
-- **Certificate generation** (Transfer Certificate, Bonafide, etc. via
-  `certificate.controller.ts`) is still a placeholder that stores a
-  fake PDF URL - only the fee-receipt/ID-card/report-card PDFs (added
-  as part of this work) generate real PDFs.
+- **Certificate generation** (Transfer Certificate, Bonafide, Character
+  via `certificate.controller.ts` +
+  `services/certificateGenerator.service.ts`) now renders and persists
+  real PDFs (PDFKit, same approach as the fee-receipt/ID-card/
+  report-card generators - no DOCX template/LibreOffice dependency).
+  The `ID_CARD` and `CUSTOM` `CertificateType`s are **not** handled by
+  this generator: `ID_CARD` has its own dedicated endpoints
+  (`GET /students/:id/id-card`, `GET /staff/:id/id-card`,
+  `GET /students/id-cards/batch`), and `CUSTOM` has no generic renderer
+  yet - generating either via `POST /communication/certificates/generate`
+  returns a 400 with a clear message rather than a fake PDF.
 - File uploads are stored on local disk by default (see
   `backend/src/services/storage.service.ts`'s `StorageProvider`
   interface) - swap in an S3/GCS-backed implementation for production
@@ -224,6 +232,10 @@ After seeding:
 - Automated fee-defaulter reminders (Email + SMS) triggerable on-demand
   from Dashboard > Fees > Reports, or via an external cron hitting the
   same API endpoint
+- Real PDF certificate generation (Transfer/Bonafide/Character) with a
+  public, no-login verification page/endpoint by serial number, plus
+  staff ID cards and one-click batch ID-card printing for an entire
+  class/section
 
 ## API Endpoints
 
@@ -268,6 +280,19 @@ communication integrations (Phase 1):
 | POST | /communication/notifications/devices/register | Register (or re-link) an FCM push token for the current user |
 | DELETE | /communication/notifications/devices/:token | Unregister a push token (e.g. on logout) |
 
+Notable additions for real certificate/ID-card generation (Phase 2):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /communication/certificates/generate | Generate a real PDF (TC/Bonafide/Character), persisted + a `GeneratedCertificate` row created |
+| GET | /communication/certificates/verify/:serialNo | **Public, no auth** - verify a certificate's authenticity by serial number |
+| GET | /staff/:id/id-card | Streams a printable staff ID card PDF (own card, or any card if branch-admin staff) |
+| GET | /students/id-cards/batch?classId=&sectionId= | Streams a multi-page PDF with one ID card per active student in a class/section |
+
+The frontend's `/verify-certificate/[serialNo]` page (also public, no
+login) is the human-facing counterpart to the verify endpoint above -
+it's the URL printed on every generated certificate's footer.
+
 ## Testing & CI
 
 ```bash
@@ -283,7 +308,11 @@ validators, the core atomic payment-recording logic in
 (`services/notification/{sms,whatsapp,push}Provider.ts` and the shared
 `utils/httpClient.ts`), the fee-reminder defaulter logic
 (`services/feeReminder.service.ts`), the HTML email templates
-(`services/notification/emailTemplates.ts`), and a handful of
+(`services/notification/emailTemplates.ts`), the certificate PDF
+generators (`services/certificateGenerator.service.ts` - these render
+real PDFs via pdfkit rather than mocking it, verifying well-formed
+output), the certificate/ID-card controllers' branch-access rules
+(`controllers/{certificate,document}.controller.ts`), and a handful of
 HTTP-level smoke tests against the real Express app.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR to
