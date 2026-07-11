@@ -191,4 +191,77 @@ describe("student.controller - createStudent", () => {
     // starting with "NORT".
     expect(capturedAdmissionNo).not.toBe("NORT-00001");
   });
+
+  // BUG FIX: Student.cardId is an OPTIONAL @unique column. The "New
+  // Student Admission" form always sends cardId: "" when the RFID
+  // field is left blank (the common case - most schools don't use
+  // RFID). An empty string is a real, distinct value to Postgres
+  // (unlike NULL, which @unique permits any number of), so the FIRST
+  // student admitted with a blank card ID succeeded and every
+  // subsequent one crashed on a unique-constraint violation on
+  // cardId: "" - this is the actual root cause behind repeated
+  // "Failed to add student" reports. Verifies the create payload sent
+  // to Prisma has cardId omitted/undefined (-> written as NULL), never
+  // the literal empty string, whenever the client sends "".
+  it("BUG FIX: normalizes a blank cardId (\"\") to undefined instead of writing an empty string", async () => {
+    let capturedCardId: string | null | undefined = "not-set";
+    (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) => {
+      const tx = {
+        branch: prisma.branch,
+        student: {
+          ...prisma.student,
+          create: jest.fn().mockImplementation(({ data }: any) => {
+            capturedCardId = data.cardId;
+            return Promise.resolve({ id: "student-1", ...data });
+          }),
+        },
+        user: {
+          create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: "user-1", ...data })),
+          findUnique: jest.fn().mockResolvedValue(null),
+        },
+        parent: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        studentParent: { create: jest.fn().mockResolvedValue({}) },
+      };
+      return callback(tx);
+    });
+
+    const req = makeReq({ body: { ...baseBody, cardId: "" } });
+    const res = makeMockRes();
+
+    await createStudent(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(capturedCardId).toBeUndefined();
+  });
+
+  it("preserves a real, non-blank cardId value", async () => {
+    let capturedCardId: string | null | undefined = "not-set";
+    (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) => {
+      const tx = {
+        branch: prisma.branch,
+        student: {
+          ...prisma.student,
+          create: jest.fn().mockImplementation(({ data }: any) => {
+            capturedCardId = data.cardId;
+            return Promise.resolve({ id: "student-1", ...data });
+          }),
+        },
+        user: {
+          create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: "user-1", ...data })),
+          findUnique: jest.fn().mockResolvedValue(null),
+        },
+        parent: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        studentParent: { create: jest.fn().mockResolvedValue({}) },
+      };
+      return callback(tx);
+    });
+
+    const req = makeReq({ body: { ...baseBody, cardId: "RFID-12345" } });
+    const res = makeMockRes();
+
+    await createStudent(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(capturedCardId).toBe("RFID-12345");
+  });
 });

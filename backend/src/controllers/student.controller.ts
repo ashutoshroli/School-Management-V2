@@ -67,6 +67,19 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    // BUG FIX: Student.cardId is an OPTIONAL @unique column (RFID Card
+    // ID) - but the "New Student Admission" form always sends
+    // cardId: "" when the field is left blank (which is the common
+    // case; most schools don't use RFID). An empty string is a real,
+    // distinct value to Postgres (unlike NULL, which @unique always
+    // allows any number of), so the FIRST student admitted with a
+    // blank card ID succeeded, and every subsequent one crashed on a
+    // unique-constraint violation on cardId: "" - surfacing as a
+    // generic "Failed to create student" with no indication why.
+    // Normalize a blank cardId to undefined (omitted -> Prisma writes
+    // NULL) so any number of students can have "no card assigned yet".
+    const normalizedCardId = cardId && cardId.trim() !== "" ? cardId : undefined;
+
     // SAFETY: admission creates a User + Student + (optionally) two more
     // Users/Parents + StudentParent links across several awaited calls.
     // Without a transaction, a failure partway through (e.g. mother's
@@ -118,7 +131,7 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
           state,
           pincode,
           previousSchool,
-          cardId,
+          cardId: normalizedCardId,
           admissionDate: new Date(),
           isActive: true,
         },
@@ -377,7 +390,11 @@ export const updateStudent = async (req: AuthRequest, res: Response): Promise<vo
         ...(city !== undefined && { city }),
         ...(state !== undefined && { state }),
         ...(pincode !== undefined && { pincode }),
-        ...(cardId !== undefined && { cardId }),
+        // BUG FIX: same empty-string-collides-with-empty-string issue
+        // as createStudent above - an edit that clears the RFID Card ID
+        // field must write NULL, not "", or it starts colliding with
+        // every OTHER student who has never had a card assigned.
+        ...(cardId !== undefined && { cardId: cardId && cardId.trim() !== "" ? cardId : null }),
         ...(isActive !== undefined && { isActive }),
       },
     });

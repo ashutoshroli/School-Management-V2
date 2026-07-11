@@ -107,6 +107,18 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
     const count = await prisma.staff.count({ where: { branchId } });
     const employeeId = `EMP-${branch.code}-${String(count + 1).padStart(4, "0")}`;
 
+    // BUG FIX: Staff.cardId is an OPTIONAL @unique column (RFID Card
+    // ID) - but the "Add Staff" form always sends cardId: "" when the
+    // field is left blank (the common case). An empty string is a
+    // real, distinct value to Postgres (unlike NULL, which @unique
+    // always allows any number of), so the FIRST staff member created
+    // with a blank card ID succeeded, and every subsequent one crashed
+    // on a unique-constraint violation on cardId: "" - surfacing as a
+    // generic "Failed to create staff" with no indication why.
+    // Normalize a blank cardId to undefined (omitted -> Prisma writes
+    // NULL) so any number of staff can have "no card assigned yet".
+    const normalizedCardId = cardId && cardId.trim() !== "" ? cardId : undefined;
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password || "Staff@123", 12);
 
@@ -144,7 +156,7 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
         city,
         state,
         pincode,
-        cardId,
+        cardId: normalizedCardId,
         isActive: true,
       },
     });
@@ -285,7 +297,11 @@ export const updateStaff = async (req: AuthRequest, res: Response): Promise<void
         ...(city !== undefined && { city }),
         ...(state !== undefined && { state }),
         ...(pincode !== undefined && { pincode }),
-        ...(cardId !== undefined && { cardId }),
+        // BUG FIX: same empty-string-collides-with-empty-string issue
+        // as createStaff above - an edit that clears the RFID Card ID
+        // field must write NULL, not "", or it starts colliding with
+        // every OTHER staff member who has never had a card assigned.
+        ...(cardId !== undefined && { cardId: cardId && cardId.trim() !== "" ? cardId : null }),
         ...(isActive !== undefined && { isActive }),
         ...(leavingDate && { leavingDate: new Date(leavingDate) }),
       },

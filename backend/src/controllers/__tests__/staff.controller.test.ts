@@ -167,6 +167,36 @@ describe("staff.controller - createStaff", () => {
     expect(staffCreateCall.data.branchId).toBe("branch-target");
   });
 
+  // BUG FIX: Staff.cardId is an OPTIONAL @unique column (RFID Card ID).
+  // The "Add Staff" form always sends cardId: "" when the field is
+  // left blank (the common case). An empty string is a real, distinct
+  // value to Postgres (unlike NULL, which @unique permits any number
+  // of), so the FIRST staff member created with a blank card ID
+  // succeeded and every subsequent one crashed on a unique-constraint
+  // violation on cardId: "" - this is the actual root cause behind
+  // repeated "Failed to add staff" reports.
+  it("BUG FIX: normalizes a blank cardId (\"\") to undefined instead of writing an empty string", async () => {
+    const req = makeReq({ body: { ...baseBody, cardId: "" } });
+    const res = makeMockRes();
+
+    await createStaff(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const staffCreateCall = (prisma.staff.create as jest.Mock).mock.calls[0][0];
+    expect(staffCreateCall.data.cardId).toBeUndefined();
+  });
+
+  it("preserves a real, non-blank cardId value", async () => {
+    const req = makeReq({ body: { ...baseBody, cardId: "RFID-99999" } });
+    const res = makeMockRes();
+
+    await createStaff(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const staffCreateCall = (prisma.staff.create as jest.Mock).mock.calls[0][0];
+    expect(staffCreateCall.data.cardId).toBe("RFID-99999");
+  });
+
   // SECURITY: `role` used to be taken straight from req.body with zero
   // validation - a Branch Admin could self-escalate by sending
   // role: "SUPER_ADMIN" (or "BRANCH_ADMIN") in an otherwise-normal
