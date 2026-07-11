@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle, DatabaseZap, Plus, Trash2 } from "lucide-react";
+import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle, DatabaseZap, Plus, Trash2, GraduationCap, Pencil } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { resolveUploadUrl } from "@/lib/uploads";
@@ -172,6 +172,83 @@ export default function SettingsPage() {
     }
   };
 
+  // Grade System (grading scale bands, e.g. CBSE A1: 91-100, A2: 81-90,
+  // ...) - system-wide, not branch-scoped (GradeSystem has no branchId
+  // in the schema), so shown for any admin rather than gated on branch.
+  // enterMarks (exam.controller.ts) auto-looks-up a grade from these
+  // bands once at least one exists, falling back to the original
+  // hardcoded A+/A/B+/.../F scale otherwise.
+  const [gradeBands, setGradeBands] = useState<any[]>([]);
+  const [gradeBandsLoading, setGradeBandsLoading] = useState(false);
+  const [showGradeModal, setShowGradeModal] = useState(false);
+  const [editingBand, setEditingBand] = useState<any>(null);
+  const [gradeForm, setGradeForm] = useState({ name: "", minMarks: "", maxMarks: "", grade: "", gradePoint: "" });
+  const [savingBand, setSavingBand] = useState(false);
+  const [gradeError, setGradeError] = useState("");
+
+  const fetchGradeBands = async () => {
+    if (!isAdmin) return;
+    setGradeBandsLoading(true);
+    try {
+      const res = await api.get("/academics/grade-system");
+      setGradeBands(res.data.data || []);
+    } catch {
+      setGradeBands([]);
+    } finally {
+      setGradeBandsLoading(false);
+    }
+  };
+
+  const openAddBand = () => {
+    setEditingBand(null);
+    setGradeForm({ name: "", minMarks: "", maxMarks: "", grade: "", gradePoint: "" });
+    setGradeError("");
+    setShowGradeModal(true);
+  };
+
+  const openEditBand = (b: any) => {
+    setEditingBand(b);
+    setGradeForm({ name: b.name, minMarks: String(b.minMarks), maxMarks: String(b.maxMarks), grade: b.grade, gradePoint: b.gradePoint !== null ? String(b.gradePoint) : "" });
+    setGradeError("");
+    setShowGradeModal(true);
+  };
+
+  const handleSaveBand = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingBand(true);
+    setGradeError("");
+    const payload: any = {
+      name: gradeForm.name,
+      minMarks: parseFloat(gradeForm.minMarks),
+      maxMarks: parseFloat(gradeForm.maxMarks),
+      grade: gradeForm.grade,
+    };
+    if (gradeForm.gradePoint) payload.gradePoint = parseFloat(gradeForm.gradePoint);
+    try {
+      if (editingBand) {
+        await api.put(`/academics/grade-system/${editingBand.id}`, payload);
+      } else {
+        await api.post("/academics/grade-system", payload);
+      }
+      setShowGradeModal(false);
+      await fetchGradeBands();
+    } catch (err: any) {
+      setGradeError(err.response?.data?.message || "Failed to save grade band");
+    } finally {
+      setSavingBand(false);
+    }
+  };
+
+  const handleDeleteBand = async (b: any) => {
+    if (!confirm(`Delete grade band "${b.grade}" (${b.minMarks}-${b.maxMarks})?`)) return;
+    try {
+      await api.delete(`/academics/grade-system/${b.id}`);
+      fetchGradeBands();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to delete grade band");
+    }
+  };
+
   const fetchProfile = async () => {
     setLoading(true);
     setError(null);
@@ -206,6 +283,7 @@ export default function SettingsPage() {
     fetchProfile();
     fetchOwnBranch();
     fetchDemoStatus();
+    fetchGradeBands();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -397,6 +475,59 @@ export default function SettingsPage() {
               <a href="/dashboard/branches" className="inline-block mt-4 text-sm font-medium text-primary-600 hover:underline">
                 Manage branches &rarr;
               </a>
+            </div>
+          )}
+
+          {/* Grade System (grading scale) management - admins only */}
+          {isAdmin && (
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                <GraduationCap className="h-5 w-5 text-indigo-600" /> Grade System
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Configure the grading scale (e.g. CBSE A1: 91-100, A2: 81-90, ...) used to auto-assign a grade when
+                marks are entered. If no bands are configured, the system falls back to a default A+/A/B+/B/C/D/E/F
+                scale.
+              </p>
+
+              {gradeBandsLoading ? (
+                <div className="flex justify-center py-6">
+                  <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+                </div>
+              ) : (
+                <div className="overflow-x-auto mb-4">
+                  <table className="w-full text-sm">
+                    <thead><tr className="border-b bg-gray-50">
+                      <th className="px-3 py-2 text-left">Name</th>
+                      <th className="px-3 py-2 text-center">Range (%)</th>
+                      <th className="px-3 py-2 text-center">Grade</th>
+                      <th className="px-3 py-2 text-center">Grade Point</th>
+                      <th className="px-3 py-2 text-center">Actions</th>
+                    </tr></thead>
+                    <tbody>
+                      {gradeBands.map((b) => (
+                        <tr key={b.id} className="border-b">
+                          <td className="px-3 py-2">{b.name}</td>
+                          <td className="px-3 py-2 text-center">{b.minMarks}-{b.maxMarks}</td>
+                          <td className="px-3 py-2 text-center font-semibold text-primary-700">{b.grade}</td>
+                          <td className="px-3 py-2 text-center">{b.gradePoint ?? "-"}</td>
+                          <td className="px-3 py-2 text-center">
+                            <div className="flex justify-center gap-2">
+                              <button onClick={() => openEditBand(b)} className="text-primary-600 hover:text-primary-700" title="Edit"><Pencil className="h-4 w-4" /></button>
+                              <button onClick={() => handleDeleteBand(b)} className="text-red-500 hover:text-red-700" title="Delete"><Trash2 className="h-4 w-4" /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {gradeBands.length === 0 && <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">No grade bands configured - using default scale</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <button onClick={openAddBand} className="btn-secondary flex items-center gap-2 text-sm">
+                <Plus className="h-4 w-4" /> Add Grade Band
+              </button>
             </div>
           )}
 
@@ -635,6 +766,43 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={showGradeModal} onClose={() => setShowGradeModal(false)} title={editingBand ? "Edit Grade Band" : "Add Grade Band"} size="md">
+        <form onSubmit={handleSaveBand} className="space-y-4">
+          {gradeError && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{gradeError}</div>}
+          <div>
+            <label className="block text-sm font-medium mb-1">Name *</label>
+            <input className="input-field" value={gradeForm.name} onChange={(e) => setGradeForm({ ...gradeForm, name: e.target.value })} placeholder="e.g. CBSE Grading" required />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Min Marks (%) *</label>
+              <input type="number" min={0} max={100} step="0.01" className="input-field" value={gradeForm.minMarks} onChange={(e) => setGradeForm({ ...gradeForm, minMarks: e.target.value })} required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Marks (%) *</label>
+              <input type="number" min={0} max={100} step="0.01" className="input-field" value={gradeForm.maxMarks} onChange={(e) => setGradeForm({ ...gradeForm, maxMarks: e.target.value })} required />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Grade *</label>
+              <input className="input-field" value={gradeForm.grade} onChange={(e) => setGradeForm({ ...gradeForm, grade: e.target.value })} placeholder="e.g. A1" required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Grade Point</label>
+              <input type="number" min={0} step="0.1" className="input-field" value={gradeForm.gradePoint} onChange={(e) => setGradeForm({ ...gradeForm, gradePoint: e.target.value })} placeholder="e.g. 10" />
+            </div>
+          </div>
+          <p className="text-xs text-gray-400">The range must not overlap any other configured band.</p>
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={() => setShowGradeModal(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={savingBand} className="btn-primary disabled:opacity-50">
+              {savingBand ? "Saving..." : editingBand ? "Save Changes" : "Create"}
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

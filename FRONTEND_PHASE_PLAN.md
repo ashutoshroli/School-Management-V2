@@ -287,16 +287,69 @@ check" pattern as earlier phases):**
 
 ---
 
-## Phase 6: Grade System + Leave Types (new backend + UI) 🟢 (Items #5/#17, #15/#18)
+## Phase 6: Grade System + Leave Types ✅ COMPLETED (Items #5/#17, #15/#18)
 
 **Priority:** MEDIUM (only phase needing new backend controllers)
-**Backend:** Needs 2 new small controllers (`gradeSystem.controller.ts`; additions to `leave.controller.ts`)
+**Status:** ✅ **DONE**
 
-### Scope:
-- Backend: `gradeSystem.controller.ts` (create/list/update/delete grade bands per branch) + routes + validator
-- Backend: `createLeaveType`/`updateLeaveType`/`deleteLeaveType` added to `leave.controller.ts` + routes + validator
-- Frontend: Settings-page cards (or dedicated tabs) to manage both
-- Optional stretch: wire `enterMarks`/`getExamResults` to auto-lookup grade from the applicable band
+### What was actually done:
+
+**Correction discovered during this phase:** the original plan assumed
+`GradeSystem`/`LeaveType` would need branch-scoped CRUD "per branch" like
+almost everything else in this codebase - but neither model has a `branchId`
+field in the schema (`db/prisma/schema.prisma`). Both are genuinely
+system-wide config shared by every branch (same as `getLeaveTypes`'s existing
+read endpoint). Built both as ADMIN-only (SUPER_ADMIN/BRANCH_ADMIN) global
+config instead of branch-scoped - simpler and matches what the schema
+actually supports.
+
+**Backend - new `gradeSystem.controller.ts`:**
+- `getGradeBands` (any authenticated user - needed to show a grade on a
+  report card/results view), `createGradeBand`/`updateGradeBand`/`deleteGradeBand` (ADMIN-only)
+- **Data-integrity guard:** a new/updated band's `[minMarks, maxMarks]` range
+  is rejected if it overlaps any other existing band - otherwise a single
+  mark percentage could match two different grades, making grade lookup
+  ambiguous. `updateGradeBand` excludes itself from the overlap check.
+- New routes under `/academics/grade-system` (GET/POST/PUT/:id/DELETE/:id) +
+  `gradeSystem.validator.ts`.
+
+**Backend - Leave Type CRUD added to `leave.controller.ts`:**
+- `createLeaveType`/`updateLeaveType`/`deleteLeaveType` (ADMIN-only), plus
+  `getLeaveTypes` gained an `includeInactive=true` param for the new
+  management UI (existing callers - the leave-apply form, balance lookups -
+  are unaffected, still default to active-only).
+- **Data-integrity guard:** `deleteLeaveType` is blocked if any
+  `LeaveApplication` already references it (same "block delete, don't
+  cascade" convention as `deleteFeeCategory`/`deleteExam`) - deactivate via
+  `updateLeaveType` instead if the goal is just to stop new applications.
+- New routes under `/hr/leave/types` (POST/PUT/:id/DELETE/:id) + additions to
+  `leave.validator.ts`.
+
+**Optional stretch (done):** `enterMarks` (`exam.controller.ts`) now looks up
+the grade from the configured `GradeSystem` bands (fetched once per batch,
+not per student) when at least one band exists, falling back to the original
+hardcoded A+/A/B+/B/C/D/E/F scale otherwise - so existing deployments that
+never touch Grade System settings keep their exact previous behavior.
+
+**Frontend:**
+- New "Leave Types" admin-only tab on `/dashboard/leaves` - table of all
+  types (name, code, max days, carry-forward, active/inactive toggle) +
+  Add/Edit modal. Code is locked after creation (it's the stable lookup key).
+- New "Grade System" card on `/dashboard/settings` (admin-only) - table of
+  configured bands + Add/Edit modal, with a note that the range must not
+  overlap any other band.
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**63 suites / 600 tests**, up from
+  61/579 - zero regressions) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean,
+  `/dashboard/leaves` (2.31kB->5.5kB) and `/dashboard/settings` (8.99kB->10.4kB) build fine
+
+### Deliverables:
+- ✅ Grade System bands manageable from Settings (was zero backend/UI before)
+- ✅ Leave Types manageable from the Leaves page (was seed-script-only before)
+- ✅ `enterMarks` auto-grade lookup now configurable instead of hardcoded
+- ✅ All existing + new tests passing, both builds clean
 
 ---
 

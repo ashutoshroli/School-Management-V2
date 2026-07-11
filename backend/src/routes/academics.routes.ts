@@ -3,6 +3,7 @@ import { UserRole } from "@prisma/client";
 import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory } from "../controllers/studentAttendance.controller";
 import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } from "../controllers/timetable.controller";
 import { createExam, getExams, updateExam, deleteExam, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
+import { getGradeBands, createGradeBand, updateGradeBand, deleteGradeBand } from "../controllers/gradeSystem.controller";
 import { getReportCardPdf } from "../controllers/document.controller";
 import { createHomework, getHomeworks, updateHomework, deleteHomework, submitHomework, getSubmissions } from "../controllers/homework.controller";
 import { bulkPromote } from "../controllers/promotion.controller";
@@ -11,6 +12,7 @@ import { validate } from "../middleware/validate";
 import { markStudentAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
 import { getOrCreateTimetableSchema, upsertSlotSchema } from "../validators/timetable.validator";
 import { createExamSchema, updateExamSchema, enterMarksSchema } from "../validators/exam.validator";
+import { createGradeBandSchema, updateGradeBandSchema } from "../validators/gradeSystem.validator";
 import { createHomeworkSchema, updateHomeworkSchema, submitHomeworkSchema } from "../validators/homework.validator";
 import { bulkPromoteSchema } from "../validators/promotion.validator";
 
@@ -41,6 +43,15 @@ router.post("/exams/marks", authenticate, authorize(...TEACHERS), validate(enter
 router.get("/exams/:examId/results", authenticate, getExamResults);
 router.get("/exams/:examId/report-card/:studentId", authenticate, getReportCardPdf);
 router.patch("/exams/:id/publish", authenticate, authorize(...ADMIN), togglePublish);
+
+// Grade System (grading scale bands, e.g. CBSE A1/A2/B1...) - system-wide,
+// not branch-scoped (see gradeSystem.controller.ts's doc comment), so any
+// authenticated user can read the bands (needed to show a grade on a
+// report card/results view) but only ADMIN can manage them.
+router.get("/grade-system", authenticate, getGradeBands);
+router.post("/grade-system", authenticate, authorize(...ADMIN), validate(createGradeBandSchema), createGradeBand);
+router.put("/grade-system/:id", authenticate, authorize(...ADMIN), validate(updateGradeBandSchema), updateGradeBand);
+router.delete("/grade-system/:id", authenticate, authorize(...ADMIN), deleteGradeBand);
 
 // Homework
 router.post("/homework", authenticate, authorize(...TEACHERS), validate(createHomeworkSchema), createHomework);

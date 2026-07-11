@@ -6,13 +6,92 @@ import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 import { canAccessStaffRecord } from "../utils/staffAccess";
 
 /**
- * Get leave types
+ * Get leave types. `includeInactive=true` is for the admin-facing
+ * management UI (which needs to show/re-enable a deactivated type);
+ * every other caller (the leave-apply form, balance lookups) should
+ * keep seeing only active types, unchanged from before.
  */
-export const getLeaveTypes = async (_req: AuthRequest, res: Response): Promise<void> => {
+export const getLeaveTypes = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const types = await prisma.leaveType.findMany({ where: { isActive: true }, orderBy: { name: "asc" } });
+    const includeInactive = req.query.includeInactive === "true";
+    const types = await prisma.leaveType.findMany({
+      where: includeInactive ? {} : { isActive: true },
+      orderBy: { name: "asc" },
+    });
     sendSuccess(res, types, "Leave types fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Create a leave type (e.g. a school adding "Sabbatical Leave").
+ * `LeaveType` has no `branchId` in the schema - it's a single,
+ * system-wide list shared by every branch, same as `GradeSystem` -
+ * so this is ADMIN-only rather than branch-scoped.
+ */
+export const createLeaveType = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { name, code, maxDays, carryForward } = req.body;
+
+    const existing = await prisma.leaveType.findUnique({ where: { code } });
+    if (existing) { sendError(res, "A leave type with this code already exists", 400); return; }
+
+    const type = await prisma.leaveType.create({
+      data: { name, code, maxDays, carryForward: !!carryForward, isActive: true },
+    });
+    sendSuccess(res, type, "Leave type created", 201);
+  } catch (error) { sendError(res, "Failed to create leave type", 500, (error as Error).message); }
+};
+
+/**
+ * Update a leave type's name/quota/carry-forward, or toggle isActive.
+ * `code` is intentionally not editable here - it's the stable key used
+ * to look up a type (and is unique), so changing it is more like
+ * creating a new type; delete and recreate instead if truly needed.
+ */
+export const updateLeaveType = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { name, maxDays, carryForward, isActive } = req.body;
+
+    const existing = await prisma.leaveType.findUnique({ where: { id } });
+    if (!existing) { sendError(res, "Leave type not found", 404); return; }
+
+    const updated = await prisma.leaveType.update({
+      where: { id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(maxDays !== undefined && { maxDays }),
+        ...(carryForward !== undefined && { carryForward }),
+        ...(isActive !== undefined && { isActive }),
+      },
+    });
+    sendSuccess(res, updated, "Leave type updated");
+  } catch (error) { sendError(res, "Failed to update leave type", 500, (error as Error).message); }
+};
+
+/**
+ * Delete a leave type. Blocked if any LeaveApplication already
+ * references it - that's real leave history that must never silently
+ * disappear (same "block delete, don't cascade" convention used by
+ * deleteFeeCategory/deleteExam elsewhere in this codebase). Deactivate
+ * via updateLeaveType instead if the goal is just to stop new
+ * applications against it.
+ */
+export const deleteLeaveType = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.leaveType.findUnique({ where: { id } });
+    if (!existing) { sendError(res, "Leave type not found", 404); return; }
+
+    const applicationCount = await prisma.leaveApplication.count({ where: { leaveTypeId: id } });
+    if (applicationCount > 0) {
+      sendError(res, `Cannot delete: ${applicationCount} leave application(s) use this type. Deactivate it instead.`, 400);
+      return;
+    }
+
+    await prisma.leaveType.delete({ where: { id } });
+    sendSuccess(res, null, "Leave type deleted");
+  } catch (error) { sendError(res, "Failed to delete leave type", 500, (error as Error).message); }
 };
 
 /**

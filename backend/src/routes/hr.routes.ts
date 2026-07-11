@@ -1,12 +1,12 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCalendar, getDateAttendance } from "../controllers/staffAttendance.controller";
-import { getLeaveTypes, applyLeave, getLeaveApplications, updateLeaveStatus, getLeaveBalance } from "../controllers/leave.controller";
+import { getLeaveTypes, applyLeave, getLeaveApplications, updateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType } from "../controllers/leave.controller";
 import { upsertSalaryStructure, bulkAssignSalaryStructure, assignSalaryStructureToStaff, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { markStaffAttendanceSchema, bulkMarkStaffAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
-import { applyLeaveSchema, updateLeaveStatusSchema } from "../validators/leave.validator";
+import { applyLeaveSchema, updateLeaveStatusSchema, createLeaveTypeSchema, updateLeaveTypeSchema } from "../validators/leave.validator";
 import { upsertSalaryStructureSchema, bulkAssignSalaryStructureSchema, assignSalaryStructureToStaffSchema, runPayrollSchema } from "../validators/payroll.validator";
 
 const router = Router();
@@ -22,6 +22,9 @@ router.get("/attendance/date", authenticate, authorize(...ADMIN), getDateAttenda
 
 // ===== LEAVE MANAGEMENT =====
 router.get("/leave/types", authenticate, getLeaveTypes);
+router.post("/leave/types", authenticate, authorize(...ADMIN), validate(createLeaveTypeSchema), createLeaveType);
+router.put("/leave/types/:id", authenticate, authorize(...ADMIN), validate(updateLeaveTypeSchema), updateLeaveType);
+router.delete("/leave/types/:id", authenticate, authorize(...ADMIN), deleteLeaveType);
 router.post("/leave/apply", authenticate, authorize(...STAFF_ROLES), validate(applyLeaveSchema), applyLeave);
 router.get("/leave/applications", authenticate, getLeaveApplications);
 router.patch("/leave/:id/status", authenticate, authorize(...ADMIN), validate(updateLeaveStatusSchema), updateLeaveStatus);
