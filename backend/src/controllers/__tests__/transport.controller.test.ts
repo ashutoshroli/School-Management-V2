@@ -4,6 +4,7 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     transportRoute: { create: jest.fn(), findUnique: jest.fn() },
+    transportStop: { create: jest.fn() },
     vehicle: { create: jest.fn() },
     student: { findUnique: jest.fn() },
     transportAllocation: { upsert: jest.fn(), findUnique: jest.fn(), delete: jest.fn() },
@@ -11,7 +12,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { createRoute, addVehicle, allocateStudent, removeAllocation } from "../transport.controller";
+import { createRoute, addStop, addVehicle, allocateStudent, removeAllocation } from "../transport.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -71,6 +72,47 @@ describe("transport.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect((prisma.transportRoute.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+    });
+  });
+
+  describe("addStop (SECURITY: branch-access fix)", () => {
+    beforeEach(() => {
+      (prisma.transportStop.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "stop-1", ...data }));
+    });
+
+    it("returns 404 when the route does not exist", async () => {
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { routeId: "route-1", name: "Main Gate", order: 1, time: "07:30" } });
+      const res = makeMockRes();
+
+      await addStop(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.transportStop.create).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects adding a stop to a route in a DIFFERENT branch", async () => {
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue({ id: "route-1", branchId: "branch-OTHER" });
+      const req = makeReq({ body: { routeId: "route-1", name: "Main Gate", order: 1, time: "07:30" } });
+      const res = makeMockRes();
+
+      await addStop(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.transportStop.create).not.toHaveBeenCalled();
+    });
+
+    it("adds the stop when the route is in the caller's own branch", async () => {
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue({ id: "route-1", branchId: "branch-1" });
+      const req = makeReq({ body: { routeId: "route-1", name: "Main Gate", order: 1, time: "07:30" } });
+      const res = makeMockRes();
+
+      await addStop(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(prisma.transportStop.create).toHaveBeenCalledWith({
+        data: { routeId: "route-1", name: "Main Gate", order: 1, time: "07:30" },
+      });
     });
   });
 

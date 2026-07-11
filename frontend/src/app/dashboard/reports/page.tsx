@@ -241,6 +241,85 @@ export default function ReportsPage() {
                 <div className="card text-center"><p className="text-xs text-gray-500">Total Collected</p><p className="text-xl font-bold text-green-700">{formatCurrency(data.grandTotal.totalCollected)}</p></div>
                 <div className="card text-center"><p className="text-xs text-gray-500">Total Pending</p><p className="text-xl font-bold text-red-600">{formatCurrency(data.grandTotal.totalPending)}</p></div>
               </div>
+
+              {/* Comparison bar charts - plain CSS bars (no charting
+                  library dependency), same convention as the Fee
+                  Reports "Collection Trend"/"Payment Mode" tabs. Each
+                  bar's width is scaled relative to the max value
+                  across branches for that specific metric. */}
+              {data.branches.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                  <div className="card">
+                    <h3 className="font-semibold mb-4">Students by Branch</h3>
+                    <div className="space-y-3">
+                      {(() => {
+                        const max = Math.max(...data.branches.map((b: any) => b.students), 1);
+                        return data.branches.map((b: any) => (
+                          <div key={b.branchId} className="flex items-center gap-3 text-sm">
+                            <span className="w-28 truncate text-gray-600" title={b.branchName}>{b.branchName}</span>
+                            <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-3 bg-blue-500 rounded-full" style={{ width: `${(b.students / max) * 100}%` }} />
+                            </div>
+                            <span className="w-12 text-right font-medium">{b.students}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                  <div className="card">
+                    <h3 className="font-semibold mb-4">Staff by Branch</h3>
+                    <div className="space-y-3">
+                      {(() => {
+                        const max = Math.max(...data.branches.map((b: any) => b.staff), 1);
+                        return data.branches.map((b: any) => (
+                          <div key={b.branchId} className="flex items-center gap-3 text-sm">
+                            <span className="w-28 truncate text-gray-600" title={b.branchName}>{b.branchName}</span>
+                            <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-3 bg-indigo-500 rounded-full" style={{ width: `${(b.staff / max) * 100}%` }} />
+                            </div>
+                            <span className="w-12 text-right font-medium">{b.staff}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                  <div className="card">
+                    <h3 className="font-semibold mb-4">Fee Collected by Branch</h3>
+                    <div className="space-y-3">
+                      {(() => {
+                        const max = Math.max(...data.branches.map((b: any) => b.totalFeeCollected), 1);
+                        return data.branches.map((b: any) => (
+                          <div key={b.branchId} className="flex items-center gap-3 text-sm">
+                            <span className="w-28 truncate text-gray-600" title={b.branchName}>{b.branchName}</span>
+                            <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-3 bg-green-500 rounded-full" style={{ width: `${(b.totalFeeCollected / max) * 100}%` }} />
+                            </div>
+                            <span className="w-28 text-right font-medium text-green-700">{formatCurrency(b.totalFeeCollected)}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                  <div className="card">
+                    <h3 className="font-semibold mb-4">Fee Pending by Branch</h3>
+                    <div className="space-y-3">
+                      {(() => {
+                        const max = Math.max(...data.branches.map((b: any) => b.feePending), 1);
+                        return data.branches.map((b: any) => (
+                          <div key={b.branchId} className="flex items-center gap-3 text-sm">
+                            <span className="w-28 truncate text-gray-600" title={b.branchName}>{b.branchName}</span>
+                            <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-3 bg-red-500 rounded-full" style={{ width: `${(b.feePending / max) * 100}%` }} />
+                            </div>
+                            <span className="w-28 text-right font-medium text-red-600">{formatCurrency(b.feePending)}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="card overflow-x-auto">
                 <table className="w-full text-sm"><thead><tr className="border-b bg-gray-50">
                   <th className="px-4 py-3 text-left">Branch</th><th className="px-4 py-3 text-left">City</th>

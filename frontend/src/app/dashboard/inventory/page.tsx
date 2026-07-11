@@ -7,14 +7,23 @@ import Modal from "@/components/ui/Modal";
 
 export default function InventoryPage() {
   const [items, setItems] = useState<any[]>([]);
+  const [lowStock, setLowStock] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState<"item" | "purchase" | "issue">("item");
   const [form, setForm] = useState<any>({ name: "", category: "", unit: "pcs", minStock: "5" });
+  const [dismissedAlert, setDismissedAlert] = useState(false);
 
   const fetch = async () => {
     setLoading(true);
-    try { const res = await api.get("/facilities/inventory/items"); setItems(res.data.data || []); }
+    try {
+      const [itemsRes, lowStockRes] = await Promise.all([
+        api.get("/facilities/inventory/items"),
+        api.get("/facilities/inventory/low-stock"),
+      ]);
+      setItems(itemsRes.data.data || []);
+      setLowStock(lowStockRes.data.data || []);
+    }
     catch {} finally { setLoading(false); }
   };
   useEffect(() => { fetch(); }, []);
@@ -57,6 +66,31 @@ export default function InventoryPage() {
           <button onClick={() => openModal("issue")} className="btn-secondary text-sm">Issue</button>
         </div>
       </div>
+
+      {!loading && lowStock.length > 0 && !dismissedAlert && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800">
+                  {lowStock.length} item{lowStock.length > 1 ? "s are" : " is"} running low on stock
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {lowStock.map((i: any) => (
+                    <span key={i.id} className="text-xs px-2 py-1 bg-white border border-amber-200 rounded-full text-amber-700">
+                      {i.name}: {i.currentStock}/{i.minStock} {i.unit}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setDismissedAlert(true)} className="text-amber-600 hover:text-amber-800 text-xs font-medium flex-shrink-0">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {loading ? <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div> : (
         <div className="card overflow-x-auto">

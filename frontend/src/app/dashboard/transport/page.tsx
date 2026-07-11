@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus } from "lucide-react";
+import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus, Signpost } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -34,6 +34,13 @@ export default function TransportPage() {
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
+  // Add Stop (populates TransportStop for a route, shown as chips on
+  // the route card above and usable as `stopName` when allocating
+  // students).
+  const [stopRoute, setStopRoute] = useState<any>(null);
+  const [stopForm, setStopForm] = useState({ name: "", order: "", time: "" });
+  const [addingStop, setAddingStop] = useState(false);
+
   const fetch = async () => {
     setLoading(true);
     try {
@@ -57,6 +64,10 @@ export default function TransportPage() {
     if (manageRoute) {
       const fresh = routes.find((r) => r.id === manageRoute.id);
       if (fresh) setManageRoute(fresh);
+    }
+    if (stopRoute) {
+      const fresh = routes.find((r) => r.id === stopRoute.id);
+      if (fresh) setStopRoute(fresh);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routes]);
@@ -91,6 +102,34 @@ export default function TransportPage() {
     setManageRoute(route);
     setStudentSearch("");
     setSearchResults([]);
+  };
+
+  const openStopModal = (route: any) => {
+    setStopRoute(route);
+    // Default the new stop's order to "one after the last stop" so
+    // admins don't have to manually track the running sequence.
+    const nextOrder = route.stops?.length ? Math.max(...route.stops.map((s: any) => s.order)) + 1 : 0;
+    setStopForm({ name: "", order: String(nextOrder), time: "" });
+  };
+
+  const handleAddStop = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stopRoute) return;
+    setAddingStop(true);
+    try {
+      await api.post("/facilities/transport/stops", {
+        routeId: stopRoute.id,
+        name: stopForm.name,
+        order: parseInt(stopForm.order, 10),
+        time: stopForm.time,
+      });
+      await fetch();
+      setStopForm((f) => ({ name: "", order: String((parseInt(f.order, 10) || 0) + 1), time: "" }));
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to add stop");
+    } finally {
+      setAddingStop(false);
+    }
   };
 
   const searchStudents = async () => {
@@ -186,12 +225,20 @@ export default function TransportPage() {
                     <div className="flex flex-wrap gap-1">{r.stops.map((s: any) => <span key={s.id} className="text-xs px-2 py-0.5 bg-gray-100 rounded">{s.name}</span>)}</div>
                   </div>
                 )}
-                <button
-                  onClick={() => openManageModal(r)}
-                  className="mt-3 w-full text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-50 rounded-lg py-1.5 flex items-center justify-center gap-1"
-                >
-                  <Users className="h-3.5 w-3.5" /> Manage Students
-                </button>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => openManageModal(r)}
+                    className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-50 rounded-lg py-1.5 flex items-center justify-center gap-1"
+                  >
+                    <Users className="h-3.5 w-3.5" /> Students
+                  </button>
+                  <button
+                    onClick={() => openStopModal(r)}
+                    className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-50 rounded-lg py-1.5 flex items-center justify-center gap-1"
+                  >
+                    <Signpost className="h-3.5 w-3.5" /> Add Stop
+                  </button>
+                </div>
                 <button
                   onClick={() => openAssignModal(r)}
                   disabled={!r._count?.allocations}
@@ -320,6 +367,55 @@ export default function TransportPage() {
           <div className="flex justify-end pt-4 border-t">
             <button type="button" onClick={() => setManageRoute(null)} className="btn-secondary">Close</button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={!!stopRoute} onClose={() => setStopRoute(null)} title={`Manage Stops - ${stopRoute?.name || ""}`}>
+        <div className="space-y-4">
+          <div>
+            <h4 className="text-sm font-semibold text-gray-600 mb-2">
+              Existing Stops ({stopRoute?.stops?.length || 0})
+            </h4>
+            {stopRoute?.stops?.length > 0 ? (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {[...(stopRoute.stops as any[])].sort((a, b) => a.order - b.order).map((s: any) => (
+                  <div key={s.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                    <span className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-gray-400 w-6">#{s.order}</span>
+                      <span className="font-medium">{s.name}</span>
+                    </span>
+                    <span className="text-xs text-gray-500">{s.time}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">No stops added yet for this route.</p>
+            )}
+          </div>
+
+          <form onSubmit={handleAddStop} className="pt-3 border-t space-y-3">
+            <h4 className="text-sm font-semibold text-gray-600">Add Stop</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-1">
+                <label className="block text-sm font-medium mb-1">Stop Name *</label>
+                <input className="input-field" value={stopForm.name} onChange={(e) => setStopForm({ ...stopForm, name: e.target.value })} required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Order *</label>
+                <input type="number" min={0} className="input-field" value={stopForm.order} onChange={(e) => setStopForm({ ...stopForm, order: e.target.value })} required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Time *</label>
+                <input type="time" className="input-field" value={stopForm.time} onChange={(e) => setStopForm({ ...stopForm, time: e.target.value })} required />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setStopRoute(null)} className="btn-secondary">Close</button>
+              <button type="submit" disabled={addingStop} className="btn-primary disabled:opacity-50">
+                {addingStop ? "Adding..." : "Add Stop"}
+              </button>
+            </div>
+          </form>
         </div>
       </Modal>
 

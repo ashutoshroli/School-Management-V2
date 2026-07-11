@@ -212,17 +212,78 @@ of this phase - it works exactly as originally scoped (polls
 
 ---
 
-## Phase 5: Facility + Reporting Polish 🟢 (Items #7, #8, #10, #11, #13)
+## Phase 5: Facility + Reporting Polish ✅ COMPLETED (Items #7, #8, #10, #11, #13)
 
 **Priority:** MEDIUM (independent small items, each quick to ship)
-**Backend:** Fully ready for all
+**Status:** ✅ **DONE**
 
-### Scope:
-- Transport: "+ Add Stop" within route management modal
-- Inventory: Low Stock alert banner/tab
-- Timetable: read-only "Full Class Timetable" consolidated print view
-- Reports: comparison charts on Multi-Branch tab
-- Admissions: "Convert to Student" button pre-filling the New Student form
+### What was actually done:
+
+**Bug fixes discovered along the way (same recurring "missing branch-access
+check" pattern as earlier phases):**
+- `transport.controller.ts` `addStop` - had **no** `canAccessBranch` check at
+  all (IDOR: a Branch Admin could add a stop to any other branch's route by
+  guessing/reusing a `routeId`). Fixed to look up the route and validate branch
+  access first, matching every other mutating endpoint in this controller.
+- `inventory.controller.ts` `getLowStockAlerts` - contained dead code: a second,
+  redundant `findMany` call using a bogus `prisma.inventoryItem.fields.minStock`
+  filter (not valid Prisma - `fields` isn't queryable like that) whose result was
+  discarded and never used. Removed the dead call; the real filtering already
+  happened correctly in JS afterwards.
+- **New tests:** added `getLowStockAlerts` coverage to
+  `inventory.controller.test.ts` and `addStop` coverage (including the new
+  branch-access-denied case) to `transport.controller.test.ts`.
+
+**Item #10 - Transport Add Stop UI:**
+- New "Add Stop" button per route card opens a "Manage Stops" modal listing
+  existing stops (ordered) plus a form (name/order/time) posting to the
+  already-built `POST /facilities/transport/stops`. Order auto-suggests
+  "one past the last stop" and increments after each add.
+
+**Item #11 - Inventory Low Stock alerts:**
+- Dismissible amber banner at the top of `/dashboard/inventory` summarizing
+  every item at/below its `minStock`, using the already-built
+  `GET /facilities/inventory/low-stock` (previously wired to nothing in the UI).
+
+**Item #7 - Timetable consolidated view:**
+- New "Full Class Timetable" button opens a read-only, printable modal
+  stacking every section's grid for the selected class in one place (office
+  notice-board use case), reusing the existing per-section
+  `getOrCreateTimetable` data fetched once per section - no new backend
+  endpoint. Includes a Print button (`window.print()`).
+
+**Item #8 - Multi-Branch comparison charts:**
+- Added 4 CSS-only horizontal bar-chart cards (Students, Staff, Fee Collected,
+  Fee Pending by branch) above the existing table on the Multi-Branch report
+  tab, using the already-built `GET /reports/multi-branch` data - same
+  "no charting library" convention as the Fee Reports Collection
+  Trend/Payment Mode tabs.
+
+**Item #13 - Admission → Student conversion shortcut:**
+- New "Convert to Student" action per inquiry row on `/dashboard/admissions`
+  navigates to `/dashboard/students/new` with the inquiry's fields passed via
+  query params (name, DOB, gender, parent details, address, previous school).
+- The New Student Admission form reads those params to pre-fill, shows a hint
+  banner (including the free-text `classAppliedFor` value, since it can't map
+  to a real `classId`), and on successful submission marks the source inquiry
+  `ADMITTED` automatically (best-effort - a failure here doesn't block the
+  already-created student record).
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**61 suites / 579 tests**, up from
+  61/574 - zero regressions) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, all 5 touched pages
+  build fine (including `students/new`'s new `useSearchParams` usage - no
+  Suspense-boundary build errors)
+
+### Deliverables:
+- ✅ Transport stops manageable from the UI (was API-only before)
+- ✅ Low Stock alerts visible on the Inventory page
+- ✅ Printable consolidated class timetable view
+- ✅ Multi-Branch comparison charts alongside the existing table
+- ✅ One-click Admission Inquiry → New Student conversion
+- ✅ Two real IDOR/dead-code bugs fixed opportunistically
+- ✅ All existing + new tests passing, both builds clean
 
 ---
 

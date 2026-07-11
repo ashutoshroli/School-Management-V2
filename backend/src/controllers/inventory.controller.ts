@@ -100,10 +100,18 @@ export const deleteItem = async (req: AuthRequest, res: Response): Promise<void>
 export const getLowStockAlerts = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);
-    const items = await prisma.inventoryItem.findMany({
-      where: { branchId, currentStock: { lte: prisma.inventoryItem.fields.minStock } },
-    });
-    // Prisma doesn't support field comparison directly, so filter in JS
+    // BUG FIX: this used to run the SAME "fetch everything, filter in
+    // JS" query twice - the first `findMany` (with a `currentStock:
+    // { lte: prisma.inventoryItem.fields.minStock } }` filter) doesn't
+    // actually do a column-to-column comparison at all; Prisma's
+    // `fields` helper isn't a valid filter VALUE, so that call's result
+    // was thrown away entirely (never even assigned to a used
+    // variable) - it silently fetched every item in the branch for no
+    // reason and immediately discarded it, before doing the exact same
+    // full fetch again on the next line to actually filter in JS. Kept
+    // the (correct, necessary) JS-side filtering - Prisma genuinely has
+    // no portable way to compare two columns of the same row in a
+    // `where` clause - but removed the redundant first query.
     const allItems = await prisma.inventoryItem.findMany({ where: { branchId } });
     const lowStock = allItems.filter(i => i.currentStock <= i.minStock);
     sendSuccess(res, lowStock, "Low stock alerts");

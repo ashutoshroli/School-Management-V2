@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Inbox, Download, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Inbox, Download, Trash2, UserPlus } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import DataTable from "@/components/ui/DataTable";
@@ -16,6 +17,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function AdmissionInquiriesPage() {
+  const router = useRouter();
   const [inquiries, setInquiries] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -51,6 +53,26 @@ export default function AdmissionInquiriesPage() {
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to update status");
     }
+  };
+
+  // Convert an inquiry into the New Student Admission form, pre-filled
+  // via query params. `classAppliedFor` is free text on the inquiry
+  // (not a classId FK), so it can't be mapped to a real class - the
+  // new-student form leaves Class/Section blank for the admin to pick,
+  // but shows the applied-for text as a hint.
+  const convertToStudent = (inquiry: any) => {
+    const params = new URLSearchParams();
+    params.set("fromInquiryId", inquiry.id);
+    if (inquiry.studentName) params.set("name", inquiry.studentName);
+    if (inquiry.dateOfBirth) params.set("dateOfBirth", inquiry.dateOfBirth.slice(0, 10));
+    if (inquiry.gender) params.set("gender", inquiry.gender);
+    if (inquiry.classAppliedFor) params.set("classAppliedFor", inquiry.classAppliedFor);
+    if (inquiry.parentName) params.set("fatherName", inquiry.parentName);
+    if (inquiry.parentEmail) params.set("fatherEmail", inquiry.parentEmail);
+    if (inquiry.parentPhone) params.set("fatherPhone", inquiry.parentPhone);
+    if (inquiry.address) params.set("address", inquiry.address);
+    if (inquiry.previousSchool) params.set("previousSchool", inquiry.previousSchool);
+    router.push(`/dashboard/students/new?${params.toString()}`);
   };
 
   const handleDelete = async (id: string, studentName: string) => {
@@ -110,6 +132,14 @@ export default function AdmissionInquiriesPage() {
       label: "Actions",
       render: (i: any) => (
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => convertToStudent(i)}
+            className="text-green-600 hover:text-green-700"
+            title="Convert to Student (opens New Admission form pre-filled)"
+          >
+            <UserPlus className="h-4 w-4" />
+          </button>
           <button
             type="button"
             onClick={() => openPdfInNewTab(`/admission/inquiries/${i.id}/pdf`)}

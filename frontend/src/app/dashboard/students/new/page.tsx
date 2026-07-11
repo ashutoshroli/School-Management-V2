@@ -1,22 +1,39 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { GraduationCap } from "lucide-react";
 import api from "@/lib/api";
 
 export default function NewAdmissionPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [classes, setClasses] = useState<any[]>([]);
   const [sections, setSections] = useState<any[]>([]);
+
+  // Pre-fill from an Admission Inquiry via the "Convert to Student"
+  // shortcut on the Admissions page (query params only - no shared
+  // backend endpoint needed since the field sets don't line up 1:1,
+  // e.g. `classAppliedFor` is free text, not a real classId).
+  const fromInquiryId = searchParams.get("fromInquiryId");
+  const classAppliedFor = searchParams.get("classAppliedFor") || "";
+
   const [form, setForm] = useState({
-    name: "", email: "", phone: "", dateOfBirth: "", gender: "MALE",
+    name: searchParams.get("name") || "",
+    email: "", phone: "",
+    dateOfBirth: searchParams.get("dateOfBirth") || "",
+    gender: searchParams.get("gender") || "MALE",
     bloodGroup: "", religion: "", caste: "", category: "General",
-    nationality: "Indian", motherTongue: "", address: "", city: "",
-    state: "", pincode: "", previousSchool: "", cardId: "",
+    nationality: "Indian", motherTongue: "",
+    address: searchParams.get("address") || "", city: "",
+    state: "", pincode: "",
+    previousSchool: searchParams.get("previousSchool") || "", cardId: "",
     classId: "", sectionId: "",
-    fatherName: "", fatherEmail: "", fatherPhone: "", fatherOccupation: "",
+    fatherName: searchParams.get("fatherName") || "",
+    fatherEmail: searchParams.get("fatherEmail") || "",
+    fatherPhone: searchParams.get("fatherPhone") || "",
+    fatherOccupation: "",
     motherName: "", motherEmail: "", motherPhone: "", motherOccupation: "",
   });
 
@@ -36,6 +53,14 @@ export default function NewAdmissionPage() {
     setLoading(true);
     try {
       await api.post("/students", form);
+      // If this admission was converted from an inquiry, mark the
+      // inquiry ADMITTED so it drops off the "New"/"Contacted"
+      // worklist on the Admissions page. Best-effort - the student
+      // record is already created either way, so a failure here
+      // shouldn't block the success message.
+      if (fromInquiryId) {
+        try { await api.patch(`/admission/inquiries/${fromInquiryId}/status`, { status: "ADMITTED" }); } catch {}
+      }
       alert("Student admitted successfully!");
       router.push("/dashboard/students");
     } catch (err: any) {
@@ -55,6 +80,13 @@ export default function NewAdmissionPage() {
         </h1>
         <p className="text-gray-500 mt-1">Fill all required details for admission</p>
       </div>
+
+      {fromInquiryId && (
+        <div className="mb-6 bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg px-4 py-3">
+          Pre-filled from an admission inquiry. Please review the details below, and don&apos;t forget to pick the actual Class/Section
+          {classAppliedFor && <> (inquiry requested: <span className="font-medium">{classAppliedFor}</span>)</>} and enter a login email for the student.
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Student Info */}
