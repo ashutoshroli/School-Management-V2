@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { ClipboardCheck, Calendar } from "lucide-react";
 import api from "@/lib/api";
-import { formatDate } from "@/lib/utils";
+import { todayLocalDateInput } from "@/lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
   PRESENT: "bg-green-500", ABSENT: "bg-red-500", HALF_DAY: "bg-yellow-400",
@@ -11,17 +11,25 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function StaffAttendancePage() {
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  // BUG FIX: was `new Date().toISOString().split("T")[0]`, which
+  // converts to UTC first and can default the date picker to the wrong
+  // calendar day for users outside a UTC+0-ish timezone (see
+  // todayLocalDateInput's doc comment in lib/utils.ts).
+  const [date, setDate] = useState(todayLocalDateInput());
   const [staffList, setStaffList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const fetchData = async () => {
     setLoading(true);
+    setError("");
     try {
       const res = await api.get("/hr/attendance/date", { params: { date } });
       setStaffList(res.data.data || []);
-    } catch {} finally { setLoading(false); }
+    } catch (err: any) {
+      setError(err.response?.data?.message || "Failed to load staff attendance for this date");
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { fetchData(); }, [date]);
@@ -34,14 +42,19 @@ export default function StaffAttendancePage() {
 
   const saveAll = async () => {
     setSaving(true);
+    setError("");
     try {
       const records = staffList
         .filter(s => s.attendance?.status)
         .map(s => ({ staffId: s.staffId, status: s.attendance.status }));
-      await api.post("/hr/attendance/bulk", { date, records });
-      alert("Attendance saved!");
-      fetchData();
-    } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
+      const res = await api.post("/hr/attendance/bulk", { date, records });
+      // Refetch so the table reflects exactly what's now saved, rather
+      // than trusting the optimistic client-side state.
+      await fetchData();
+      alert(res.data.message || "Attendance saved!");
+    } catch (err: any) {
+      setError(err.response?.data?.message || "Failed to save attendance. Please try again.");
+    }
     finally { setSaving(false); }
   };
 
@@ -62,6 +75,10 @@ export default function StaffAttendancePage() {
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
+      )}
 
       {/* Legend */}
       <div className="flex gap-4 mb-4 text-xs">

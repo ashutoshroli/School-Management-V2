@@ -2,8 +2,10 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     attendanceDevice: { findUnique: jest.fn() },
-    student: { findUnique: jest.fn() },
-    studentAttendance: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
+    student: { findUnique: jest.fn(), findMany: jest.fn() },
+    section: { findUnique: jest.fn() },
+    studentAttendance: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), upsert: jest.fn() },
+    $transaction: jest.fn(),
   },
 }));
 
@@ -13,8 +15,9 @@ jest.mock("../../services/notification.service", () => ({
 
 import prisma from "../../config/database";
 import { notifyParentsOfStudent } from "../../services/notification.service";
-import { studentCardTap } from "../studentAttendance.controller";
+import { studentCardTap, markStudentAttendance } from "../studentAttendance.controller";
 import { AuthRequest } from "../../types";
+import { UserRole } from "@prisma/client";
 
 const makeMockRes = () => {
   const res: any = {};
@@ -155,5 +158,140 @@ describe("studentAttendance.controller - studentCardTap", () => {
     await studentCardTap(req, res);
 
     expect(res.status).toHaveBeenCalledWith(404);
+  });
+});
+
+describe("studentAttendance.controller - markStudentAttendance", () => {
+  const makeAttendanceReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
+    ({
+      body: {
+        sectionId: "section-1",
+        date: "2024-03-15",
+        records: [
+          { studentId: "student-1", status: "PRESENT" },
+          { studentId: "student-2", status: "ABSENT" },
+        ],
+      },
+      params: {},
+      query: {},
+      user: { userId: "teacher-1", email: "t@test.com", role: UserRole.TEACHER, branchId: "branch-1", organizationId: "org-1" },
+      ...overrides,
+    } as any);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-1" });
+    (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([]);
+    // Mirror the real $transaction(array-of-promises) call shape used
+    // by markStudentAttendance - resolve every upsert call it was given.
+    (prisma.$transaction as jest.Mock).mockImplementation(async (ops: any[]) => Promise.all(ops));
+    (prisma.studentAttendance.upsert as jest.Mock).mockResolvedValue({ id: "att-1" });
+  });
+
+  it("returns 400 when sectionId or date is missing", async () => {
+    const req = makeAttendanceReq({ body: { date: "2024-03-15", records: [{ studentId: "s1", status: "PRESENT" }] } });
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when records is empty or not an array", async () => {
+    const req = makeAttendanceReq({ body: { sectionId: "section-1", date: "2024-03-15", records: [] } });
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when a record is missing studentId or status", async () => {
+    const req = makeAttendanceReq({ body: { sectionId: "section-1", date: "2024-03-15", records: [{ studentId: "s1" }] } });
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 404 when the section does not exist", async () => {
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("SECURITY: rejects marking attendance for a section in a different branch", async () => {
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-OTHER" });
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  // BUG FIX regression guard: the whole point of switching to
+  // upsert-in-a-transaction is that this call never throws on a
+  // duplicate key, unlike the old find-then-create/update loop which
+  // would blow up the entire request if the same record had already
+  // been saved by an earlier (e.g. retried) request.
+  it("BUG FIX: saves every record via upsert inside a single transaction, and never calls create/update/findUnique directly", async () => {
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.studentAttendance.upsert).toHaveBeenCalledTimes(2);
+    expect(prisma.studentAttendance.create).not.toHaveBeenCalled();
+    expect(prisma.studentAttendance.update).not.toHaveBeenCalled();
+
+    expect(prisma.studentAttendance.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { studentId_date_period: { studentId: "student-1", date: new Date("2024-03-15"), period: null } },
+        update: { status: "PRESENT" },
+        create: expect.objectContaining({ studentId: "student-1", status: "PRESENT", source: "MANUAL", markedBy: "teacher-1" }),
+      })
+    );
+  });
+
+  it("reports accurate created/updated counts based on which records already existed", async () => {
+    (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([{ studentId: "student-1" }]);
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { created: 1, updated: 1 }, message: "Attendance saved: 1 new, 1 updated" })
+    );
+  });
+
+  it("still succeeds (transactionally) even if this exact batch was already saved by a prior request", async () => {
+    // Simulates re-submitting the same "Save All" click twice - every
+    // record already exists from the first request. The old
+    // find-then-create code would have thrown a unique-constraint
+    // error attempting to `create()` again; upsert just updates.
+    (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([
+      { studentId: "student-1" },
+      { studentId: "student-2" },
+    ]);
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await markStudentAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: { created: 0, updated: 2 } }));
   });
 });

@@ -7,32 +7,96 @@ import { canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
 import { authenticateDevice, extractDeviceApiKey } from "../utils/deviceAuth";
 import { notifyParentsOfStudent } from "../services/notification.service";
+import { toAttendanceDateOnly } from "../utils/attendanceDate";
 
 /**
  * Mark student attendance (teacher marks for a class/section/date)
+ *
+ * BUG FIX: this used to be a non-atomic "check-then-act" loop -
+ * `findUnique` then `create`-or-`update`, one record at a time, with
+ * no transaction. Two real problems fell out of that:
+ *   1. Race condition: if the same "Save All" request was double-fired
+ *      (slow network -> user clicks again, or a retry), the second
+ *      request's `create()` for a record the first request had just
+ *      inserted would violate the `[studentId, date, period]` unique
+ *      constraint and throw - the whole request failed with a generic
+ *      500 "Failed", even though most/all of the records had actually
+ *      already been saved by the first request. This is the most
+ *      likely cause of "unable to save attendance" reports: it looks
+ *      like total failure, but is actually "already saved, don't panic".
+ *   2. Partial failure with no rollback: if record #15 of 40 threw for
+ *      ANY reason (bad status enum value, etc), records #1-14 were
+ *      already committed to the database but the response still came
+ *      back as a 500 error - the class teacher has no way to tell
+ *      which students got saved and which didn't from that response.
+ *
+ * Fixed by using `upsert` (atomic per-record: create-or-update in one
+ * DB round trip, never throws on a duplicate) for every record inside
+ * a single `$transaction`, so the whole batch either fully succeeds or
+ * fully rolls back - no more "half saved, reported as failed".
  */
 export const markStudentAttendance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { sectionId, date, period, records } = req.body;
     // records: [{studentId, status}]
 
-    let created = 0, updated = 0;
+    if (!sectionId || !date) {
+      sendError(res, "sectionId and date are required", 400);
+      return;
+    }
+    if (!Array.isArray(records) || records.length === 0) {
+      sendError(res, "records must be a non-empty array of {studentId, status}", 400);
+      return;
+    }
     for (const rec of records) {
-      const existing = await prisma.studentAttendance.findUnique({
-        where: { studentId_date_period: { studentId: rec.studentId, date: new Date(date), period: period || null } },
-      });
-      if (existing) {
-        await prisma.studentAttendance.update({ where: { id: existing.id }, data: { status: rec.status } });
-        updated++;
-      } else {
-        await prisma.studentAttendance.create({
-          data: { studentId: rec.studentId, sectionId, date: new Date(date), status: rec.status, period: period || null, source: "MANUAL", markedBy: req.user!.userId },
-        });
-        created++;
+      if (!rec.studentId || !rec.status) {
+        sendError(res, "Every record must include studentId and status", 400);
+        return;
       }
     }
+
+    const section = await prisma.section.findUnique({ where: { id: sectionId }, select: { branchId: true } });
+    if (!section) { sendError(res, "Section not found", 404); return; }
+    if (!canAccessBranch(req, section.branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
+
+    const attendanceDate = new Date(date);
+    const attendancePeriod = period || null;
+
+    // Determine created-vs-updated counts up front (a single query)
+    // purely for the response message - the actual writes below use
+    // upsert regardless, so this split has no effect on correctness.
+    const studentIds = records.map((r: any) => r.studentId);
+    const existingRecords = await prisma.studentAttendance.findMany({
+      where: { studentId: { in: studentIds }, date: attendanceDate, period: attendancePeriod },
+      select: { studentId: true },
+    });
+    const existingIds = new Set(existingRecords.map((r) => r.studentId));
+    const created = records.filter((r: any) => !existingIds.has(r.studentId)).length;
+    const updated = records.length - created;
+
+    await prisma.$transaction(
+      records.map((rec: any) =>
+        prisma.studentAttendance.upsert({
+          where: { studentId_date_period: { studentId: rec.studentId, date: attendanceDate, period: attendancePeriod } },
+          update: { status: rec.status },
+          create: {
+            studentId: rec.studentId,
+            sectionId,
+            date: attendanceDate,
+            status: rec.status,
+            period: attendancePeriod,
+            source: "MANUAL",
+            markedBy: req.user!.userId,
+          },
+        })
+      )
+    );
+
     sendSuccess(res, { created, updated }, `Attendance saved: ${created} new, ${updated} updated`);
-  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+  } catch (error) { sendError(res, "Failed to save attendance", 500, (error as Error).message); }
 };
 
 /**
@@ -57,7 +121,13 @@ export const studentCardTap = async (req: AuthRequest, res: Response): Promise<v
     if (student.branchId !== device.branchId) { sendError(res, "Card not registered", 404); return; }
 
     const tapTime = timestamp ? new Date(timestamp) : new Date();
-    const today = new Date(tapTime.getFullYear(), tapTime.getMonth(), tapTime.getDate());
+    // BUG FIX: see toAttendanceDateOnly's doc comment - this used to be
+    // `new Date(y, m, d)` (local midnight), which doesn't match the
+    // UTC-midnight date manual attendance marking produces from a
+    // "YYYY-MM-DD" input string. Card-tap and manually-marked
+    // attendance for the same calendar day must resolve to the exact
+    // same `date` value, or they'll be treated as two different days.
+    const today = toAttendanceDateOnly(tapTime);
 
     const existing = await prisma.studentAttendance.findFirst({
       where: { studentId: student.id, date: today, period: null },

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { ClipboardCheck } from "lucide-react";
 import api from "@/lib/api";
+import { todayLocalDateInput } from "@/lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
   PRESENT: "bg-green-500", ABSENT: "bg-red-500", HALF_DAY: "bg-yellow-400", LATE: "bg-orange-500",
@@ -13,10 +14,15 @@ export default function StudentAttendancePage() {
   const [classId, setClassId] = useState("");
   const [sectionId, setSectionId] = useState("");
   const [sections, setSections] = useState<any[]>([]);
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  // BUG FIX: was `new Date().toISOString().split("T")[0]`, which
+  // converts to UTC first and can default the date picker to the wrong
+  // calendar day for users outside a UTC+0-ish timezone (see
+  // todayLocalDateInput's doc comment in lib/utils.ts).
+  const [date, setDate] = useState(todayLocalDateInput());
   const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => { api.get("/classes").then(r => setClasses(r.data.data || [])); }, []);
 
@@ -29,10 +35,13 @@ export default function StudentAttendancePage() {
   const fetchAttendance = async () => {
     if (!sectionId) return;
     setLoading(true);
+    setError("");
     try {
       const res = await api.get("/academics/attendance/class", { params: { sectionId, date } });
       setStudents(res.data.data?.students || []);
-    } catch {} finally { setLoading(false); }
+    } catch (err: any) {
+      setError(err.response?.data?.message || "Failed to load attendance for this section/date");
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { if (sectionId) fetchAttendance(); }, [sectionId, date]);
@@ -45,11 +54,21 @@ export default function StudentAttendancePage() {
 
   const saveAll = async () => {
     setSaving(true);
+    setError("");
     try {
       const records = students.filter(s => s.attendance?.status).map(s => ({ studentId: s.studentId, status: s.attendance.status }));
-      await api.post("/academics/attendance/mark", { sectionId, date, records });
-      alert("Attendance saved!");
-    } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
+      const res = await api.post("/academics/attendance/mark", { sectionId, date, records });
+      // BUG FIX: previously never refetched after a successful save -
+      // the on-screen table kept showing whatever the teacher had just
+      // clicked, with no confirmation that it actually matches what's
+      // now in the database. Refetching also means a partial save
+      // (shouldn't happen anymore now that the backend is transactional,
+      // but worth being defensive) would visibly show up as such.
+      await fetchAttendance();
+      alert(res.data.message || "Attendance saved!");
+    } catch (err: any) {
+      setError(err.response?.data?.message || "Failed to save attendance. Please try again.");
+    }
     finally { setSaving(false); }
   };
 
@@ -71,6 +90,10 @@ export default function StudentAttendancePage() {
         </select>
         <input type="date" className="input-field w-auto" value={date} onChange={e => setDate(e.target.value)} />
       </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
