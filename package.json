@@ -13,7 +13,9 @@
     "db:generate": "npm run generate --prefix db",
     "db:migrate": "npm run migrate --prefix db",
     "db:seed": "npm run seed --prefix db",
-    "db:studio": "npm run studio --prefix db"
+    "db:studio": "npm run studio --prefix db",
+    "db:backup": "./scripts/backup-database.sh",
+    "db:restore": "./scripts/restore-database.sh"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

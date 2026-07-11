@@ -54,19 +54,21 @@ critical list below.
 
 ---
 
-### 3. No Database Backups ❌
+### 3. No Database Backups ❌ → ✅ FIXED IN PHASE 3
 
-**Current state:** Zero backup automation
+**Was:** Zero backup automation, no docker-compose for local dev
 
-**Impact:** Data loss risk if database crashes
+**Fixed:**
+- `docker-compose.yml` (Postgres + Redis for local dev)
+- `scripts/backup-database.sh` (verified, gzip, auto-prune)
+- `scripts/restore-database.sh` (confirmation-gated restore)
+- Full backup→data-loss→restore cycle tested end-to-end, data confirmed recovered
+- `DEPLOY.md` updated with usage docs; also fixed a stale line there
+  claiming SMS/WhatsApp are stubs (they aren't, per Phase 1's correction)
 
-**Fix:**
-- Configure automated daily backups
-- Test restore procedure
-- Document recovery steps
-
-**Effort:** 1 day  
-**Cost:** ₹12,800
+**Remaining for production:** wire `backup-database.sh` into an actual
+scheduled job (cron/CI/hosting platform) against production `DATABASE_URL` -
+the script exists and is tested, but nothing runs it automatically yet.
 
 ---
 
@@ -117,17 +119,15 @@ critical list below.
 
 ---
 
-## ❌ MISSING FILES
+## ❌ MISSING FILES (remaining)
 
-### 1. docker-compose.yml - MISSING
-**Impact:** No easy local dev environment  
-**Developers must manually install PostgreSQL**
+### 1. docker-compose.yml - ✅ ADDED IN PHASE 3
 
 ### 2. Frontend Dockerfile - MISSING
-**Impact:** No containerized frontend deployment
+**Impact:** No containerized frontend deployment (Phase 6 candidate)
 
 ### 3. Missing Validators (10+ files)
-**Impact:** Incomplete request validation
+**Impact:** Incomplete request validation (Phase 4)
 
 ---
 

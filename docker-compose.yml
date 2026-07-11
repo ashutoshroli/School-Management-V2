@@ -1,0 +1,63 @@
+# Local development environment (Phase 3 - Docker Compose + Backups).
+#
+# This is for LOCAL DEVELOPMENT ONLY - it gives every contributor a
+# one-command PostgreSQL (+ Redis, for later phases that add caching/
+# background jobs) instead of everyone installing/configuring Postgres
+# by hand. It is NOT used for production deployment - see DEPLOY.md and
+# render.yaml/backend/Dockerfile for that (production runs the backend
+# directly against a managed Postgres like Neon, not via this file).
+#
+# Usage:
+#   docker compose up -d          # start Postgres (+ Redis)
+#   cp .env.example backend/.env  # then point DATABASE_URL at the line below
+#   npm run db:generate && npm run db:seed --prefix db  (or via API - see
+#     .kiro/steering/database-changes.md for why seeding goes through the
+#     API/service layer, not a raw script, for anything beyond this
+#     one-time local bootstrap)
+#   npm run dev --prefix backend
+#
+# DATABASE_URL for this compose file:
+#   postgresql://school_erp:dev_password_123@localhost:5432/school_erp_dev?schema=public
+name: school-erp
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: school_erp_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: school_erp
+      POSTGRES_PASSWORD: dev_password_123
+      POSTGRES_DB: school_erp_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U school_erp -d school_erp_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Not consumed by any backend code yet (that lands in a later phase -
+  # Redis caching / Bull background jobs) - included here now so the
+  # same `docker compose up` a developer already runs for Postgres also
+  # brings this up, with no extra step needed once that phase lands.
+  redis:
+    image: redis:7-alpine
+    container_name: school_erp_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

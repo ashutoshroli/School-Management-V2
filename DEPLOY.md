@@ -147,6 +147,58 @@ etc. with the seeded demo data.
 
 ---
 
+## Local development database (docker-compose)
+
+For local development (not the trial deployment above), `docker-compose.yml`
+at the repo root gives every contributor a one-command Postgres (+ Redis,
+reserved for a later caching/background-jobs phase) instead of everyone
+installing Postgres by hand:
+
+```bash
+docker compose up -d
+```
+
+This starts Postgres on `localhost:5432` with:
+```
+DATABASE_URL="postgresql://school_erp:dev_password_123@localhost:5432/school_erp_dev?schema=public"
+```
+
+Put that in `backend/.env` (or `db/.env`), then run the usual:
+```bash
+npm run db:generate
+npm run db:migrate      # or: cd db && npx prisma db push
+npm run db:seed
+npm run dev:backend
+```
+
+This is **local development only** - it is not used for the trial/production
+deployment described above, which uses a managed Postgres (Neon) instead.
+
+## Database backups & restore
+
+Two scripts under `scripts/` handle backing up and restoring whatever
+database `DATABASE_URL` points at (your local docker-compose Postgres, Neon,
+or any other Postgres instance):
+
+```bash
+# Back up (writes a timestamped, gzip-compressed, verified dump to ./backups/)
+DATABASE_URL="postgresql://..." ./scripts/backup-database.sh
+
+# Restore a specific backup (prompts for confirmation; pass --yes to skip)
+DATABASE_URL="postgresql://..." ./scripts/restore-database.sh backups/school_erp_20260101_120000.sql.gz
+```
+
+Both scripts fall back to reading `DATABASE_URL` from `backend/.env` if it
+isn't already set in the shell environment. `backup-database.sh` also prunes
+backups older than 30 days by default (`BACKUP_RETENTION_DAYS=0` to disable).
+Requires `pg_dump`/`psql` (the `postgresql-client` package) on `PATH`.
+
+For a real production deployment, wire `backup-database.sh` into a scheduled
+job (cron, GitHub Actions on a schedule, or your hosting platform's own
+scheduled-job feature) pointed at the production `DATABASE_URL`, and
+periodically test `restore-database.sh` against a scratch database - an
+untested backup is not a backup you can rely on.
+
 ## Known trial-only limitations
 
 These are all intentional simplifications for a quick trial, not bugs:
@@ -165,8 +217,12 @@ These are all intentional simplifications for a quick trial, not bugs:
 - **Email notifications are silently skipped** unless `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS`
   are set - everything else in the app still works, payments/actions
   just won't send a confirmation email.
-- **SMS/WhatsApp notifications are stubs** regardless of environment -
-  they log instead of sending (see README's "Known limitations" section).
+- **SMS/WhatsApp/push notifications need their own gateway credentials**
+  (`SMS_API_KEY`, `WHATSAPP_API_KEY`, `FCM_*` in `.env.example`) - the
+  integrations themselves are real (MSG91/Interakt/Firebase Cloud
+  Messaging), but without credentials set they fail fast with a clear
+  "not configured" error instead of actually sending (see README's
+  "Known limitations" section). Email (SMTP) is unaffected by this.
 - **Cold starts**: Render's free tier sleeps the backend after 15
   minutes idle; the first request after that takes ~30-50 seconds.
 - **No committed migration history**: this trial setup uses
