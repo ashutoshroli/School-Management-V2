@@ -1,13 +1,32 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings as SettingsIcon, User, Lock, Building2, Loader2 } from "lucide-react";
+import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { resolveUploadUrl } from "@/lib/uploads";
 import FileUploadButton from "@/components/ui/FileUploadButton";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+
+const RESULT_LABELS: Record<string, string> = {
+  studentsCreated: "Students",
+  parentsCreated: "Parents",
+  staffCreated: "Staff",
+  feeStructuresCreated: "Fee Structures",
+  feeAssignmentsCreated: "Fee Assignments",
+  paymentsCreated: "Payments Recorded",
+  attendanceRecordsCreated: "Attendance Records",
+  examsCreated: "Exams",
+  marksCreated: "Marks Recorded",
+  homeworkCreated: "Homework Assignments",
+  noticesCreated: "Notices",
+  transportRoutesCreated: "Transport Routes",
+  transportAllocationsCreated: "Transport Allocations",
+  libraryBooksCreated: "Library Books",
+  libraryIssuesCreated: "Library Issues",
+};
 
 export default function SettingsPage() {
   const { user, setAuth, token } = useAuth();
@@ -24,6 +43,48 @@ export default function SettingsPage() {
   const [branchLoading, setBranchLoading] = useState(false);
 
   const isAdmin = user?.role === "SUPER_ADMIN" || user?.role === "BRANCH_ADMIN";
+
+  // Generate Demo Data - bulk-fills the current branch with realistic
+  // students/staff/fees/attendance/exams/homework/notices/transport/
+  // library data in one go, for demoing or testing every module at
+  // once without hand-creating dozens of records first.
+  const [showDemoDataConfirm, setShowDemoDataConfirm] = useState(false);
+  const [demoDataForm, setDemoDataForm] = useState({
+    studentsPerSection: "15",
+    staffCount: "20",
+    attendanceDays: "20",
+    includeFeesAndPayments: true,
+    includeAttendance: true,
+    includeExamsAndMarks: true,
+    includeHomeworkAndNotices: true,
+    includeTransportAndLibrary: true,
+  });
+  const [generatingDemoData, setGeneratingDemoData] = useState(false);
+  const [demoDataResult, setDemoDataResult] = useState<Record<string, number> | null>(null);
+  const [demoDataError, setDemoDataError] = useState<string | null>(null);
+
+  const handleGenerateDemoData = async () => {
+    setGeneratingDemoData(true);
+    setDemoDataError(null);
+    try {
+      const res = await api.post("/demo-data/generate", {
+        studentsPerSection: parseInt(demoDataForm.studentsPerSection) || undefined,
+        staffCount: parseInt(demoDataForm.staffCount) || undefined,
+        attendanceDays: parseInt(demoDataForm.attendanceDays) || undefined,
+        includeFeesAndPayments: demoDataForm.includeFeesAndPayments,
+        includeAttendance: demoDataForm.includeAttendance,
+        includeExamsAndMarks: demoDataForm.includeExamsAndMarks,
+        includeHomeworkAndNotices: demoDataForm.includeHomeworkAndNotices,
+        includeTransportAndLibrary: demoDataForm.includeTransportAndLibrary,
+      });
+      setShowDemoDataConfirm(false);
+      setDemoDataResult(res.data.data);
+    } catch (err: any) {
+      setDemoDataError(err.response?.data?.message || "Failed to generate demo data");
+    } finally {
+      setGeneratingDemoData(false);
+    }
+  };
 
   const fetchProfile = async () => {
     setLoading(true);
@@ -251,8 +312,131 @@ export default function SettingsPage() {
               </a>
             </div>
           )}
+
+          {/* Generate Demo Data (admins only) */}
+          {isAdmin && (
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-amber-500" /> Generate Demo Data
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Bulk-fills your branch ({branch?.name || "current branch"}) with realistic students, parents, staff,
+                fee assignments &amp; payments, attendance, exams &amp; marks, homework, notices, transport, and
+                library records - useful for demoing or testing every module at once. Safe to re-run; it won&apos;t
+                duplicate students already added to a section beyond the target count.
+              </p>
+
+              {demoDataError && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-4">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" /> {demoDataError}
+                </div>
+              )}
+
+              {demoDataResult && (
+                <div className="mb-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-green-700 mb-2">
+                    <CheckCircle2 className="h-4 w-4" /> Demo data generated successfully
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+                    {Object.entries(demoDataResult)
+                      .filter(([, v]) => v > 0)
+                      .map(([key, value]) => (
+                        <div key={key} className="bg-gray-50 rounded-lg px-3 py-2">
+                          <span className="font-semibold text-gray-900">{value}</span>{" "}
+                          <span className="text-gray-500">{RESULT_LABELS[key] || key}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              <button onClick={() => setShowDemoDataConfirm(true)} className="btn-secondary flex items-center gap-2">
+                <Sparkles className="h-4 w-4" /> Generate Demo Data
+              </button>
+            </div>
+          )}
         </div>
       )}
+
+      <Modal isOpen={showDemoDataConfirm} onClose={() => setShowDemoDataConfirm(false)} title="Generate Demo Data" size="md">
+        <div className="space-y-4">
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-3 py-2">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            This creates real records in {branch?.name || "your branch"} (visible everywhere - Students, Staff,
+            Fees, Attendance, Exams, etc). It cannot be undone in bulk; remove records individually if needed
+            afterwards.
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Students / Section</label>
+              <input
+                type="number"
+                min={1}
+                max={40}
+                className="input-field"
+                value={demoDataForm.studentsPerSection}
+                onChange={(e) => setDemoDataForm({ ...demoDataForm, studentsPerSection: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Staff Count</label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                className="input-field"
+                value={demoDataForm.staffCount}
+                onChange={(e) => setDemoDataForm({ ...demoDataForm, staffCount: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Attendance Days</label>
+              <input
+                type="number"
+                min={1}
+                max={60}
+                className="input-field"
+                value={demoDataForm.attendanceDays}
+                onChange={(e) => setDemoDataForm({ ...demoDataForm, attendanceDays: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-gray-700">Include:</p>
+            {[
+              { key: "includeFeesAndPayments", label: "Fee structures, assignments & payments" },
+              { key: "includeAttendance", label: "Student & staff attendance" },
+              { key: "includeExamsAndMarks", label: "Exams & marks" },
+              { key: "includeHomeworkAndNotices", label: "Homework & notices" },
+              { key: "includeTransportAndLibrary", label: "Transport routes & library issues" },
+            ].map((opt) => (
+              <label key={opt.key} className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={(demoDataForm as any)[opt.key]}
+                  onChange={(e) => setDemoDataForm({ ...demoDataForm, [opt.key]: e.target.checked })}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowDemoDataConfirm(false)} className="btn-secondary">Cancel</button>
+            <button
+              type="button"
+              onClick={handleGenerateDemoData}
+              disabled={generatingDemoData}
+              className="btn-primary flex items-center gap-2 disabled:opacity-60"
+            >
+              {generatingDemoData && <Loader2 className="h-4 w-4 animate-spin" />}
+              {generatingDemoData ? "Generating... this may take a minute" : "Generate"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
