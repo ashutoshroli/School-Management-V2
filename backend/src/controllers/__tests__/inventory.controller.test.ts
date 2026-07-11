@@ -3,12 +3,12 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    inventoryItem: { create: jest.fn() },
+    inventoryItem: { create: jest.fn(), findMany: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { addItem } from "../inventory.controller";
+import { addItem, getLowStockAlerts } from "../inventory.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -64,5 +64,49 @@ describe("inventory.controller - addItem", () => {
 
     expect(res.status).toHaveBeenCalledWith(201);
     expect((prisma.inventoryItem.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+  });
+});
+
+
+describe("inventory.controller - getLowStockAlerts", () => {
+  const makeReqForBranch = (): AuthRequest =>
+    ({
+      body: {},
+      params: {},
+      query: {},
+      user: { userId: "admin-1", email: "admin@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    } as any);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("makes exactly ONE findMany call (no redundant duplicate query) and filters to items at or below minStock", async () => {
+    (prisma.inventoryItem.findMany as jest.Mock).mockResolvedValue([
+      { id: "i1", currentStock: 2, minStock: 5 },
+      { id: "i2", currentStock: 10, minStock: 5 },
+      { id: "i3", currentStock: 5, minStock: 5 },
+    ]);
+    const req = makeReqForBranch();
+    const res = makeMockRes();
+
+    await getLowStockAlerts(req, res);
+
+    expect(prisma.inventoryItem.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.inventoryItem.findMany).toHaveBeenCalledWith({ where: { branchId: "branch-1" } });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [{ id: "i1", currentStock: 2, minStock: 5 }, { id: "i3", currentStock: 5, minStock: 5 }] })
+    );
+  });
+
+  it("returns an empty list when nothing is low on stock", async () => {
+    (prisma.inventoryItem.findMany as jest.Mock).mockResolvedValue([{ id: "i1", currentStock: 20, minStock: 5 }]);
+    const req = makeReqForBranch();
+    const res = makeMockRes();
+
+    await getLowStockAlerts(req, res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: [] }));
   });
 });

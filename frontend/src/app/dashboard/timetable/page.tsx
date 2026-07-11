@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, Trash2 } from "lucide-react";
+import { Calendar, Trash2, Printer } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -18,6 +18,15 @@ export default function TimetablePage() {
   const [subjects, setSubjects] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [error, setError] = useState("");
+
+  // Consolidated "Full Class Timetable" view - shows every section of
+  // the selected class stacked in one read-only, printable layout
+  // (office notice board use case). Reuses the same
+  // getOrCreateTimetable data per section, no new backend endpoint.
+  const [showConsolidated, setShowConsolidated] = useState(false);
+  const [consolidatedLoading, setConsolidatedLoading] = useState(false);
+  const [consolidatedError, setConsolidatedError] = useState("");
+  const [consolidatedData, setConsolidatedData] = useState<{ section: any; timetable: any }[]>([]);
 
   useEffect(() => {
     api.get("/classes").then(r => setClasses(r.data.data || []));
@@ -117,6 +126,37 @@ export default function TimetablePage() {
 
   const subjectName = (id: string) => subjects.find((s) => s.id === id)?.name || "-";
 
+  const openConsolidatedView = async () => {
+    if (!classId || sections.length === 0) return;
+    setShowConsolidated(true);
+    setConsolidatedLoading(true);
+    setConsolidatedError("");
+    setConsolidatedData([]);
+    try {
+      const years = await api.get("/academic-years");
+      const activeYear = years.data.data?.find((y: any) => y.isActive);
+      if (!activeYear) {
+        setConsolidatedError("No active academic year found. Set an academic year as active first (Dashboard > Academic Years).");
+        return;
+      }
+      const results = await Promise.all(
+        sections.map(async (s: any) => {
+          try {
+            const res = await api.post("/academics/timetable", { sectionId: s.id, classId, academicYearId: activeYear.id });
+            return { section: s, timetable: res.data.data };
+          } catch {
+            return { section: s, timetable: null };
+          }
+        })
+      );
+      setConsolidatedData(results);
+    } catch (err: any) {
+      setConsolidatedError(err.response?.data?.message || "Failed to load consolidated timetable");
+    } finally {
+      setConsolidatedLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="mb-6">
@@ -132,6 +172,15 @@ export default function TimetablePage() {
           <option value="">Section</option>
           {sections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
+        <button
+          type="button"
+          onClick={openConsolidatedView}
+          disabled={!classId || sections.length === 0}
+          title={!classId ? "Select a class first" : "View all sections of this class in one printable layout"}
+          className="btn-secondary text-sm flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Printer className="h-4 w-4" /> Full Class Timetable
+        </button>
       </div>
 
       {error && (
@@ -239,6 +288,73 @@ export default function TimetablePage() {
             </div>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={showConsolidated}
+        onClose={() => setShowConsolidated(false)}
+        title={`Full Class Timetable - ${classes.find((c) => c.id === classId)?.name || ""}`}
+        size="xl"
+      >
+        <div className="print-timetable">
+          {consolidatedError && (
+            <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{consolidatedError}</div>
+          )}
+          {consolidatedLoading ? (
+            <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+          ) : consolidatedData.length > 0 ? (
+            <div className="space-y-6">
+              {consolidatedData.map(({ section, timetable: tt }) => (
+                <div key={section.id}>
+                  <h4 className="font-semibold text-sm text-gray-800 mb-2">Section {section.name}</h4>
+                  {tt ? (
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50">
+                          <th className="border px-2 py-1.5 text-left">Day / Period</th>
+                          {PERIODS.map((p) => <th key={p} className="border px-2 py-1.5 text-center">P{p}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {DAYS.map((day) => (
+                          <tr key={day}>
+                            <td className="border px-2 py-1.5 font-medium bg-gray-50">{day.slice(0, 3)}</td>
+                            {PERIODS.map((p) => {
+                              const slot = tt.slots?.find((s: any) => s.day === day && s.period === p);
+                              return (
+                                <td key={p} className={`border px-2 py-1.5 text-center ${slot?.isBreak ? "bg-yellow-50" : ""}`}>
+                                  {slot?.isBreak ? (
+                                    <span className="text-yellow-600 text-[10px]">BREAK</span>
+                                  ) : slot ? (
+                                    <div>
+                                      <p className="font-medium text-primary-700">{subjectName(slot.subjectId)}</p>
+                                      <p className="text-[10px] text-gray-400">{slot.teacher?.user?.name?.split(" ")[0] || ""}</p>
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-300">-</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="text-sm text-gray-400">No timetable set for this section yet.</p>
+                  )}
+                </div>
+              ))}
+              <div className="flex justify-end pt-4 border-t print:hidden">
+                <button type="button" onClick={() => window.print()} className="btn-secondary flex items-center gap-1.5">
+                  <Printer className="h-4 w-4" /> Print
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400">No sections found for this class.</p>
+          )}
+        </div>
       </Modal>
     </div>
   );

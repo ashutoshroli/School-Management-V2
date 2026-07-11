@@ -66,6 +66,16 @@ export const getRoutes = async (req: AuthRequest, res: Response): Promise<void> 
 export const addStop = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { routeId, name, order, time } = req.body;
+
+    // SECURITY: this had NO branch-access check at all - the same IDOR
+    // class of bug already fixed on createRoute/addVehicle above (and
+    // elsewhere in this codebase - see promotion/hostel controllers'
+    // equivalent fixes) - a Branch Admin could add a stop to any other
+    // branch's route just by guessing/reusing a routeId.
+    const route = await prisma.transportRoute.findUnique({ where: { id: routeId } });
+    if (!route) { sendError(res, "Route not found", 404); return; }
+    if (!canAccessBranch(req, route.branchId)) { sendError(res, "Route not found", 404); return; }
+
     const stop = await prisma.transportStop.create({ data: { routeId, name, order, time } });
     sendSuccess(res, stop, "Stop added", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
