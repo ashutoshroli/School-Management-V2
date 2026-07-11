@@ -26,7 +26,7 @@ jest.mock("../../services/auditLog.service", () => ({
 
 import prisma from "../../config/database";
 import { getValidatedFeeAssignment, recordFeePayment } from "../../services/feePayment.service";
-import { collectPayment, assignFeesToStudents, assignTransportFee } from "../feeCollection.controller";
+import { collectPayment, assignFeesToStudents, assignTransportFee, assignTransportFeeToStudents } from "../feeCollection.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -412,6 +412,198 @@ describe("feeCollection.controller - assignTransportFee", () => {
     const res = makeMockRes();
 
     await assignTransportFee(req, res);
+
+    expect(prisma.feeAssignment.createMany).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { created: 0, skipped: 2, total: 2, feeStructureId: "fs-transport-1" } })
+    );
+  });
+});
+
+describe("feeCollection.controller - assignTransportFeeToStudents", () => {
+  const makeReqStudents = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
+    ({
+      body: { routeId: "route-1", academicYearId: "ay-1", studentIds: ["student-1", "student-2"] },
+      params: {},
+      query: {},
+      user: { userId: "admin-1", email: "admin@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+      ...overrides,
+    } as any);
+
+  const ROUTE = { id: "route-1", branchId: "branch-1", monthlyFee: 1500 };
+  const ACADEMIC_YEAR = { id: "ay-1", branchId: "branch-1" };
+  const TRANSPORT_CATEGORY = { id: "cat-transport", branchId: "branch-1", code: "TRANSPORT" };
+  const STRUCTURE = { id: "fs-transport-1", branchId: "branch-1", transportRouteId: "route-1", amount: 1500 };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue(ROUTE);
+    (prisma.academicYear.findUnique as jest.Mock).mockResolvedValue(ACADEMIC_YEAR);
+    (prisma.feeCategory.findUnique as jest.Mock).mockResolvedValue(TRANSPORT_CATEGORY);
+    (prisma.feeStructure.findUnique as jest.Mock).mockResolvedValue(STRUCTURE);
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([
+      { id: "student-1", branchId: "branch-1" },
+      { id: "student-2", branchId: "branch-1" },
+    ]);
+    (prisma.feeAssignment.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.feeAssignment.createMany as jest.Mock).mockResolvedValue({ count: 2 });
+  });
+
+  it("returns 400 when routeId is missing", async () => {
+    const req = makeReqStudents({ body: { academicYearId: "ay-1", studentIds: ["student-1"] } });
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.transportRoute.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when academicYearId is missing", async () => {
+    const req = makeReqStudents({ body: { routeId: "route-1", studentIds: ["student-1"] } });
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 400 when studentIds is missing or empty", async () => {
+    const req = makeReqStudents({ body: { routeId: "route-1", academicYearId: "ay-1", studentIds: [] } });
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.transportRoute.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the route does not exist", async () => {
+    (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a route from a different branch", async () => {
+    (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue({ ...ROUTE, branchId: "branch-OTHER" });
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.student.findMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects an academic year that doesn't belong to the route's branch", async () => {
+    (prisma.academicYear.findUnique as jest.Mock).mockResolvedValue({ id: "ay-1", branchId: "branch-OTHER" });
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.student.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when one or more studentIds don't exist", async () => {
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([{ id: "student-1", branchId: "branch-1" }]);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.feeAssignment.createMany).not.toHaveBeenCalled();
+  });
+
+  it("SECURITY: rejects when a student in the list belongs to a different branch than the route", async () => {
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([
+      { id: "student-1", branchId: "branch-1" },
+      { id: "student-2", branchId: "branch-OTHER" },
+    ]);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(prisma.feeAssignment.createMany).not.toHaveBeenCalled();
+  });
+
+  // Deliberately does NOT require the students to already be in
+  // TransportAllocation for this route - see the controller's doc
+  // comment. No transportAllocation.findMany mock is even set up here,
+  // confirming the controller never calls it.
+  it("creates fee assignments for every requested student without requiring a TransportAllocation record", async () => {
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(prisma.transportAllocation.findMany).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.feeAssignment.createMany).toHaveBeenCalledWith({
+      data: [
+        { studentId: "student-1", feeStructureId: "fs-transport-1", totalAmount: 1500, paidAmount: 0, discount: 0, lateFee: 0, status: "PENDING" },
+        { studentId: "student-2", feeStructureId: "fs-transport-1", totalAmount: 1500, paidAmount: 0, discount: 0, lateFee: 0, status: "PENDING" },
+      ],
+    });
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { created: 2, skipped: 0, total: 2, feeStructureId: "fs-transport-1" } })
+    );
+  });
+
+  it("auto-creates the route's FeeStructure (via the shared helper) when none exists yet", async () => {
+    (prisma.feeStructure.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.feeStructure.create as jest.Mock).mockResolvedValue(STRUCTURE);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(prisma.feeStructure.create).toHaveBeenCalledWith({
+      data: {
+        branchId: "branch-1",
+        academicYearId: "ay-1",
+        transportRouteId: "route-1",
+        feeCategoryId: "cat-transport",
+        amount: 1500,
+        frequency: "MONTHLY",
+        dueDay: 10,
+        lateFeeType: "NONE",
+        lateFeeValue: 0,
+        isActive: true,
+      },
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it("skips students already assigned this route's fee (no N+1 - one findMany, not one findUnique per student)", async () => {
+    (prisma.feeAssignment.findMany as jest.Mock).mockResolvedValue([{ studentId: "student-1" }]);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
+
+    expect(prisma.feeAssignment.createMany).toHaveBeenCalledWith({
+      data: [{ studentId: "student-2", feeStructureId: "fs-transport-1", totalAmount: 1500, paidAmount: 0, discount: 0, lateFee: 0, status: "PENDING" }],
+    });
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { created: 1, skipped: 1, total: 2, feeStructureId: "fs-transport-1" } })
+    );
+  });
+
+  it("does not call createMany at all when every requested student is already assigned", async () => {
+    (prisma.feeAssignment.findMany as jest.Mock).mockResolvedValue([{ studentId: "student-1" }, { studentId: "student-2" }]);
+    const req = makeReqStudents();
+    const res = makeMockRes();
+
+    await assignTransportFeeToStudents(req, res);
 
     expect(prisma.feeAssignment.createMany).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(

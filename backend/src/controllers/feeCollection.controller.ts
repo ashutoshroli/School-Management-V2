@@ -143,16 +143,16 @@ export const assignFeesToStudents = async (req: AuthRequest, res: Response): Pro
 };
 
 /**
- * Assign a transport fee to every student currently allocated to a
- * transport route - the transport counterpart to bulkAssignFees
- * (class-wise) and assignFeesToStudents (hand-picked list) above.
+ * Shared by assignTransportFee (every allocated student) and
+ * assignTransportFeeToStudents (hand-picked list) below: validates the
+ * route + academic year, then finds-or-creates the route's
+ * FeeStructure for that year, auto-creating the branch's "Transport
+ * Fee" system category first if it doesn't exist yet.
  *
- * Unlike those two, this doesn't require a FeeStructure to already
- * exist: it finds-or-creates one automatically, keyed on
- * (branch, academicYear, route, feeCategory) via the
+ * Keyed on (branch, academicYear, route, feeCategory) via the
  * @@unique([branchId, academicYearId, transportRouteId, feeCategoryId])
- * constraint on FeeStructure - so calling this endpoint twice for the
- * same route/year reuses the same structure instead of creating
+ * constraint on FeeStructure - so calling either endpoint again for
+ * the same route/year reuses the same structure instead of creating
  * duplicates (mirrors the "Transport Fee" system FeeCategory seeded in
  * db/prisma/seed.ts, auto-created here too if a branch doesn't have it
  * yet - e.g. any branch created after that seed script ran).
@@ -160,6 +160,81 @@ export const assignFeesToStudents = async (req: AuthRequest, res: Response): Pro
  * FeeStructure.classId is intentionally left null for these - a
  * transport fee applies to whichever students are allocated to the
  * route, which cuts across classes, not to a specific class.
+ *
+ * Returns null (having already sent the error response) if
+ * validation fails, so callers can `if (!structure) return;`.
+ */
+const findOrCreateTransportFeeStructure = async (
+  req: AuthRequest,
+  res: Response,
+  routeId: string,
+  academicYearId: string
+) => {
+  const route = await prisma.transportRoute.findUnique({ where: { id: routeId } });
+  if (!route) { sendError(res, "Transport route not found", 404); return null; }
+  if (!canAccessBranch(req, route.branchId)) { sendError(res, "Transport route not found", 404); return null; }
+
+  const academicYear = await prisma.academicYear.findUnique({ where: { id: academicYearId } });
+  if (!academicYear || academicYear.branchId !== route.branchId) {
+    sendError(res, "Academic year not found for this branch", 404);
+    return null;
+  }
+
+  // Find-or-create the branch's "Transport Fee" system category -
+  // present via db/prisma/seed.ts's demo data, but a branch created
+  // through the running app (see createBranch's own auto-seeding of
+  // Chart of Accounts for the same class of issue) has no fee
+  // categories at all until an admin creates them, so this can't
+  // assume it already exists.
+  let transportCategory = await prisma.feeCategory.findUnique({
+    where: { branchId_code: { branchId: route.branchId, code: "TRANSPORT" } },
+  });
+  if (!transportCategory) {
+    transportCategory = await prisma.feeCategory.create({
+      data: { branchId: route.branchId, name: "Transport Fee", code: "TRANSPORT", isSystem: true, isActive: true },
+    });
+  }
+
+  // Find-or-create the route's FeeStructure for this academic year.
+  // NOTE: if the route's monthlyFee has changed since this structure
+  // was first created, the structure amount is NOT retroactively
+  // updated here (same as class-wise structures, which also don't
+  // auto-track changes elsewhere) - edit the fee structure directly
+  // (Fees > Fee Structures) if the amount needs correcting.
+  let structure = await prisma.feeStructure.findUnique({
+    where: {
+      branchId_academicYearId_transportRouteId_feeCategoryId: {
+        branchId: route.branchId,
+        academicYearId,
+        transportRouteId: routeId,
+        feeCategoryId: transportCategory.id,
+      },
+    },
+  });
+  if (!structure) {
+    structure = await prisma.feeStructure.create({
+      data: {
+        branchId: route.branchId,
+        academicYearId,
+        transportRouteId: routeId,
+        feeCategoryId: transportCategory.id,
+        amount: route.monthlyFee,
+        frequency: "MONTHLY",
+        dueDay: 10,
+        lateFeeType: "NONE",
+        lateFeeValue: 0,
+        isActive: true,
+      },
+    });
+  }
+
+  return { route, structure };
+};
+
+/**
+ * Assign a transport fee to every student currently allocated to a
+ * transport route - the transport counterpart to bulkAssignFees
+ * (class-wise) and assignFeesToStudents (hand-picked list) above.
  */
 export const assignTransportFee = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -168,63 +243,9 @@ export const assignTransportFee = async (req: AuthRequest, res: Response): Promi
     if (!routeId) { sendError(res, "routeId is required", 400); return; }
     if (!academicYearId) { sendError(res, "academicYearId is required", 400); return; }
 
-    const route = await prisma.transportRoute.findUnique({ where: { id: routeId } });
-    if (!route) { sendError(res, "Transport route not found", 404); return; }
-    if (!canAccessBranch(req, route.branchId)) { sendError(res, "Transport route not found", 404); return; }
-
-    const academicYear = await prisma.academicYear.findUnique({ where: { id: academicYearId } });
-    if (!academicYear || academicYear.branchId !== route.branchId) {
-      sendError(res, "Academic year not found for this branch", 404);
-      return;
-    }
-
-    // Find-or-create the branch's "Transport Fee" system category -
-    // present via db/prisma/seed.ts's demo data, but a branch created
-    // through the running app (see createBranch's own auto-seeding of
-    // Chart of Accounts for the same class of issue) has no fee
-    // categories at all until an admin creates them, so this can't
-    // assume it already exists.
-    let transportCategory = await prisma.feeCategory.findUnique({
-      where: { branchId_code: { branchId: route.branchId, code: "TRANSPORT" } },
-    });
-    if (!transportCategory) {
-      transportCategory = await prisma.feeCategory.create({
-        data: { branchId: route.branchId, name: "Transport Fee", code: "TRANSPORT", isSystem: true, isActive: true },
-      });
-    }
-
-    // Find-or-create the route's FeeStructure for this academic year.
-    // NOTE: if the route's monthlyFee has changed since this structure
-    // was first created, the structure amount is NOT retroactively
-    // updated here (same as class-wise structures, which also don't
-    // auto-track changes elsewhere) - edit the fee structure directly
-    // (Fees > Fee Structures) if the amount needs correcting.
-    let structure = await prisma.feeStructure.findUnique({
-      where: {
-        branchId_academicYearId_transportRouteId_feeCategoryId: {
-          branchId: route.branchId,
-          academicYearId,
-          transportRouteId: routeId,
-          feeCategoryId: transportCategory.id,
-        },
-      },
-    });
-    if (!structure) {
-      structure = await prisma.feeStructure.create({
-        data: {
-          branchId: route.branchId,
-          academicYearId,
-          transportRouteId: routeId,
-          feeCategoryId: transportCategory.id,
-          amount: route.monthlyFee,
-          frequency: "MONTHLY",
-          dueDay: 10,
-          lateFeeType: "NONE",
-          lateFeeValue: 0,
-          isActive: true,
-        },
-      });
-    }
+    const result = await findOrCreateTransportFeeStructure(req, res, routeId, academicYearId);
+    if (!result) return;
+    const { structure } = result;
 
     const allocations = await prisma.transportAllocation.findMany({
       where: { routeId },
@@ -267,6 +288,92 @@ export const assignTransportFee = async (req: AuthRequest, res: Response): Promi
     sendSuccess(
       res,
       { created, skipped, total: allocations.length, feeStructureId: structure.id },
+      `Transport fee assigned to ${created} student(s) (${skipped} skipped - already assigned)`
+    );
+  } catch (error) {
+    sendError(res, "Failed to assign transport fee", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Assign a transport route's fee to a specific, hand-picked list of
+ * students - the transport counterpart to assignFeesToStudents
+ * (class-wise). Used when only some of a route's allocated students
+ * should get the fee right now (e.g. a mid-term admission whose fee
+ * starts from next month, or a student whose transport fee is being
+ * handled separately/already covered by a scholarship) rather than
+ * everyone on the route at once via assignTransportFee.
+ *
+ * Deliberately does NOT require the given students to be in
+ * TransportAllocation for this route - an admin may want to assign the
+ * fee ahead of the allocation being recorded, or for a student using
+ * the route informally. It DOES still require every student to belong
+ * to the route's branch (same defense as assignFeesToStudents).
+ */
+export const assignTransportFeeToStudents = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { routeId, academicYearId, studentIds } = req.body;
+
+    if (!routeId) { sendError(res, "routeId is required", 400); return; }
+    if (!academicYearId) { sendError(res, "academicYearId is required", 400); return; }
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      sendError(res, "studentIds must be a non-empty array", 400);
+      return;
+    }
+
+    const result = await findOrCreateTransportFeeStructure(req, res, routeId, academicYearId);
+    if (!result) return;
+    const { route, structure } = result;
+
+    // Same validation pattern as assignFeesToStudents: one query to
+    // both confirm every requested student exists AND belongs to the
+    // route's branch (a Branch Admin could otherwise smuggle in a
+    // studentId from another branch).
+    const students = await prisma.student.findMany({
+      where: { id: { in: studentIds } },
+      select: { id: true, branchId: true },
+    });
+
+    const foundIds = new Set(students.map((s) => s.id));
+    const notFound = studentIds.filter((id: string) => !foundIds.has(id));
+    if (notFound.length > 0) {
+      sendError(res, `${notFound.length} student(s) in this list were not found`, 404);
+      return;
+    }
+    const outOfBranch = students.some((s) => s.branchId !== route.branchId);
+    if (outOfBranch) {
+      sendError(res, "One or more students do not belong to this route's branch", 403);
+      return;
+    }
+
+    const existingAssignments = await prisma.feeAssignment.findMany({
+      where: { feeStructureId: structure.id, studentId: { in: studentIds } },
+      select: { studentId: true },
+    });
+    const alreadyAssigned = new Set(existingAssignments.map((a) => a.studentId));
+
+    const toCreate = students.filter((s) => !alreadyAssigned.has(s.id));
+
+    if (toCreate.length > 0) {
+      await prisma.feeAssignment.createMany({
+        data: toCreate.map((student) => ({
+          studentId: student.id,
+          feeStructureId: structure.id,
+          totalAmount: structure.amount,
+          paidAmount: 0,
+          discount: 0,
+          lateFee: 0,
+          status: "PENDING" as const,
+        })),
+      });
+    }
+
+    const created = toCreate.length;
+    const skipped = students.length - created;
+
+    sendSuccess(
+      res,
+      { created, skipped, total: students.length, feeStructureId: structure.id },
       `Transport fee assigned to ${created} student(s) (${skipped} skipped - already assigned)`
     );
   } catch (error) {

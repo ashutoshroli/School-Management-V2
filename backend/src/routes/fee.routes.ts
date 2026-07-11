@@ -2,7 +2,7 @@ import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { getFeeCategories, createFeeCategory, updateFeeCategory, toggleFeeCategory, deleteFeeCategory } from "../controllers/feeCategory.controller";
 import { createFeeStructure, getFeeStructures, updateFeeStructure, deleteFeeStructure } from "../controllers/feeStructure.controller";
-import { bulkAssignFees, assignFeesToStudents, assignTransportFee, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund, sendFeeRemindersHandler } from "../controllers/feeCollection.controller";
+import { bulkAssignFees, assignFeesToStudents, assignTransportFee, assignTransportFeeToStudents, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund, sendFeeRemindersHandler } from "../controllers/feeCollection.controller";
 import { createRazorpayOrder, verifyRazorpayPayment, razorpayWebhook } from "../controllers/payment.controller";
 import { getPaymentReceiptPdf } from "../controllers/document.controller";
 import { assignDiscount, getStudentDiscounts, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
@@ -11,7 +11,7 @@ import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import {
   collectPaymentSchema, createRefundSchema, bulkAssignFeesSchema, assignFeesToStudentsSchema,
-  assignTransportFeeSchema, createRazorpayOrderSchema, verifyRazorpayPaymentSchema,
+  assignTransportFeeSchema, assignTransportFeeToStudentsSchema, createRazorpayOrderSchema, verifyRazorpayPaymentSchema,
 } from "../validators/fee.validator";
 
 const router = Router();
@@ -43,6 +43,7 @@ router.delete("/structures/:id", authorize(...ADMIN), deleteFeeStructure);
 router.post("/assign/bulk", authorize(...ADMIN), validate(bulkAssignFeesSchema), bulkAssignFees);
 router.post("/assign/students", authorize(...ADMIN), validate(assignFeesToStudentsSchema), assignFeesToStudents);
 router.post("/assign/transport", authorize(...ADMIN), validate(assignTransportFeeSchema), assignTransportFee);
+router.post("/assign/transport/students", authorize(...ADMIN), validate(assignTransportFeeToStudentsSchema), assignTransportFeeToStudents);
 
 // Finance staff (to collect on a student's behalf) or the STUDENT/PARENT
 // themselves (self-service). canAccessStudentRecord inside each

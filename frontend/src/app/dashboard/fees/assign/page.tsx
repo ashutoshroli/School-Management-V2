@@ -61,6 +61,21 @@ function AssignFeesContent() {
   const [selectedYearId, setSelectedYearId] = useState("");
   const [assigningTransport, setAssigningTransport] = useState(false);
   const [transportResult, setTransportResult] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  // "route" = every student currently allocated to the route (existing
+  // bulk behavior). "students" = a hand-picked list, mirroring the
+  // class-fee tab's Entire Class / Specific Students split.
+  const [transportMode, setTransportMode] = useState<"route" | "students">("route");
+
+  // Transport - specific students state. Unlike the class-fee picker,
+  // this is NOT scoped to a class/section (a route's students can come
+  // from any class) and deliberately doesn't require the student to
+  // already be allocated to the route (see
+  // assignTransportFeeToStudents's doc comment on the backend).
+  const [transportSearch, setTransportSearch] = useState("");
+  const [transportSearchResults, setTransportSearchResults] = useState<StudentOption[]>([]);
+  const [transportSearchLoading, setTransportSearchLoading] = useState(false);
+  const [selectedTransportStudentIds, setSelectedTransportStudentIds] = useState<Set<string>>(new Set());
+  const [assigningTransportStudents, setAssigningTransportStudents] = useState(false);
 
   const selectedRoute = routes.find((r) => r.id === selectedRouteId) || null;
 
@@ -119,7 +134,32 @@ function AssignFeesContent() {
 
   useEffect(() => {
     setTransportResult(null);
+    setTransportSearch("");
+    setTransportSearchResults([]);
+    setSelectedTransportStudentIds(new Set());
+    setTransportMode("route");
   }, [selectedRouteId]);
+
+  const searchTransportStudents = async () => {
+    if (!transportSearch.trim()) { setTransportSearchResults([]); return; }
+    setTransportSearchLoading(true);
+    try {
+      const res = await api.get("/students", { params: { search: transportSearch, limit: 50 } });
+      setTransportSearchResults(res.data.data || []);
+    } catch {
+      setTransportSearchResults([]);
+    } finally {
+      setTransportSearchLoading(false);
+    }
+  };
+
+  const toggleTransportStudentSelected = (id: string) => {
+    setSelectedTransportStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const fetchStudents = async () => {
     if (!selectedStructure) return;
@@ -222,6 +262,25 @@ function AssignFeesContent() {
     }
   };
 
+  const handleAssignTransportFeeToStudents = async () => {
+    if (!selectedRoute || !selectedYearId || selectedTransportStudentIds.size === 0) return;
+    setAssigningTransportStudents(true);
+    setTransportResult(null);
+    try {
+      const res = await api.post("/fees/assign/transport/students", {
+        routeId: selectedRoute.id,
+        academicYearId: selectedYearId,
+        studentIds: Array.from(selectedTransportStudentIds),
+      });
+      setTransportResult({ type: "success", text: res.data.message || "Transport fee assigned to selected students." });
+      setSelectedTransportStudentIds(new Set());
+    } catch (err: any) {
+      setTransportResult({ type: "error", text: err.response?.data?.message || "Failed to assign transport fee to selected students" });
+    } finally {
+      setAssigningTransportStudents(false);
+    }
+  };
+
   return (
     <div>
       <div className="mb-6">
@@ -272,7 +331,7 @@ function AssignFeesContent() {
               </div>
 
               {selectedRoute && (
-                <div className="card space-y-4">
+                <>
                   {transportResult && (
                     <div className={`flex items-center gap-2 px-4 py-3 rounded-lg text-sm ${transportResult.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
                       {transportResult.type === "success" && <CheckCircle2 className="h-4 w-4 flex-shrink-0" />}
@@ -280,39 +339,142 @@ function AssignFeesContent() {
                     </div>
                   )}
 
-                  <p className="text-sm text-gray-600 flex items-start gap-2">
-                    <MapPin className="h-4 w-4 text-gray-400 flex-shrink-0 mt-0.5" />
-                    This will assign a <span className="font-medium">Transport Fee</span> of{" "}
-                    <span className="font-medium">{formatCurrency(selectedRoute.monthlyFee)}/month</span> to every one of the{" "}
-                    <span className="font-medium">{selectedRoute._count?.allocations || 0} student(s)</span> currently allocated to this route.
-                    Students who already have this fee assigned will be skipped automatically.
-                  </p>
-
-                  {!selectedRoute._count?.allocations && (
-                    <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      No students are allocated to this route yet - go to Transport &gt; Manage Students to allocate some first.
-                    </p>
-                  )}
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Academic Year *</label>
-                    <select className="input-field max-w-xl" value={selectedYearId} onChange={(e) => setSelectedYearId(e.target.value)}>
-                      <option value="">Select</option>
-                      {years.map((y: any) => <option key={y.id} value={y.id}>{y.name}</option>)}
-                    </select>
-                    {years.length === 0 && (
-                      <p className="text-xs text-gray-500 mt-1">No academic years found. Create one under Academic Years first.</p>
-                    )}
+                  <div className="flex gap-2 border-b">
+                    <button
+                      onClick={() => setTransportMode("route")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 ${transportMode === "route" ? "border-primary-600 text-primary-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                    >
+                      <Users className="h-4 w-4" /> Entire Route
+                    </button>
+                    <button
+                      onClick={() => setTransportMode("students")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 ${transportMode === "students" ? "border-primary-600 text-primary-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                    >
+                      <UserCheck className="h-4 w-4" /> Specific Students
+                    </button>
                   </div>
 
-                  <button
-                    onClick={handleAssignTransportFee}
-                    disabled={assigningTransport || !selectedYearId || !selectedRoute._count?.allocations}
-                    className="btn-primary disabled:opacity-50"
-                  >
-                    {assigningTransport ? "Assigning..." : "Assign Transport Fee"}
-                  </button>
-                </div>
+                  {transportMode === "route" ? (
+                    <div className="card space-y-4">
+                      <p className="text-sm text-gray-600 flex items-start gap-2">
+                        <MapPin className="h-4 w-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                        This will assign a <span className="font-medium">Transport Fee</span> of{" "}
+                        <span className="font-medium">{formatCurrency(selectedRoute.monthlyFee)}/month</span> to every one of the{" "}
+                        <span className="font-medium">{selectedRoute._count?.allocations || 0} student(s)</span> currently allocated to this route.
+                        Students who already have this fee assigned will be skipped automatically.
+                      </p>
+
+                      {!selectedRoute._count?.allocations && (
+                        <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                          No students are allocated to this route yet - go to Transport &gt; Manage Students to allocate some, or use the "Specific Students" tab above to assign the fee directly.
+                        </p>
+                      )}
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Academic Year *</label>
+                        <select className="input-field max-w-xl" value={selectedYearId} onChange={(e) => setSelectedYearId(e.target.value)}>
+                          <option value="">Select</option>
+                          {years.map((y: any) => <option key={y.id} value={y.id}>{y.name}</option>)}
+                        </select>
+                        {years.length === 0 && (
+                          <p className="text-xs text-gray-500 mt-1">No academic years found. Create one under Academic Years first.</p>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={handleAssignTransportFee}
+                        disabled={assigningTransport || !selectedYearId || !selectedRoute._count?.allocations}
+                        className="btn-primary disabled:opacity-50"
+                      >
+                        {assigningTransport ? "Assigning..." : "Assign Transport Fee"}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="card space-y-4">
+                      <p className="text-sm text-gray-500">
+                        Search for students by name, admission no, or roll no and tick the ones who should get this route's transport fee. Students don't need to already be allocated to this route.
+                      </p>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Academic Year *</label>
+                        <select className="input-field max-w-xl" value={selectedYearId} onChange={(e) => setSelectedYearId(e.target.value)}>
+                          <option value="">Select</option>
+                          {years.map((y: any) => <option key={y.id} value={y.id}>{y.name}</option>)}
+                        </select>
+                        {years.length === 0 && (
+                          <p className="text-xs text-gray-500 mt-1">No academic years found. Create one under Academic Years first.</p>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-3">
+                        <div className="relative flex-1 min-w-[180px]">
+                          <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            className="input-field pl-9 w-full"
+                            placeholder="Search by name, admission no, roll no..."
+                            value={transportSearch}
+                            onChange={(e) => setTransportSearch(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && searchTransportStudents()}
+                          />
+                        </div>
+                        <button type="button" onClick={searchTransportStudents} className="btn-secondary text-sm">Search</button>
+                      </div>
+
+                      <div className="border rounded-lg max-h-96 overflow-y-auto">
+                        {transportSearchLoading ? (
+                          <div className="flex justify-center py-8">
+                            <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+                          </div>
+                        ) : transportSearchResults.length === 0 ? (
+                          <p className="text-center text-gray-400 text-sm py-8">
+                            {transportSearch.trim() ? "No students found" : "Search for students above to select them"}
+                          </p>
+                        ) : (
+                          <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-gray-50">
+                              <tr className="border-b">
+                                <th className="px-3 py-2 text-left w-10"></th>
+                                <th className="px-3 py-2 text-left">Admission No</th>
+                                <th className="px-3 py-2 text-left">Name</th>
+                                <th className="px-3 py-2 text-left">Class</th>
+                                <th className="px-3 py-2 text-left">Roll No</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {transportSearchResults.map((s) => (
+                                <tr
+                                  key={s.id}
+                                  onClick={() => toggleTransportStudentSelected(s.id)}
+                                  className={`border-b cursor-pointer hover:bg-gray-50 ${selectedTransportStudentIds.has(s.id) ? "bg-primary-50" : ""}`}
+                                >
+                                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                                    <input type="checkbox" checked={selectedTransportStudentIds.has(s.id)} onChange={() => toggleTransportStudentSelected(s.id)} />
+                                  </td>
+                                  <td className="px-3 py-2 font-mono text-xs">{s.admissionNo}</td>
+                                  <td className="px-3 py-2 font-medium">{s.user.name}</td>
+                                  <td className="px-3 py-2 text-gray-500">{s.class?.name || "-"}</td>
+                                  <td className="px-3 py-2 text-gray-500">{s.rollNo || "-"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t">
+                        <span className="text-sm text-gray-500">{selectedTransportStudentIds.size} student(s) selected</span>
+                        <button
+                          type="button"
+                          onClick={handleAssignTransportFeeToStudents}
+                          disabled={selectedTransportStudentIds.size === 0 || !selectedYearId || assigningTransportStudents}
+                          className="btn-primary disabled:opacity-50"
+                        >
+                          {assigningTransportStudents ? "Assigning..." : `Assign to ${selectedTransportStudentIds.size || ""} Student(s)`}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           ) : (
