@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { config } from "../../config";
 import { postForm, postJson } from "../../utils/httpClient";
+import { logger } from "../../config/logger";
 
 /**
  * Push notification provider - Firebase Cloud Messaging (FCM HTTP v1
@@ -116,7 +117,10 @@ export const sendPushToMany = async (
         await sendPush({ token, ...payload });
         sent++;
       } catch (err) {
-        console.error(`Push delivery failed for token ${token.slice(0, 12)}...:`, (err as Error).message);
+        logger.error("Push delivery failed for device token", {
+          tokenPrefix: token.slice(0, 12),
+          errorMessage: (err as Error).message,
+        });
         failedTokens.push(token);
       }
     })

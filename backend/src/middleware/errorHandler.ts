@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { Prisma } from "@prisma/client";
 import { sendError } from "../utils/response";
 import { config } from "../config";
+import { logError } from "../config/logger";
 
 export class AppError extends Error {
   statusCode: number;
@@ -17,13 +18,16 @@ export class AppError extends Error {
 
 export const errorHandler = (
   err: Error | AppError,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ): void => {
   // Log full detail server-side regardless of environment; only the
-  // response body is sanitized for the client.
-  console.error("Error:", err);
+  // response body is sanitized for the client. Sentry (if configured)
+  // has already captured this error via setupSentryErrorHandler, which
+  // is mounted before this handler in app.ts - this log is for local/
+  // aggregated log output, not a duplicate error-tracking report.
+  logError("Request error", err, { method: req.method, path: req.originalUrl });
 
   if (err instanceof AppError) {
     sendError(res, err.message, err.statusCode);

@@ -8,8 +8,14 @@ import passport from "./config/passport";
 import routes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { config } from "./config";
+import { initSentry, setupSentryErrorHandler } from "./config/sentry";
 
 const app = express();
+
+// Error tracking (Phase 1) - must be initialized before any other
+// middleware/routes are registered so Sentry's auto-instrumentation can
+// see the full request lifecycle. No-ops if SENTRY_DSN isn't set.
+initSentry(app);
 
 // Security middleware
 app.use(helmet());
@@ -60,6 +66,10 @@ app.use("/uploads", express.static(config.upload.dir));
 
 // Error handling
 app.use(notFoundHandler);
+// Sentry's error handler must be registered AFTER routes/notFoundHandler
+// but BEFORE this app's own errorHandler, so Sentry captures the error
+// while this app's handler still owns building the actual HTTP response.
+setupSentryErrorHandler(app);
 app.use(errorHandler);
 
 export default app;
