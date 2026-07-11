@@ -32,9 +32,19 @@ const makeAssignment = (overrides: Record<string, any> = {}): any => ({
 
 const makeMockTx = () => {
   const payments: any[] = [];
+  // Chart-of-accounts lookup table used by autoPostToAccounting() inside
+  // recordFeePayment(). Every branchId exercised by a test in this file
+  // needs its own Cash (1001) + Fee Income (3001) entry here, or
+  // autoPostToAccounting() throws "Accounting not configured for
+  // branch <id>" (by design - see its own comment) and the test fails
+  // for a reason unrelated to whatever it's actually testing.
   const accounts: Record<string, any> = {
     "branch-1:1001": { id: "cash-account" },
     "branch-1:3001": { id: "fee-income-account" },
+    "branch-a:1001": { id: "cash-account-a" },
+    "branch-a:3001": { id: "fee-income-account-a" },
+    "branch-b:1001": { id: "cash-account-b" },
+    "branch-b:3001": { id: "fee-income-account-b" },
   };
 
   return {

@@ -38,8 +38,14 @@ describe("collectPaymentSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects a payload missing required fields", () => {
+  it("accepts a payload with branchId omitted (it's optional - resolved server-side instead)", () => {
     const { branchId, ...rest } = validBody;
+    const result = collectPaymentSchema.safeParse({ body: rest });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a payload missing a genuinely required field (studentId)", () => {
+    const { studentId, ...rest } = validBody;
     const result = collectPaymentSchema.safeParse({ body: rest });
     expect(result.success).toBe(false);
   });
