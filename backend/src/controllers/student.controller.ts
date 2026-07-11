@@ -7,6 +7,9 @@ import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
 import { logAuditFromRequest } from "../services/auditLog.service";
+import { notify } from "../services/notification.service";
+import { welcomeEmail } from "../services/notification/emailTemplates";
+import { config } from "../config";
 
 /**
  * Generate unique admission number.
@@ -50,6 +53,12 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
     // record) would leave an orphaned User/Student with no parent link
     // and no student-facing account cleanup. Wrap the whole admission in
     // a single transaction so it's all-or-nothing.
+    // Tracks which User accounts were newly created in this admission
+    // (as opposed to an existing parent account being reused for a
+    // sibling) - only NEW accounts get a welcome email after the
+    // transaction commits.
+    const newlyCreatedUsers: Array<{ id: string; email: string; name: string }> = [];
+
     const studentId = await prisma.$transaction(async (tx) => {
       // Generate admission number inside the transaction so the count
       // read is consistent with the student.create() below.
@@ -66,6 +75,7 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
           isActive: true,
         },
       });
+      newlyCreatedUsers.push({ id: studentUser.id, email: studentUser.email, name: studentUser.name });
 
       // Create student record
       const student = await tx.student.create({
@@ -108,6 +118,7 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
               isActive: true,
             },
           });
+          newlyCreatedUsers.push({ id: fatherUser.id, email: fatherUser.email, name: fatherUser.name });
         }
 
         let parent = await tx.parent.findUnique({ where: { userId: fatherUser.id } });
@@ -141,6 +152,7 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
               isActive: true,
             },
           });
+          newlyCreatedUsers.push({ id: motherUser.id, email: motherUser.email, name: motherUser.name });
         }
 
         let parent = await tx.parent.findUnique({ where: { userId: motherUser.id } });
@@ -180,6 +192,25 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
     });
 
     logAuditFromRequest(req, "CREATE", "student", studentId, { newData: fullStudent });
+
+    // Fire-and-forget welcome emails to every newly-created account
+    // (student + any new parent accounts) - sent AFTER the transaction
+    // commits, since notification delivery is a side effect that must
+    // never roll back a successful admission if it fails.
+    for (const newUser of newlyCreatedUsers) {
+      const tmpl = welcomeEmail({
+        name: newUser.name,
+        email: newUser.email,
+        loginUrl: `${config.frontendUrl}/auth/login`,
+      });
+      notify({
+        userId: newUser.id,
+        type: "GENERAL",
+        title: tmpl.subject,
+        body: tmpl.text,
+        emailTemplate: tmpl,
+      }).catch((err) => console.error("Failed to send welcome email:", err));
+    }
 
     sendSuccess(res, fullStudent, "Student admitted successfully", 201);
   } catch (error) {

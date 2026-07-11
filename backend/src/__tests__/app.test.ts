@@ -36,3 +36,21 @@ describe("Unknown routes", () => {
     expect(res.body.success).toBe(false);
   });
 });
+
+// Phase 1 (Communication) - device registration and fee reminders both
+// require auth; these smoke tests confirm the routes are actually
+// mounted and reachable (would 404 if a route file typo'd the path)
+// without needing a live database.
+describe("Phase 1 communication routes require authentication", () => {
+  it("rejects an unauthenticated device registration request with 401", async () => {
+    const res = await request(app)
+      .post("/api/communication/notifications/devices/register")
+      .send({ token: "tok", platform: "ANDROID" });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects an unauthenticated fee-reminder send request with 401", async () => {
+    const res = await request(app).post("/api/fees/reminders/send");
+    expect(res.status).toBe(401);
+  });
+});

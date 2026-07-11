@@ -43,11 +43,32 @@ export const config = {
     fromName: process.env.SMTP_FROM_NAME || "School ERP",
   },
   sms: {
+    // MSG91 Flow API (https://docs.msg91.com/reference/send-otp) - the
+    // "authkey" is the account-level API key, `templateId` is the DLT-
+    // registered flow/template ID for the fee-reminder/generic message.
+    // If templateId is unset, we fall back to MSG91's simpler legacy
+    // /api/v5/otp or plain-SMS style endpoint (see smsProvider.ts).
+    provider: process.env.SMS_PROVIDER || "msg91",
     apiKey: process.env.SMS_API_KEY || "",
     senderId: process.env.SMS_SENDER_ID || "SCHLRP",
+    templateId: process.env.SMS_TEMPLATE_ID || "",
+    route: process.env.SMS_ROUTE || "4", // MSG91 transactional route
   },
   whatsapp: {
+    // Interakt (https://www.interakt.shop/) by default - `apiUrl`
+    // defaults to their public API base if unset.
     apiKey: process.env.WHATSAPP_API_KEY || "",
-    apiUrl: process.env.WHATSAPP_API_URL || "",
+    apiUrl: process.env.WHATSAPP_API_URL || "https://api.interakt.ai/v1/public",
+  },
+  push: {
+    // Firebase Cloud Messaging (HTTP v1 API) - requires a service
+    // account. FCM_PROJECT_ID + FCM_CLIENT_EMAIL + FCM_PRIVATE_KEY come
+    // straight from the downloaded service-account JSON.
+    projectId: process.env.FCM_PROJECT_ID || "",
+    clientEmail: process.env.FCM_CLIENT_EMAIL || "",
+    // Service account private keys are PEM blocks with literal newlines,
+    // which don't survive .env files well - convention is to store them
+    // with "\n" escapes and unescape at load time.
+    privateKey: (process.env.FCM_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
   },
 };
