@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import {
-  getAccounts, createAccount, updateAccount, deleteAccount,
+  getAccounts, createAccount, updateAccount, deleteAccount, setupDefaultAccounts,
   createVoucher, approveVoucher, deleteVoucher,
   getDayBook, getLedger, getTrialBalance,
   getProfitAndLoss, getBalanceSheet,
@@ -19,6 +19,7 @@ router.use(authenticate);
 // Chart of Accounts
 router.get("/accounts", authorize(...FINANCE), getAccounts);
 router.post("/accounts", authorize(...ADMIN), branchAccess, validate(createAccountSchema), createAccount);
+router.post("/accounts/setup-defaults", authorize(...ADMIN), branchAccess, setupDefaultAccounts);
 router.put("/accounts/:id", authorize(...ADMIN), updateAccount);
 router.delete("/accounts/:id", authorize(...ADMIN), deleteAccount);
 

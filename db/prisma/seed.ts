@@ -251,6 +251,13 @@ async function main() {
 
 
   // 11. Create default Chart of Accounts (basic)
+  // NOTE: this list is intentionally duplicated (not imported) in
+  // backend/src/services/defaultChartOfAccounts.ts, which seeds the
+  // same defaults for every branch created through the running app
+  // (not just this one-time demo script) and backs the
+  // POST /accounting/accounts/setup-defaults backfill endpoint. `db`
+  // is a separate package with no dependency on `backend`, so keep
+  // both lists in sync by hand if you add/change an account here.
   const accounts = [
     { name: "Cash", code: "1001", type: "ASSET" as const },
     { name: "Bank Account", code: "1002", type: "ASSET" as const },

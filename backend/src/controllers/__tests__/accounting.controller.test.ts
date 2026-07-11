@@ -3,14 +3,15 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    account: { findUnique: jest.fn(), create: jest.fn() },
+    account: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn(), createMany: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
 
 import prisma from "../../config/database";
-import { createAccount, createVoucher } from "../accounting.controller";
+import { createAccount, createVoucher, setupDefaultAccounts } from "../accounting.controller";
 import { AuthRequest } from "../../types";
+import { DEFAULT_CHART_OF_ACCOUNTS } from "../../services/defaultChartOfAccounts";
 
 const makeMockRes = () => {
   const res: any = {};
@@ -129,6 +130,71 @@ describe("accounting.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // BUG FIX: a branch created through the app (as opposed to
+  // db/prisma/seed.ts's demo data) had NO Chart of Accounts at all,
+  // which made every fee payment fail with "Failed to collect payment"
+  // (autoPostToAccounting requires a Cash/1001 + Fee Income/3001
+  // account to exist - see feePayment.service.ts). This endpoint lets
+  // an admin backfill the missing defaults for their branch without
+  // needing database/shell access.
+  describe("setupDefaultAccounts", () => {
+    it("seeds every default account for the caller's own branch when none exist", async () => {
+      (prisma.account.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.account.createMany as jest.Mock).mockResolvedValue({ count: DEFAULT_CHART_OF_ACCOUNTS.length });
+
+      const req = makeReq({ user: { userId: "u1", email: "e", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" } });
+      const res = makeMockRes();
+
+      await setupDefaultAccounts(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const createManyCall = (prisma.account.createMany as jest.Mock).mock.calls[0][0];
+      expect(createManyCall.data).toHaveLength(DEFAULT_CHART_OF_ACCOUNTS.length);
+      expect(createManyCall.data.every((a: any) => a.branchId === "branch-1")).toBe(true);
+    });
+
+    it("is a no-op (still 200) when every default account already exists", async () => {
+      (prisma.account.findMany as jest.Mock).mockResolvedValue(
+        DEFAULT_CHART_OF_ACCOUNTS.map((a) => ({ code: a.code }))
+      );
+
+      const req = makeReq({ user: { userId: "u1", email: "e", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" } });
+      const res = makeMockRes();
+
+      await setupDefaultAccounts(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.account.createMany).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when no branchId can be resolved", async () => {
+      const req = makeReq({ user: { userId: "u1", email: "e", role: UserRole.ACCOUNTANT, branchId: undefined } });
+      const res = makeMockRes();
+
+      await setupDefaultAccounts(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.account.findMany).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: a Branch Admin always sets up defaults for their own branch, ignoring any ?branchId= query param", async () => {
+      (prisma.account.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.account.createMany as jest.Mock).mockResolvedValue({ count: DEFAULT_CHART_OF_ACCOUNTS.length });
+
+      const req = makeReq({
+        query: { branchId: "branch-OTHER" },
+        user: { userId: "u1", email: "e", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+      });
+      const res = makeMockRes();
+
+      await setupDefaultAccounts(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const createManyCall = (prisma.account.createMany as jest.Mock).mock.calls[0][0];
+      expect(createManyCall.data.every((a: any) => a.branchId === "branch-1")).toBe(true);
     });
   });
 });

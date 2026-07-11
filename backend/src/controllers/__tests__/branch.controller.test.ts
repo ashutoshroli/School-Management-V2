@@ -7,15 +7,17 @@ jest.mock("bcryptjs", () => ({
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    branch: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+    branch: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), create: jest.fn() },
     user: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
     staff: { count: jest.fn(), create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+    account: { findMany: jest.fn(), createMany: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createBranchAdmin, getBranchAdmins, setBranchAdminStatus } from "../branch.controller";
+import { createBranch, createBranchAdmin, getBranchAdmins, setBranchAdminStatus } from "../branch.controller";
 import { AuthRequest } from "../../types";
+import { DEFAULT_CHART_OF_ACCOUNTS } from "../../services/defaultChartOfAccounts";
 
 const makeMockRes = () => {
   const res: any = {};
@@ -32,6 +34,52 @@ const makeReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
     user: { userId: "super-1", email: "super@test.com", role: UserRole.SUPER_ADMIN, organizationId: "org-1" },
     ...overrides,
   } as any);
+
+describe("branch.controller - createBranch", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue(null); // code not taken
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ organizationId: "org-1" });
+    (prisma.branch.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "branch-new", ...data }));
+    (prisma.account.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.account.createMany as jest.Mock).mockResolvedValue({ count: DEFAULT_CHART_OF_ACCOUNTS.length });
+  });
+
+  // BUG FIX: a branch created through this endpoint used to get NO
+  // Chart of Accounts at all (only db/prisma/seed.ts's one-time demo
+  // data seeded any) - the very first fee payment collected against it
+  // would fail with "Failed to collect payment" because
+  // autoPostToAccounting (feePayment.service.ts) requires a Cash
+  // (1001) and Fee Income (3001) account to already exist. This
+  // regression-tests that creating a branch now seeds those defaults
+  // automatically.
+  it("BUG FIX: seeds the default Chart of Accounts for the newly created branch", async () => {
+    const req = makeReq({ body: { name: "North Campus", code: "NORTH" } });
+    const res = makeMockRes();
+
+    await createBranch(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(prisma.account.createMany).toHaveBeenCalledTimes(1);
+    const createManyCall = (prisma.account.createMany as jest.Mock).mock.calls[0][0];
+    expect(createManyCall.data).toHaveLength(DEFAULT_CHART_OF_ACCOUNTS.length);
+    expect(createManyCall.data.every((a: any) => a.branchId === "branch-new")).toBe(true);
+    expect(createManyCall.data.some((a: any) => a.code === "1001")).toBe(true);
+    expect(createManyCall.data.some((a: any) => a.code === "3001")).toBe(true);
+  });
+
+  it("returns 400 when the branch code is already taken", async () => {
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ id: "existing-branch" });
+    const req = makeReq({ body: { name: "North Campus", code: "NORTH" } });
+    const res = makeMockRes();
+
+    await createBranch(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.branch.create).not.toHaveBeenCalled();
+    expect(prisma.account.createMany).not.toHaveBeenCalled();
+  });
+});
 
 describe("branch.controller - createBranchAdmin", () => {
   beforeEach(() => {

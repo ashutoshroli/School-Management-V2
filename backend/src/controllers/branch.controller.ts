@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
+import { seedDefaultAccountsForBranch } from "../services/defaultChartOfAccounts";
 
 /**
  * Create a new branch
@@ -40,6 +41,17 @@ export const createBranch = async (req: AuthRequest, res: Response): Promise<voi
         isActive: true,
       },
     });
+
+    // BUG FIX: without this, a branch created through the app (as
+    // opposed to db/prisma/seed.ts's demo data) had NO Chart of
+    // Accounts at all - the very first fee payment collected against
+    // it would fail with "Failed to collect payment" because
+    // autoPostToAccounting (feePayment.service.ts) requires a Cash
+    // (1001) and Fee Income (3001) account to exist before it will
+    // post the payment's ledger entry. Seed the same defaults the demo
+    // data gets, right when the branch is created, so fee collection
+    // works out of the box.
+    await seedDefaultAccountsForBranch(branch.id);
 
     sendSuccess(res, branch, "Branch created successfully", 201);
   } catch (error) {

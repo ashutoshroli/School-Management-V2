@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BookOpen, Plus, Trash2 } from "lucide-react";
+import { BookOpen, Plus, Trash2, Sparkles } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -21,6 +21,7 @@ export default function ChartOfAccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [settingUpDefaults, setSettingUpDefaults] = useState(false);
   // Note: branchId is deliberately NOT part of this form - the backend
   // always scopes creation to the logged-in user's own branch.
   const [form, setForm] = useState({ name: "", code: "", type: "ASSET", parentId: "" });
@@ -48,6 +49,24 @@ export default function ChartOfAccountsPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this account"); }
   };
 
+  // Creates the baseline Cash/Bank/Fee Income/etc accounts for this
+  // branch if they're missing. Required before fee payments can be
+  // collected - see autoPostToAccounting's doc comment in
+  // feePayment.service.ts for why "Failed to collect payment" happens
+  // without this.
+  const setupDefaults = async () => {
+    setSettingUpDefaults(true);
+    try {
+      const res = await api.post("/accounting/accounts/setup-defaults");
+      alert(res.data.message);
+      fetch();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to set up default accounts");
+    } finally {
+      setSettingUpDefaults(false);
+    }
+  };
+
   const grouped = {
     ASSET: accounts.filter(a => a.type === "ASSET"),
     LIABILITY: accounts.filter(a => a.type === "LIABILITY"),
@@ -60,8 +79,20 @@ export default function ChartOfAccountsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2"><BookOpen className="h-6 w-6 text-primary-600" /> Chart of Accounts</h1>
-        <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Add Account</button>
+        <div className="flex items-center gap-3">
+          <button onClick={setupDefaults} disabled={settingUpDefaults} className="btn-secondary flex items-center gap-2 disabled:opacity-50">
+            <Sparkles className="h-4 w-4" /> {settingUpDefaults ? "Setting up..." : "Set Up Default Accounts"}
+          </button>
+          <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Add Account</button>
+        </div>
       </div>
+
+      {accounts.length === 0 && !loading && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          No accounts found for this branch yet. Click <span className="font-medium">"Set Up Default Accounts"</span> above -
+          this is required before you can collect fee payments (fee collection posts to the Cash and Fee Income accounts automatically).
+        </div>
+      )}
 
 
       {loading ? (

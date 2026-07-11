@@ -3,8 +3,39 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
+import { seedDefaultAccountsForBranch } from "../services/defaultChartOfAccounts";
 
 // ==================== CHART OF ACCOUNTS ====================
+
+/**
+ * Backfills the default Chart of Accounts (Cash, Bank, Fee Income,
+ * etc) for the caller's branch. createBranch (branch.controller.ts)
+ * now does this automatically for every NEW branch, but any branch
+ * created before that fix shipped has no accounts at all, which makes
+ * fee collection fail with "Failed to collect payment" (see
+ * autoPostToAccounting's doc comment in feePayment.service.ts).
+ * Idempotent - safe to call even if some/all default accounts already
+ * exist, so this doubles as a "repair" action too.
+ */
+export const setupDefaultAccounts = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    if (!branchId) { sendError(res, "Branch ID required", 400); return; }
+    if (!canAccessBranch(req, branchId)) { sendError(res, "Access denied: branch mismatch", 403); return; }
+
+    const { created, alreadyExisted } = await seedDefaultAccountsForBranch(branchId);
+
+    sendSuccess(
+      res,
+      { created, alreadyExisted },
+      created > 0
+        ? `Created ${created} default account(s). Fee collection is now ready for this branch.`
+        : "All default accounts already existed - nothing to do."
+    );
+  } catch (error) {
+    sendError(res, "Failed to set up default accounts", 500, (error as Error).message);
+  }
+};
 
 export const getAccounts = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
