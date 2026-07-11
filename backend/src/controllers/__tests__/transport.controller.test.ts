@@ -3,13 +3,15 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    transportRoute: { create: jest.fn() },
+    transportRoute: { create: jest.fn(), findUnique: jest.fn() },
     vehicle: { create: jest.fn() },
+    student: { findUnique: jest.fn() },
+    transportAllocation: { upsert: jest.fn(), findUnique: jest.fn(), delete: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createRoute, addVehicle } from "../transport.controller";
+import { createRoute, addVehicle, allocateStudent, removeAllocation } from "../transport.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -95,6 +97,129 @@ describe("transport.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect((prisma.vehicle.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+    });
+  });
+
+  describe("allocateStudent", () => {
+    const ROUTE = { id: "route-1", branchId: "branch-1" };
+    const STUDENT = { branchId: "branch-1" };
+
+    beforeEach(() => {
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue(ROUTE);
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(STUDENT);
+      (prisma.transportAllocation.upsert as jest.Mock).mockResolvedValue({ studentId: "student-1", routeId: "route-1" });
+    });
+
+    it("returns 400 when studentId or routeId is missing", async () => {
+      const req = makeReq({ body: { routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await allocateStudent(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.transportAllocation.upsert).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the route does not exist", async () => {
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { studentId: "student-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await allocateStudent(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("SECURITY: rejects a route from a different branch", async () => {
+      (prisma.transportRoute.findUnique as jest.Mock).mockResolvedValue({ id: "route-1", branchId: "branch-OTHER" });
+      const req = makeReq({ body: { studentId: "student-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await allocateStudent(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.student.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the student does not exist", async () => {
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { studentId: "student-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await allocateStudent(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.transportAllocation.upsert).not.toHaveBeenCalled();
+    });
+
+    // SECURITY: a studentId is just a string from the request body -
+    // without this check, a Branch Admin could allocate (and later
+    // get a transport fee assigned to) a student who belongs to a
+    // completely different branch's route.
+    it("SECURITY: rejects a student from a different branch than the route", async () => {
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-OTHER" });
+      const req = makeReq({ body: { studentId: "student-1", routeId: "route-1" } });
+      const res = makeMockRes();
+
+      await allocateStudent(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.transportAllocation.upsert).not.toHaveBeenCalled();
+    });
+
+    it("allocates the student to the route when everything checks out", async () => {
+      const req = makeReq({ body: { studentId: "student-1", routeId: "route-1", stopName: "Main Gate" } });
+      const res = makeMockRes();
+
+      await allocateStudent(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.transportAllocation.upsert).toHaveBeenCalledWith({
+        where: { studentId: "student-1" },
+        update: { routeId: "route-1", stopName: "Main Gate" },
+        create: { studentId: "student-1", routeId: "route-1", stopName: "Main Gate" },
+      });
+    });
+  });
+
+  describe("removeAllocation", () => {
+    it("removes the allocation when it exists in the caller's branch", async () => {
+      (prisma.transportAllocation.findUnique as jest.Mock).mockResolvedValue({
+        studentId: "student-1",
+        route: { branchId: "branch-1" },
+      });
+      const req = makeReq({ params: { studentId: "student-1" } });
+      const res = makeMockRes();
+
+      await removeAllocation(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.transportAllocation.delete).toHaveBeenCalledWith({ where: { studentId: "student-1" } });
+    });
+
+    it("returns 404 when the student has no allocation", async () => {
+      (prisma.transportAllocation.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ params: { studentId: "student-1" } });
+      const res = makeMockRes();
+
+      await removeAllocation(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.transportAllocation.delete).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects removing an allocation belonging to a different branch's route", async () => {
+      (prisma.transportAllocation.findUnique as jest.Mock).mockResolvedValue({
+        studentId: "student-1",
+        route: { branchId: "branch-OTHER" },
+      });
+      const req = makeReq({ params: { studentId: "student-1" } });
+      const res = makeMockRes();
+
+      await removeAllocation(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.transportAllocation.delete).not.toHaveBeenCalled();
     });
   });
 });

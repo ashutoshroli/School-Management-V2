@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2 } from "lucide-react";
+import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -22,6 +22,18 @@ export default function TransportPage() {
   const [assigning, setAssigning] = useState(false);
   const [assignResult, setAssignResult] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Manage Students (allocate/remove students on a route) - this is
+  // what actually populates TransportAllocation, which the "Assign Fee
+  // to Allocated Students" button above depends on. Without this,
+  // every route always shows "0 students" and that button stays
+  // permanently disabled.
+  const [manageRoute, setManageRoute] = useState<any>(null);
+  const [studentSearch, setStudentSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [allocatingId, setAllocatingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
   const fetch = async () => {
     setLoading(true);
     try {
@@ -37,6 +49,17 @@ export default function TransportPage() {
     } catch {} finally { setLoading(false); }
   };
   useEffect(() => { fetch(); }, []);
+
+  // Keep the open "Manage Students" modal in sync with the latest
+  // fetched route data (e.g. right after allocating/removing a
+  // student) instead of it going stale until the modal is reopened.
+  useEffect(() => {
+    if (manageRoute) {
+      const fresh = routes.find((r) => r.id === manageRoute.id);
+      if (fresh) setManageRoute(fresh);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routes]);
 
   const openAssignModal = (route: any) => {
     setAssignRoute(route);
@@ -61,6 +84,53 @@ export default function TransportPage() {
       setAssignResult({ type: "error", text: err.response?.data?.message || "Failed to assign transport fee" });
     } finally {
       setAssigning(false);
+    }
+  };
+
+  const openManageModal = (route: any) => {
+    setManageRoute(route);
+    setStudentSearch("");
+    setSearchResults([]);
+  };
+
+  const searchStudents = async () => {
+    if (!studentSearch.trim()) { setSearchResults([]); return; }
+    setSearchLoading(true);
+    try {
+      const res = await api.get("/students", { params: { search: studentSearch, limit: 20 } });
+      setSearchResults(res.data.data || []);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const allocateToRoute = async (studentId: string) => {
+    if (!manageRoute) return;
+    setAllocatingId(studentId);
+    try {
+      await api.post("/facilities/transport/allocate", { studentId, routeId: manageRoute.id });
+      await fetch();
+      setSearchResults([]);
+      setStudentSearch("");
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to allocate student to route");
+    } finally {
+      setAllocatingId(null);
+    }
+  };
+
+  const removeFromRoute = async (studentId: string, name: string) => {
+    if (!confirm(`Remove ${name} from this route?`)) return;
+    setRemovingId(studentId);
+    try {
+      await api.delete(`/facilities/transport/allocate/${studentId}`);
+      await fetch();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to remove student from route");
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -117,10 +187,16 @@ export default function TransportPage() {
                   </div>
                 )}
                 <button
+                  onClick={() => openManageModal(r)}
+                  className="mt-3 w-full text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-50 rounded-lg py-1.5 flex items-center justify-center gap-1"
+                >
+                  <Users className="h-3.5 w-3.5" /> Manage Students
+                </button>
+                <button
                   onClick={() => openAssignModal(r)}
                   disabled={!r._count?.allocations}
                   title={!r._count?.allocations ? "No students allocated to this route yet" : "Assign this route's fee to every allocated student"}
-                  className="mt-3 w-full text-xs font-medium text-primary-600 hover:text-primary-700 border border-primary-200 hover:bg-primary-50 rounded-lg py-1.5 flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="mt-2 w-full text-xs font-medium text-primary-600 hover:text-primary-700 border border-primary-200 hover:bg-primary-50 rounded-lg py-1.5 flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <IndianRupee className="h-3.5 w-3.5" /> Assign Fee to Allocated Students
                 </button>
@@ -159,6 +235,92 @@ export default function TransportPage() {
           <div><label className="block text-sm font-medium mb-1">Monthly Fee (Rs) *</label><input type="number" className="input-field" value={form.monthlyFee} onChange={e => setForm({...form, monthlyFee: e.target.value})} required /></div>
           <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Create</button></div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!manageRoute} onClose={() => setManageRoute(null)} title={`Manage Students - ${manageRoute?.name || ""}`} size="lg">
+        <div className="space-y-4">
+          <div>
+            <h4 className="text-sm font-semibold text-gray-600 mb-2">
+              Allocated Students ({manageRoute?.allocations?.length || 0})
+            </h4>
+            {manageRoute?.allocations?.length > 0 ? (
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {manageRoute.allocations.map((a: any) => (
+                  <div key={a.student.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                    <div>
+                      <p className="font-medium">{a.student.user.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {a.student.admissionNo} &bull; {a.student.class?.name}{a.student.section?.name ? `-${a.student.section.name}` : ""}
+                        {a.stopName ? ` \u2022 Stop: ${a.stopName}` : ""}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => removeFromRoute(a.student.id, a.student.user.name)}
+                      disabled={removingId === a.student.id}
+                      title="Remove from route"
+                      className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
+                    >
+                      <UserMinus className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">No students allocated yet - search below to add some.</p>
+            )}
+          </div>
+
+          <div className="pt-3 border-t">
+            <h4 className="text-sm font-semibold text-gray-600 mb-2">Add Student</h4>
+            <div className="flex gap-2 mb-3">
+              <div className="relative flex-1">
+                <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  className="input-field pl-9 w-full"
+                  placeholder="Search by name, admission no, roll no..."
+                  value={studentSearch}
+                  onChange={(e) => setStudentSearch(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && searchStudents()}
+                />
+              </div>
+              <button type="button" onClick={searchStudents} className="btn-secondary text-sm">Search</button>
+            </div>
+
+            {searchLoading ? (
+              <div className="flex justify-center py-4">
+                <div className="animate-spin h-5 w-5 border-4 border-primary-600 border-t-transparent rounded-full" />
+              </div>
+            ) : searchResults.length > 0 ? (
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {searchResults.map((s: any) => {
+                  const alreadyOnThisRoute = manageRoute?.allocations?.some((a: any) => a.student.id === s.id);
+                  return (
+                    <div key={s.id} className="flex items-center justify-between border px-3 py-2 rounded-lg text-sm">
+                      <div>
+                        <p className="font-medium">{s.user?.name}</p>
+                        <p className="text-xs text-gray-500">{s.admissionNo} &bull; {s.class?.name}{s.section?.name ? `-${s.section.name}` : ""}</p>
+                      </div>
+                      <button
+                        onClick={() => allocateToRoute(s.id)}
+                        disabled={alreadyOnThisRoute || allocatingId === s.id}
+                        title={alreadyOnThisRoute ? "Already allocated to this route" : "Allocate to this route"}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <UserPlus className="h-3.5 w-3.5" /> {alreadyOnThisRoute ? "Added" : allocatingId === s.id ? "Adding..." : "Add"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : studentSearch.trim() ? (
+              <p className="text-sm text-gray-400">No students found</p>
+            ) : null}
+          </div>
+
+          <div className="flex justify-end pt-4 border-t">
+            <button type="button" onClick={() => setManageRoute(null)} className="btn-secondary">Close</button>
+          </div>
+        </div>
       </Modal>
 
       <Modal isOpen={!!assignRoute} onClose={() => setAssignRoute(null)} title={`Assign Transport Fee - ${assignRoute?.name || ""}`}>

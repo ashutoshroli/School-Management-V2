@@ -2,7 +2,7 @@ import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { addBook, getBooks, issueBook, returnBook, getIssuedBooks, deleteBook } from "../controllers/library.controller";
 import { addItem, getItems, purchaseStock, issueStock, getLowStockAlerts, deleteItem } from "../controllers/inventory.controller";
-import { createRoute, getRoutes, addStop, allocateStudent, getVehicles, addVehicle, deleteVehicle, deleteRoute } from "../controllers/transport.controller";
+import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, addVehicle, deleteVehicle, deleteRoute } from "../controllers/transport.controller";
 import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, deallocateRoom, getOccupancy, deleteBuilding } from "../controllers/hostel.controller";
 import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
@@ -33,6 +33,7 @@ router.post("/transport/routes", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER)
 router.get("/transport/routes", getRoutes);
 router.post("/transport/stops", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), addStop);
 router.post("/transport/allocate", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), allocateStudent);
+router.delete("/transport/allocate/:studentId", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), removeAllocation);
 router.get("/transport/vehicles", getVehicles);
 router.post("/transport/vehicles", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), branchAccess, addVehicle);
 router.delete("/transport/vehicles/:id", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), deleteVehicle);

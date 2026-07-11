@@ -14,7 +14,10 @@ const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
 router.use(authenticate);
 
 router.post("/", authorize(...ADMIN), branchAccess, validate(createStudentSchema), createStudent);
-router.get("/", authorize(...ADMIN, UserRole.TEACHER, UserRole.ACCOUNTANT), getStudents);
+// TRANSPORT_MANAGER added so transport staff can search students to
+// allocate onto a route (Transport > Manage Students) without needing
+// full ADMIN access.
+router.get("/", authorize(...ADMIN, UserRole.TEACHER, UserRole.ACCOUNTANT, UserRole.TRANSPORT_MANAGER), getStudents);
 // Registered before "/:id" - "id-cards" is a distinct path segment so
 // there's no actual routing ambiguity with the :id param below, but
 // keeping the more specific static route first matches this file's
