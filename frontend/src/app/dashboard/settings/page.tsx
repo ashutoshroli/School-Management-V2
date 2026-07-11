@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle, DatabaseZap, Plus, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { resolveUploadUrl } from "@/lib/uploads";
@@ -9,6 +9,22 @@ import FileUploadButton from "@/components/ui/FileUploadButton";
 import ErrorBanner from "@/components/ui/ErrorBanner";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+
+interface DemoDataStatus {
+  seeded: boolean;
+  branchId: string | null;
+  counts: {
+    classes: number;
+    sections: number;
+    subjects: number;
+    feeCategories: number;
+    accounts: number;
+    students: number;
+    staff: number;
+  };
+  canRemove: boolean;
+  blockedReasons: string[];
+}
 
 const RESULT_LABELS: Record<string, string> = {
   studentsCreated: "Students",
@@ -43,6 +59,76 @@ export default function SettingsPage() {
   const [branchLoading, setBranchLoading] = useState(false);
 
   const isAdmin = user?.role === "SUPER_ADMIN" || user?.role === "BRANCH_ADMIN";
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
+
+  // Structural "Demo Data" (Super Admin only) - creates/removes the
+  // demo organization/branch/classes/subjects/fee categories/chart of
+  // accounts/leave types/permissions entirely from the server, so a
+  // trial deployment on a host with no Shell access (e.g. Render's
+  // free tier) can be bootstrapped from this page alone - no local
+  // machine or `npm run seed` required (see DEPLOY.md's Step 4, which
+  // this UI is the in-app alternative to). This is the prerequisite
+  // step before "Generate Demo Data" below, which fills an EXISTING
+  // branch with realistic transactional records.
+  const [demoStatus, setDemoStatus] = useState<DemoDataStatus | null>(null);
+  const [demoStatusLoading, setDemoStatusLoading] = useState(false);
+  const [demoActionLoading, setDemoActionLoading] = useState<"seed" | "remove" | null>(null);
+  const [demoMessage, setDemoMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+
+  const fetchDemoStatus = async () => {
+    if (!isSuperAdmin) return;
+    setDemoStatusLoading(true);
+    try {
+      const res = await api.get("/demo-data/status");
+      setDemoStatus(res.data.data);
+    } catch {
+      setDemoStatus(null);
+    } finally {
+      setDemoStatusLoading(false);
+    }
+  };
+
+  const handleAddDemoData = async () => {
+    setDemoMessage(null);
+    setDemoActionLoading("seed");
+    try {
+      const res = await api.post("/demo-data/seed");
+      const summary = res.data.data;
+      setDemoMessage({
+        type: "success",
+        text: `Demo data added: ${summary.classes} classes, ${summary.sections} sections, ${summary.subjects} subjects, ${summary.feeCategories} fee categories. Login as ${summary.superAdminEmail} / Admin@123 (Super Admin) or ${summary.branchAdminEmail} / Admin@123 (Branch Admin).`,
+      });
+      await fetchDemoStatus();
+    } catch (err: any) {
+      setDemoMessage({ type: "error", text: err.response?.data?.message || "Failed to add demo data" });
+    } finally {
+      setDemoActionLoading(null);
+    }
+  };
+
+  const handleRemoveDemoData = async () => {
+    setDemoMessage(null);
+    setShowRemoveConfirm(false);
+    setDemoActionLoading("remove");
+    try {
+      const res = await api.post("/demo-data/remove");
+      setDemoMessage({ type: "success", text: res.data.message || "Demo data removed" });
+      await fetchDemoStatus();
+    } catch (err: any) {
+      const reasons: string[] | undefined = (() => {
+        try {
+          return err.response?.data?.error ? JSON.parse(err.response.data.error) : undefined;
+        } catch {
+          return undefined;
+        }
+      })();
+      const base = err.response?.data?.message || "Failed to remove demo data";
+      setDemoMessage({ type: "error", text: reasons?.length ? `${base} Blocked by: ${reasons.join(", ")}.` : base });
+    } finally {
+      setDemoActionLoading(null);
+    }
+  };
 
   // Generate Demo Data - bulk-fills the current branch with realistic
   // students/staff/fees/attendance/exams/homework/notices/transport/
@@ -119,6 +205,7 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchProfile();
     fetchOwnBranch();
+    fetchDemoStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -310,6 +397,118 @@ export default function SettingsPage() {
               <a href="/dashboard/branches" className="inline-block mt-4 text-sm font-medium text-primary-600 hover:underline">
                 Manage branches &rarr;
               </a>
+            </div>
+          )}
+
+          {/* Structural Demo Data seed/remove (Super Admin only) - the
+              prerequisite step before "Generate Demo Data" below can
+              be used on a brand-new/empty deployment. */}
+          {isSuperAdmin && (
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <DatabaseZap className="h-5 w-5 text-amber-600" /> Demo Data
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Add a ready-made demo organization, branch, classes, subjects, fee categories and chart of accounts -
+                the starting structure a brand-new/empty deployment needs before you can use &quot;Generate Demo
+                Data&quot; below. Runs entirely on the server, no local machine or Shell access needed.
+              </p>
+
+              {demoMessage && (
+                <div
+                  className={`mb-4 text-sm rounded-lg px-3 py-2 ${
+                    demoMessage.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+                  }`}
+                >
+                  {demoMessage.text}
+                </div>
+              )}
+
+              {demoStatusLoading ? (
+                <div className="flex justify-center py-6">
+                  <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+                </div>
+              ) : demoStatus?.seeded ? (
+                <>
+                  <dl className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm mb-4">
+                    <div>
+                      <dt className="text-gray-500">Classes</dt>
+                      <dd className="font-medium text-gray-900">{demoStatus.counts.classes}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-gray-500">Sections</dt>
+                      <dd className="font-medium text-gray-900">{demoStatus.counts.sections}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-gray-500">Subjects</dt>
+                      <dd className="font-medium text-gray-900">{demoStatus.counts.subjects}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-gray-500">Students</dt>
+                      <dd className="font-medium text-gray-900">{demoStatus.counts.students}</dd>
+                    </div>
+                  </dl>
+
+                  {!demoStatus.canRemove && demoStatus.blockedReasons.length > 0 && (
+                    <div className="mb-4 text-sm rounded-lg px-3 py-2 bg-amber-50 text-amber-800 border border-amber-200 flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                      <span>
+                        Cannot remove - real data exists on top of the demo branch: {demoStatus.blockedReasons.join(", ")}.
+                        Remove/reassign those first, or keep the demo data.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleAddDemoData}
+                      disabled={demoActionLoading !== null}
+                      className="btn-secondary flex items-center gap-2 disabled:opacity-60"
+                    >
+                      {demoActionLoading === "seed" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                      Re-sync Demo Data
+                    </button>
+                    <button
+                      onClick={() => setShowRemoveConfirm(true)}
+                      disabled={demoActionLoading !== null || !demoStatus.canRemove}
+                      className="px-4 py-2 rounded-lg text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {demoActionLoading === "remove" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      Remove Demo Data
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  onClick={handleAddDemoData}
+                  disabled={demoActionLoading !== null}
+                  className="btn-primary flex items-center gap-2 disabled:opacity-60"
+                >
+                  {demoActionLoading === "seed" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  {demoActionLoading === "seed" ? "Adding..." : "Add Demo Data"}
+                </button>
+              )}
+
+              {/* Remove confirmation */}
+              {showRemoveConfirm && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowRemoveConfirm(false)}>
+                  <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+                    <h4 className="text-lg font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                      <AlertTriangle className="h-5 w-5 text-red-500" /> Remove Demo Data?
+                    </h4>
+                    <p className="text-sm text-gray-600 mb-5">
+                      This permanently deletes the demo organization, branch, classes, sections, subjects, fee categories,
+                      chart of accounts, and the demo Branch Admin login. This cannot be undone.
+                    </p>
+                    <div className="flex justify-end gap-3">
+                      <button onClick={() => setShowRemoveConfirm(false)} className="btn-secondary">Cancel</button>
+                      <button onClick={handleRemoveDemoData} className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700">
+                        Yes, Remove It
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
