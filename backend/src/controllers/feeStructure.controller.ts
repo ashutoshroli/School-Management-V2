@@ -3,6 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
+import { cached, CacheKeys, CacheTTL, invalidateFeeStructuresCache } from "../services/cache.service";
 
 /**
  * Create fee structure (class-wise, with frequency & late fee rules)
@@ -69,6 +70,7 @@ export const createFeeStructure = async (req: AuthRequest, res: Response): Promi
       where: { id: structure.id },
       include: { feeCategory: true, class: true, installments: true },
     });
+    await invalidateFeeStructuresCache(branchId);
 
     sendSuccess(res, full, "Fee structure created", 201);
   } catch (error) {
@@ -90,25 +92,36 @@ export const getFeeStructures = async (req: AuthRequest, res: Response): Promise
     if (classId) where.classId = classId;
     if (academicYearId) where.academicYearId = academicYearId;
 
-    const structures = await prisma.feeStructure.findMany({
-      where,
-      include: {
-        feeCategory: { select: { name: true, code: true } },
-        class: { select: { name: true } },
-        // Present only for transport-route-wise structures (classId
-        // null) - see the FeeStructure model's doc comment in
-        // schema.prisma for why a structure is exactly one or the
-        // other, never both.
-        transportRoute: { select: { name: true, startPoint: true, endPoint: true } },
-        academicYear: { select: { name: true } },
-        installments: { orderBy: { installmentNo: "asc" } },
-      },
-      // Transport-route-wise structures have no class (classId null),
-      // so they naturally sort after every class-wise structure here
-      // (Postgres/Prisma puts NULLs last by default for an ascending
-      // sort on a to-one relation's field).
-      orderBy: [{ class: { numericOrder: "asc" } }, { feeCategory: { name: "asc" } }],
-    });
+    // Cached (Phase 4) only for the common "whole branch, whole year"
+    // shape (no classId filter) - that's the query the Fees dashboard
+    // and fee-assignment flows actually hit repeatedly; a classId-
+    // filtered lookup is rarer and not worth a separate cache key
+    // dimension for.
+    const loadStructures = () =>
+      prisma.feeStructure.findMany({
+        where,
+        include: {
+          feeCategory: { select: { name: true, code: true } },
+          class: { select: { name: true } },
+          // Present only for transport-route-wise structures (classId
+          // null) - see the FeeStructure model's doc comment in
+          // schema.prisma for why a structure is exactly one or the
+          // other, never both.
+          transportRoute: { select: { name: true, startPoint: true, endPoint: true } },
+          academicYear: { select: { name: true } },
+          installments: { orderBy: { installmentNo: "asc" } },
+        },
+        // Transport-route-wise structures have no class (classId null),
+        // so they naturally sort after every class-wise structure here
+        // (Postgres/Prisma puts NULLs last by default for an ascending
+        // sort on a to-one relation's field).
+        orderBy: [{ class: { numericOrder: "asc" } }, { feeCategory: { name: "asc" } }],
+      });
+
+    const structures =
+      branchId && !classId
+        ? await cached(CacheKeys.feeStructuresByBranch(branchId, academicYearId), CacheTTL.FEE_STRUCTURES, loadStructures)
+        : await loadStructures();
 
     sendSuccess(res, structures, "Fee structures fetched");
   } catch (error) {
@@ -139,6 +152,7 @@ export const updateFeeStructure = async (req: AuthRequest, res: Response): Promi
         ...(isActive !== undefined && { isActive }),
       },
     });
+    await invalidateFeeStructuresCache(updated.branchId);
 
     sendSuccess(res, updated, "Fee structure updated");
   } catch (error) {
@@ -153,11 +167,14 @@ export const deleteFeeStructure = async (req: AuthRequest, res: Response): Promi
   try {
     const { id } = req.params;
 
+    const existingForDelete = await prisma.feeStructure.findUnique({ where: { id }, select: { branchId: true } });
+
     const count = await prisma.feeAssignment.count({ where: { feeStructureId: id } });
     if (count > 0) { sendError(res, `Cannot delete: ${count} students have this fee assigned`, 400); return; }
 
     await prisma.feeInstallment.deleteMany({ where: { feeStructureId: id } });
     await prisma.feeStructure.delete({ where: { id } });
+    if (existingForDelete) await invalidateFeeStructuresCache(existingForDelete.branchId);
 
     sendSuccess(res, null, "Fee structure deleted");
   } catch (error) {

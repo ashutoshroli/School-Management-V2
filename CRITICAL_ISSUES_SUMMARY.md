@@ -72,30 +72,27 @@ the script exists and is tested, but nothing runs it automatically yet.
 
 ---
 
-## 🟡 HIGH PRIORITY - Fix in Month 1
+## ✅ PHASE 4 - COMPLETED (Validators + Redis Caching)
 
-### 4. Missing Input Validators ⚠️
+**Status:** ✅ DONE
 
-**Current:** Only 7 validators exist  
-**Missing:** ~10 modules unvalidated (payroll, attendance, exams, etc.)
-
-**Risk:** Invalid data can reach database
-
-**Effort:** 2-3 days
-
----
-
-### 5. No Caching Layer ⚠️
-
-**Current:** Every request hits database
-
-**Impact:** Poor performance, database overload at scale
-
-**Fix:** Add Redis caching for branches, classes, fee structures
-
-**Effort:** 3-4 days
+- Added 13 new Zod validator files covering HR (attendance/leave/payroll),
+  academics (exam/timetable/homework/student-attendance), facilities
+  (library/inventory/transport/hostel/attendance-devices), notices, and
+  staff create/update
+- Wired `validate()` into 5 route files - every previously-unvalidated
+  create/update endpoint is now schema-checked before reaching its controller
+- Added Redis caching (`backend/src/config/redis.ts` +
+  `backend/src/services/cache.service.ts`), opt-in via `REDIS_URL`, no-op
+  when unset - wired into branches, classes, and fee structures (the most
+  frequently-read, rarely-changed data) with branch-scoped invalidation on
+  every create/update/delete
+- Added tests for both (`redis.test.ts`, `cache.service.test.ts`) -
+  51 suites / 470 tests pass, zero regressions
 
 ---
+
+## 🟡 HIGH PRIORITY - Remaining
 
 ### 6. Local File Storage Only ⚠️
 
@@ -126,8 +123,7 @@ the script exists and is tested, but nothing runs it automatically yet.
 ### 2. Frontend Dockerfile - MISSING
 **Impact:** No containerized frontend deployment (Phase 6 candidate)
 
-### 3. Missing Validators (10+ files)
-**Impact:** Incomplete request validation (Phase 4)
+### 3. Missing Validators - ✅ ADDED IN PHASE 4
 
 ---
 

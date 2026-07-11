@@ -1,0 +1,45 @@
+import { z } from "zod";
+
+const money = z.union([z.number(), z.string()]).transform((v) => Number(v)).refine((v) => Number.isFinite(v) && v >= 0, {
+  message: "Must be a non-negative number",
+});
+
+export const createRouteSchema = z.object({
+  body: z.object({
+    branchId: z.string().optional(),
+    name: z.string().min(1, "name is required"),
+    startPoint: z.string().min(1, "startPoint is required"),
+    endPoint: z.string().min(1, "endPoint is required"),
+    distance: money.optional(),
+    monthlyFee: money,
+  }),
+});
+
+export const addStopSchema = z.object({
+  body: z.object({
+    routeId: z.string().min(1, "routeId is required"),
+    name: z.string().min(1, "name is required"),
+    order: z.number().int().min(0, "order is required"),
+    time: z.string().min(1, "time is required"),
+  }),
+});
+
+export const allocateStudentSchema = z.object({
+  body: z.object({
+    studentId: z.string().min(1, "studentId is required"),
+    routeId: z.string().min(1, "routeId is required"),
+    stopName: z.string().optional(),
+  }),
+});
+
+export const addVehicleSchema = z.object({
+  body: z.object({
+    branchId: z.string().optional(),
+    vehicleNo: z.string().min(1, "vehicleNo is required"),
+    type: z.string().min(1, "type is required"),
+    capacity: z.number().int().min(1, "capacity must be a positive integer"),
+    driverName: z.string().optional(),
+    driverPhone: z.string().optional(),
+    driverLicense: z.string().optional(),
+  }),
+});
