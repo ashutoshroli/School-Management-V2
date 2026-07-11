@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import api from "@/lib/api";
 import { resolveUploadUrl } from "@/lib/uploads";
 import NotificationBell from "./NotificationBell";
+import BranchSelector from "./BranchSelector";
 import { LogOut, User, Loader2 } from "lucide-react";
 
 export default function Header() {
@@ -44,6 +45,9 @@ export default function Header() {
 
       {/* Right - Actions */}
       <div className="flex items-center gap-4">
+        {/* Active branch indicator / switcher */}
+        <BranchSelector />
+
         {/* Notifications */}
         <NotificationBell />
 

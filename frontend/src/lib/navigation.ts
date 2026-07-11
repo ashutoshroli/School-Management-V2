@@ -23,6 +23,12 @@ export const navigation: NavItem[] = [
     roles: ["SUPER_ADMIN"],
   },
   {
+    label: "Branch Admins",
+    href: "/dashboard/branch-admins",
+    icon: "ShieldCheck",
+    roles: ["SUPER_ADMIN"],
+  },
+  {
     label: "Academic Years",
     href: "/dashboard/academic-years",
     icon: "Calendar",

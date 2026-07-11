@@ -7,6 +7,12 @@ export const loginSchema = z.object({
   }),
 });
 
+export const switchBranchSchema = z.object({
+  body: z.object({
+    branchId: z.string().min(1, "branchId is required"),
+  }),
+});
+
 export const changePasswordSchema = z.object({
   body: z.object({
     currentPassword: z.string().min(1, "Current password required"),

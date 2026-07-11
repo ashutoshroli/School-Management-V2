@@ -1,11 +1,11 @@
 import { Router, Request, Response, NextFunction } from "express";
 import passport from "passport";
-import { login, googleCallback, getProfile, changePassword } from "../controllers/auth.controller";
+import { login, googleCallback, getProfile, changePassword, switchBranch } from "../controllers/auth.controller";
 import { uploadOwnAvatar } from "../controllers/upload.controller";
 import { authenticate } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { uploadAvatar, handleUploadErrors } from "../middleware/upload";
-import { loginSchema, changePasswordSchema } from "../validators/auth.validator";
+import { loginSchema, changePasswordSchema, switchBranchSchema } from "../validators/auth.validator";
 import { isGoogleOAuthConfigured } from "../config/passport";
 import { sendError } from "../utils/response";
 
@@ -45,6 +45,7 @@ router.get(
 
 // Protected routes
 router.get("/profile", authenticate, getProfile);
+router.post("/switch-branch", authenticate, validate(switchBranchSchema), switchBranch);
 router.put("/change-password", authenticate, validate(changePasswordSchema), changePassword);
 router.post("/avatar", authenticate, handleUploadErrors(uploadAvatar), uploadOwnAvatar);
 

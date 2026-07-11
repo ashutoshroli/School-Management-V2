@@ -7,7 +7,31 @@ import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 
 /**
- * Create staff member
+ * Roles a Branch Admin is allowed to assign when creating a staff
+ * member for their own branch. Deliberately excludes BRANCH_ADMIN and
+ * SUPER_ADMIN - a Branch Admin must never be able to mint another
+ * admin (privilege escalation) via this endpoint.
+ */
+const BRANCH_ADMIN_ASSIGNABLE_ROLES: UserRole[] = [
+  UserRole.TEACHER,
+  UserRole.ACCOUNTANT,
+  UserRole.LIBRARIAN,
+  UserRole.TRANSPORT_MANAGER,
+  UserRole.WARDEN,
+  UserRole.STAFF,
+];
+
+/**
+ * Create staff member.
+ *
+ * SECURITY: `role` used to be taken straight from req.body with no
+ * validation at all - a Branch Admin could send `role: "SUPER_ADMIN"`
+ * (or "BRANCH_ADMIN") in the create-staff payload and mint themselves
+ * (or anyone) a full admin account for their branch/org. Only
+ * SUPER_ADMIN may assign BRANCH_ADMIN here (that's how a Super Admin
+ * hands a branch off to be self-managed); SUPER_ADMIN itself can never
+ * be assigned via this endpoint since a Super Admin has no Staff
+ * record / branch of their own.
  */
 export const createStaff = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -33,6 +57,32 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
+    // Determine user role
+    const requestedRole: UserRole | undefined = role;
+    const defaultRole = type === "TEACHING" ? UserRole.TEACHER : UserRole.STAFF;
+
+    if (requestedRole === UserRole.SUPER_ADMIN) {
+      sendError(res, "Cannot create a Super Admin via staff creation", 400);
+      return;
+    }
+    if (
+      requestedRole === UserRole.BRANCH_ADMIN &&
+      req.user!.role !== UserRole.SUPER_ADMIN
+    ) {
+      sendError(res, "Only a Super Admin can assign the Branch Admin role", 403);
+      return;
+    }
+    if (
+      requestedRole &&
+      req.user!.role !== UserRole.SUPER_ADMIN &&
+      !BRANCH_ADMIN_ASSIGNABLE_ROLES.includes(requestedRole)
+    ) {
+      sendError(res, "Invalid role for a Branch Admin to assign", 400);
+      return;
+    }
+
+    const userRole = requestedRole || defaultRole;
+
     // Check email uniqueness
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
@@ -43,9 +93,6 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
     // Generate employee ID
     const count = await prisma.staff.count({ where: { branchId } });
     const employeeId = `EMP-${String(count + 1).padStart(4, "0")}`;
-
-    // Determine user role
-    const userRole = role || (type === "TEACHING" ? UserRole.TEACHER : UserRole.STAFF);
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password || "Staff@123", 12);
