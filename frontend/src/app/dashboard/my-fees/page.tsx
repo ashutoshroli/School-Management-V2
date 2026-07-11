@@ -112,7 +112,9 @@ export default function MyFeesPage() {
                   <div key={fee.id} className="border rounded-lg p-4 flex items-center justify-between flex-wrap gap-3">
                     <div>
                       <p className="font-medium">{fee.feeStructure.feeCategory.name}</p>
-                      <p className="text-xs text-gray-500">{fee.feeStructure.class.name} | {fee.feeStructure.frequency}</p>
+                      <p className="text-xs text-gray-500">
+                        {fee.feeStructure.class?.name || `Transport: ${fee.feeStructure.transportRoute?.name}`} | {fee.feeStructure.frequency}
+                      </p>
                       {fee.calculatedLateFee > 0 && (
                         <p className="text-xs text-orange-600 mt-1">Includes late fee: {formatCurrency(fee.calculatedLateFee)}</p>
                       )}
