@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { openPdfInNewTab } from "@/lib/pdf";
@@ -71,6 +72,9 @@ export default function StudentProfilePage() {
         >
           <BadgeCheck className="h-4 w-4" /> ID Card
         </button>
+        <Link href="/dashboard/certificates" className="btn-secondary flex items-center gap-2">
+          <Award className="h-4 w-4" /> Certificates
+        </Link>
         <button className="btn-primary flex items-center gap-2">
           <Edit className="h-4 w-4" /> Edit
         </button>

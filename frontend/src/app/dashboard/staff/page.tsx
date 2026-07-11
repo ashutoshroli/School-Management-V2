@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Users, Plus, Search, Eye } from "lucide-react";
+import { Users, Plus, Search, Eye, BadgeCheck } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import { openPdfInNewTab } from "@/lib/pdf";
 
 interface StaffMember {
   id: string;
@@ -94,6 +95,18 @@ export default function StaffPage() {
         <span className={`px-2 py-0.5 rounded-full text-xs ${s.isActive ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
           {s.isActive ? "Active" : "Left"}
         </span>
+      ),
+    },
+    {
+      key: "actions", label: "",
+      render: (s: StaffMember) => (
+        <button
+          onClick={() => openPdfInNewTab(`/staff/${s.id}/id-card`)}
+          title="Download ID Card"
+          className="p-1 rounded hover:bg-gray-100 inline-block"
+        >
+          <BadgeCheck className="h-4 w-4 text-primary-600" />
+        </button>
       ),
     },
   ];

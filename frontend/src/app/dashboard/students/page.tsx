@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { GraduationCap, Plus, Search, Eye, Filter } from "lucide-react";
+import { GraduationCap, Plus, Search, Eye, Filter, BadgeCheck } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import DataTable from "@/components/ui/DataTable";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import { openPdfInNewTab } from "@/lib/pdf";
 
 interface Student {
   id: string;
@@ -115,6 +116,15 @@ export default function StudentsPage() {
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+          {classFilter && (
+            <button
+              onClick={() => openPdfInNewTab(`/students/id-cards/batch?classId=${classFilter}`)}
+              className="btn-secondary flex items-center gap-2"
+              title="Download ID cards for every active student in this class"
+            >
+              <BadgeCheck className="h-4 w-4" /> Batch ID Cards
+            </button>
+          )}
         </div>
       </div>
 

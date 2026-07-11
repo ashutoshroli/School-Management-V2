@@ -60,3 +60,37 @@ export const drawKeyValueRow = (doc: PDFDocument, label: string, value: string, 
   doc.fontSize(10).fillColor("#475569").text(label, x, y, { width: labelWidth });
   doc.fontSize(10).fillColor("#0f172a").text(value || "-", x + labelWidth, y);
 };
+
+export const formatMoney = (n: number | string | { toString(): string }): string =>
+  `Rs ${Number(n.toString()).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+
+export const formatDate = (d: Date): string =>
+  new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(d);
+
+/**
+ * Builds a PDFDocument that is NOT piped to an HTTP response - instead
+ * it accumulates its output in memory and resolves to a single Buffer
+ * once the caller calls `doc.end()`.
+ *
+ * Needed by the certificate generators (TC/Bonafide/Character): unlike
+ * the fee-receipt/ID-card/report-card generators (which always stream
+ * directly to the request that asked for them), a generated certificate
+ * is persisted once (as a `GeneratedCertificate` row + a re-downloadable
+ * PDF) and may be downloaded many times later, by staff, the student,
+ * or a public verifier - none of whom are the original request that
+ * triggered generation. Capturing the bytes as a Buffer lets the
+ * controller store them (e.g. via `StorageProvider.save`) instead of
+ * writing directly to that one response.
+ */
+export const renderPdfToBuffer = (build: (doc: PDFDocument) => void): Promise<Buffer> => {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 40 });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    build(doc);
+    doc.end();
+  });
+};

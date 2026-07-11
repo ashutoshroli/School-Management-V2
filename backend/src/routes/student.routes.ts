@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { createStudent, getStudents, getStudentById, updateStudent } from "../controllers/student.controller";
-import { getStudentIdCardPdf } from "../controllers/document.controller";
+import { getStudentIdCardPdf, getClassIdCardsBatchPdf } from "../controllers/document.controller";
 import { uploadStudentDocument, deleteStudentDocument } from "../controllers/upload.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -15,6 +15,11 @@ router.use(authenticate);
 
 router.post("/", authorize(...ADMIN), branchAccess, validate(createStudentSchema), createStudent);
 router.get("/", authorize(...ADMIN, UserRole.TEACHER, UserRole.ACCOUNTANT), getStudents);
+// Registered before "/:id" - "id-cards" is a distinct path segment so
+// there's no actual routing ambiguity with the :id param below, but
+// keeping the more specific static route first matches this file's
+// existing convention and avoids any confusion when skimming the list.
+router.get("/id-cards/batch", authorize(...ADMIN, UserRole.TEACHER), getClassIdCardsBatchPdf);
 router.get("/:id", getStudentById);
 router.get("/:id/id-card", getStudentIdCardPdf);
 router.put("/:id", authorize(...ADMIN), validate(updateStudentSchema), updateStudent);
