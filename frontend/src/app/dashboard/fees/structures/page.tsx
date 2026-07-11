@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileText, Plus, Users } from "lucide-react";
+import { FileText, Plus, Users, Edit, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -73,6 +73,51 @@ export default function FeeStructuresPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };
 
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({
+    amount: "", frequency: "MONTHLY", dueDay: "10", lateFeeType: "NONE", lateFeeValue: "0", isActive: true,
+  });
+
+  const openEditModal = (s: FeeStructure) => {
+    setEditingId(s.id);
+    setEditForm({
+      amount: String(s.amount),
+      frequency: s.frequency,
+      dueDay: String(s.dueDay),
+      lateFeeType: s.lateFeeType,
+      lateFeeValue: String(s.lateFeeValue),
+      isActive: s.isActive,
+    });
+    setShowEditModal(true);
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingId) return;
+    try {
+      await api.put(`/fees/structures/${editingId}`, {
+        amount: parseFloat(editForm.amount),
+        frequency: editForm.frequency,
+        dueDay: parseInt(editForm.dueDay),
+        lateFeeType: editForm.lateFeeType,
+        lateFeeValue: parseFloat(editForm.lateFeeValue),
+        isActive: editForm.isActive,
+      });
+      setShowEditModal(false);
+      setEditingId(null);
+      fetchData();
+    } catch (err: any) { alert(err.response?.data?.message || "Failed to update fee structure"); }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this fee structure? This cannot be undone.")) return;
+    try {
+      await api.delete(`/fees/structures/${id}`);
+      fetchData();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this fee structure"); }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -116,9 +161,17 @@ export default function FeeStructuresPage() {
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-500">{s.academicYear.name}</td>
                   <td className="px-4 py-3">
-                    <button onClick={() => bulkAssign(s.id, s.classId)} className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1">
-                      <Users className="h-3 w-3" /> Assign
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button onClick={() => bulkAssign(s.id, s.classId)} className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1">
+                        <Users className="h-3 w-3" /> Assign
+                      </button>
+                      <button onClick={() => openEditModal(s)} title="Edit" className="text-gray-500 hover:text-gray-700">
+                        <Edit className="h-3.5 w-3.5" />
+                      </button>
+                      <button onClick={() => handleDelete(s.id)} title="Delete" className="text-red-500 hover:text-red-700">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -190,6 +243,58 @@ export default function FeeStructuresPage() {
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button>
             <button type="submit" className="btn-primary">Create</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Fee Structure" size="lg">
+        <form onSubmit={handleUpdate} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (Rs) *</label>
+              <input type="number" className="input-field" value={editForm.amount} onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })} required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Frequency *</label>
+              <select className="input-field" value={editForm.frequency} onChange={(e) => setEditForm({ ...editForm, frequency: e.target.value })}>
+                <option value="MONTHLY">Monthly</option>
+                <option value="QUARTERLY">Quarterly</option>
+                <option value="HALF_YEARLY">Half Yearly</option>
+                <option value="YEARLY">Yearly</option>
+                <option value="ONE_TIME">One Time</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Due Day (of month)</label>
+              <input type="number" min="1" max="28" className="input-field" value={editForm.dueDay} onChange={(e) => setEditForm({ ...editForm, dueDay: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Type</label>
+              <select className="input-field" value={editForm.lateFeeType} onChange={(e) => setEditForm({ ...editForm, lateFeeType: e.target.value })}>
+                <option value="NONE">None</option>
+                <option value="FIXED">Fixed (Rs/day)</option>
+                <option value="PERCENTAGE">Percentage (%)</option>
+              </select>
+            </div>
+            {editForm.lateFeeType !== "NONE" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Late Fee Value</label>
+                <input type="number" className="input-field" value={editForm.lateFeeValue} onChange={(e) => setEditForm({ ...editForm, lateFeeValue: e.target.value })} />
+              </div>
+            )}
+            <div className="flex items-center gap-2 mt-6">
+              <input
+                type="checkbox"
+                id="structureIsActive"
+                checked={editForm.isActive}
+                onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
+              />
+              <label htmlFor="structureIsActive" className="text-sm font-medium">Active</label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowEditModal(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" className="btn-primary">Save Changes</button>
           </div>
         </form>
       </Modal>

@@ -278,6 +278,35 @@ export const updateSubject = async (req: AuthRequest, res: Response): Promise<vo
 export const deleteSubject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
+
+    // Safety guard (matching deleteClass/deleteSection's pattern): a
+    // subject with real academic history (marks recorded, homework
+    // assigned) or active teaching assignments must not disappear -
+    // Prisma would reject the delete anyway via FK constraints, but
+    // this gives a clear, actionable message instead of a raw DB error.
+    const [markCount, homeworkCount, classSubjectCount, teacherCount] = await Promise.all([
+      prisma.mark.count({ where: { subjectId: id } }),
+      prisma.homework.count({ where: { subjectId: id } }),
+      prisma.classSubject.count({ where: { subjectId: id } }),
+      prisma.subjectTeacher.count({ where: { subjectId: id } }),
+    ]);
+    if (markCount > 0 || homeworkCount > 0) {
+      sendError(res, `Cannot delete: this subject has ${markCount} recorded mark(s) and ${homeworkCount} homework assignment(s). Historical academic records cannot be removed.`, 400);
+      return;
+    }
+    if (classSubjectCount > 0 || teacherCount > 0) {
+      // These are just mapping/assignment rows (no historical data loss
+      // risk), so clear them automatically rather than forcing the
+      // admin to unassign every class/teacher one at a time first.
+      await prisma.$transaction([
+        prisma.classSubject.deleteMany({ where: { subjectId: id } }),
+        prisma.subjectTeacher.deleteMany({ where: { subjectId: id } }),
+        prisma.subject.delete({ where: { id } }),
+      ]);
+      sendSuccess(res, null, "Subject deleted");
+      return;
+    }
+
     await prisma.subject.delete({ where: { id } });
     sendSuccess(res, null, "Subject deleted");
   } catch (error) {

@@ -30,6 +30,63 @@ export const createExam = async (req: AuthRequest, res: Response): Promise<void>
 };
 
 /**
+ * Update exam metadata (name/type/dates). Class/academic year are
+ * intentionally NOT editable here - changing them after marks may
+ * already have been entered against the original class/year would
+ * silently detach those Mark rows from the exam they were recorded
+ * for; delete and recreate the exam instead if that's genuinely needed.
+ */
+export const updateExam = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { name, type, startDate, endDate } = req.body;
+
+    const exam = await prisma.exam.findUnique({ where: { id } });
+    if (!exam) { sendError(res, "Exam not found", 404); return; }
+
+    const updated = await prisma.exam.update({
+      where: { id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(type !== undefined && { type }),
+        ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
+        ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
+      },
+    });
+    sendSuccess(res, updated, "Exam updated");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Delete an exam. Blocked once any marks have been recorded against
+ * it, or once results have been published - both are real academic
+ * history that must never silently disappear. An exam with no marks
+ * yet (e.g. created by mistake, wrong class) can be removed freely.
+ */
+export const deleteExam = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const exam = await prisma.exam.findUnique({ where: { id } });
+    if (!exam) { sendError(res, "Exam not found", 404); return; }
+
+    if (exam.isPublished) {
+      sendError(res, "Cannot delete a published exam - unpublish it first if you're certain", 400);
+      return;
+    }
+
+    const markCount = await prisma.mark.count({ where: { examId: id } });
+    if (markCount > 0) {
+      sendError(res, `Cannot delete: ${markCount} mark(s) have already been recorded for this exam.`, 400);
+      return;
+    }
+
+    await prisma.exam.delete({ where: { id } });
+    sendSuccess(res, null, "Exam deleted");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
  * Get exams for a class/year
  */
 export const getExams = async (req: AuthRequest, res: Response): Promise<void> => {

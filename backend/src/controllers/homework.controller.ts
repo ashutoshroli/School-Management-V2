@@ -1,4 +1,5 @@
 import { Response } from "express";
+import { UserRole } from "@prisma/client";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
@@ -14,6 +15,66 @@ export const createHomework = async (req: AuthRequest, res: Response): Promise<v
       data: { subjectId, classId, sectionId, title, description, attachmentUrl, dueDate: new Date(dueDate), assignedBy: req.user!.userId },
     });
     sendSuccess(res, homework, "Homework created", 201);
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Update homework (edit title/description/due date/attachment).
+ * Only the assigning teacher or a branch admin may edit it.
+ */
+export const updateHomework = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { title, description, attachmentUrl, dueDate } = req.body;
+
+    const homework = await prisma.homework.findUnique({ where: { id } });
+    if (!homework) { sendError(res, "Homework not found", 404); return; }
+
+    const isOwner = homework.assignedBy === req.user!.userId;
+    const isAdmin = req.user!.role === UserRole.SUPER_ADMIN || req.user!.role === UserRole.BRANCH_ADMIN;
+    if (!isOwner && !isAdmin) {
+      sendError(res, "Only the assigning teacher or an admin can edit this homework", 403);
+      return;
+    }
+
+    const updated = await prisma.homework.update({
+      where: { id },
+      data: {
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
+        ...(attachmentUrl !== undefined && { attachmentUrl }),
+        ...(dueDate !== undefined && { dueDate: new Date(dueDate) }),
+      },
+    });
+    sendSuccess(res, updated, "Homework updated");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Delete homework. Cascades its submissions too - a homework
+ * assignment being removed (e.g. posted by mistake, wrong class) is
+ * meant to remove the whole thing, not leave orphaned submissions with
+ * no parent record.
+ */
+export const deleteHomework = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const homework = await prisma.homework.findUnique({ where: { id } });
+    if (!homework) { sendError(res, "Homework not found", 404); return; }
+
+    const isOwner = homework.assignedBy === req.user!.userId;
+    const isAdmin = req.user!.role === UserRole.SUPER_ADMIN || req.user!.role === UserRole.BRANCH_ADMIN;
+    if (!isOwner && !isAdmin) {
+      sendError(res, "Only the assigning teacher or an admin can delete this homework", 403);
+      return;
+    }
+
+    await prisma.$transaction([
+      prisma.homeworkSubmission.deleteMany({ where: { homeworkId: id } }),
+      prisma.homework.delete({ where: { id } }),
+    ]);
+    sendSuccess(res, null, "Homework deleted");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 

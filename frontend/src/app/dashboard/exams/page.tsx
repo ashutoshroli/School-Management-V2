@@ -1,18 +1,21 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileText, Plus, Eye, Upload } from "lucide-react";
+import { FileText, Plus, Edit, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+
+const EMPTY_FORM = { name: "", type: "UNIT_TEST", classId: "", academicYearId: "", startDate: "", endDate: "" };
 
 export default function ExamsPage() {
   const [exams, setExams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [classes, setClasses] = useState<any[]>([]);
   const [years, setYears] = useState<any[]>([]);
-  const [form, setForm] = useState({ name: "", type: "UNIT_TEST", classId: "", academicYearId: "", startDate: "", endDate: "" });
+  const [form, setForm] = useState(EMPTY_FORM);
 
   const fetch = async () => {
     setLoading(true);
@@ -27,12 +30,51 @@ export default function ExamsPage() {
   };
   useEffect(() => { fetch(); }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const openCreateModal = () => {
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setShowModal(true);
+  };
+
+  const openEditModal = (e: any) => {
+    setEditingId(e.id);
+    setForm({
+      name: e.name,
+      type: e.type,
+      classId: e.classId,
+      academicYearId: e.academicYearId,
+      startDate: e.startDate ? new Date(e.startDate).toISOString().slice(0, 10) : "",
+      endDate: e.endDate ? new Date(e.endDate).toISOString().slice(0, 10) : "",
+    });
+    setShowModal(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post("/academics/exams", form);
+      if (editingId) {
+        // classId/academicYearId aren't editable server-side (see
+        // exam.controller.ts's updateExam) - only send the fields it
+        // actually supports.
+        await api.put(`/academics/exams/${editingId}`, {
+          name: form.name,
+          type: form.type,
+          startDate: form.startDate,
+          endDate: form.endDate,
+        });
+      } else {
+        await api.post("/academics/exams", form);
+      }
       setShowModal(false); fetch();
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete exam "${name}"?`)) return;
+    try {
+      await api.delete(`/academics/exams/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this exam"); }
   };
 
   const togglePublish = async (id: string) => {
@@ -44,7 +86,7 @@ export default function ExamsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2"><FileText className="h-6 w-6 text-primary-600" /> Exams</h1>
-        <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Create Exam</button>
+        <button onClick={openCreateModal} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Create Exam</button>
       </div>
 
       {loading ? (
@@ -73,7 +115,16 @@ export default function ExamsPage() {
                     </button>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <a href={`/dashboard/exams/${e.id}/results`} className="text-primary-600 text-xs font-medium hover:underline">Results</a>
+                    <div className="flex items-center justify-center gap-3">
+                      <a href={`/dashboard/exams/${e.id}/results`} className="text-primary-600 text-xs font-medium hover:underline">Results</a>
+                      <a href={`/dashboard/exams/${e.id}/marks`} className="text-primary-600 text-xs font-medium hover:underline">Enter Marks</a>
+                      <button onClick={() => openEditModal(e)} title="Edit" className="text-gray-500 hover:text-gray-700">
+                        <Edit className="h-3.5 w-3.5" />
+                      </button>
+                      <button onClick={() => handleDelete(e.id, e.name)} title="Delete" className="text-red-500 hover:text-red-700">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -82,8 +133,8 @@ export default function ExamsPage() {
         </div>
       )}
 
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Create Exam">
-        <form onSubmit={handleCreate} className="space-y-4">
+      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={editingId ? "Edit Exam" : "Create Exam"}>
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div><label className="block text-sm font-medium mb-1">Exam Name *</label>
             <input className="input-field" value={form.name} onChange={e => setForm({...form, name: e.target.value})} required /></div>
           <div className="grid grid-cols-2 gap-4">
@@ -93,19 +144,21 @@ export default function ExamsPage() {
                 <option value="ANNUAL">Annual</option><option value="PRE_BOARD">Pre-Board</option>
               </select></div>
             <div><label className="block text-sm font-medium mb-1">Class *</label>
-              <select className="input-field" value={form.classId} onChange={e => setForm({...form, classId: e.target.value})} required>
+              <select className="input-field" value={form.classId} onChange={e => setForm({...form, classId: e.target.value})} required disabled={!!editingId}>
                 <option value="">Select</option>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
             <div><label className="block text-sm font-medium mb-1">Academic Year *</label>
-              <select className="input-field" value={form.academicYearId} onChange={e => setForm({...form, academicYearId: e.target.value})} required>
+              <select className="input-field" value={form.academicYearId} onChange={e => setForm({...form, academicYearId: e.target.value})} required disabled={!!editingId}>
                 <option value="">Select</option>{years.map(y => <option key={y.id} value={y.id}>{y.name}</option>)}
               </select></div>
             <div><label className="block text-sm font-medium mb-1">Start Date</label>
               <input type="date" className="input-field" value={form.startDate} onChange={e => setForm({...form, startDate: e.target.value})} /></div>
+            <div><label className="block text-sm font-medium mb-1">End Date</label>
+              <input type="date" className="input-field" value={form.endDate} onChange={e => setForm({...form, endDate: e.target.value})} /></div>
           </div>
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button>
-            <button type="submit" className="btn-primary">Create</button>
+            <button type="submit" className="btn-primary">{editingId ? "Save Changes" : "Create"}</button>
           </div>
         </form>
       </Modal>

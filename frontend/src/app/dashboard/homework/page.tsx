@@ -1,18 +1,21 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BookOpen, Plus } from "lucide-react";
+import { BookOpen, Plus, Edit, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+
+const EMPTY_FORM = { title: "", description: "", subjectId: "", classId: "", sectionId: "", dueDate: "" };
 
 export default function HomeworkPage() {
   const [homeworks, setHomeworks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
-  const [form, setForm] = useState({ title: "", description: "", subjectId: "", classId: "", sectionId: "", dueDate: "" });
+  const [form, setForm] = useState(EMPTY_FORM);
 
   const fetch = async () => {
     setLoading(true);
@@ -29,19 +32,57 @@ export default function HomeworkPage() {
   };
   useEffect(() => { fetch(); }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const openCreateModal = () => {
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setShowModal(true);
+  };
+
+  const openEditModal = (h: any) => {
+    setEditingId(h.id);
+    setForm({
+      title: h.title,
+      description: h.description || "",
+      subjectId: h.subjectId,
+      classId: h.classId,
+      sectionId: h.sectionId || "",
+      dueDate: h.dueDate ? new Date(h.dueDate).toISOString().slice(0, 10) : "",
+    });
+    setShowModal(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post("/academics/homework", form);
+      if (editingId) {
+        // classId/subjectId/sectionId aren't editable server-side (see
+        // homework.controller.ts's updateHomework) - only send the
+        // fields it actually supports.
+        await api.put(`/academics/homework/${editingId}`, {
+          title: form.title,
+          description: form.description,
+          dueDate: form.dueDate,
+        });
+      } else {
+        await api.post("/academics/homework", form);
+      }
       setShowModal(false); fetch();
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
+  };
+
+  const handleDelete = async (id: string, title: string) => {
+    if (!confirm(`Delete homework "${title}"? This will also remove any student submissions.`)) return;
+    try {
+      await api.delete(`/academics/homework/${id}`);
+      fetch();
+    } catch (err: any) { alert(err.response?.data?.message || "Failed to delete homework"); }
   };
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2"><BookOpen className="h-6 w-6 text-primary-600" /> Homework</h1>
-        <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Assign Homework</button>
+        <button onClick={openCreateModal} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Assign Homework</button>
       </div>
 
       {loading ? (
@@ -55,8 +96,14 @@ export default function HomeworkPage() {
                 <p className="text-sm text-gray-500">{h.subject?.name} | Due: {formatDate(h.dueDate)}</p>
                 {h.description && <p className="text-xs text-gray-400 mt-1">{h.description}</p>}
               </div>
-              <div className="text-right">
+              <div className="flex items-center gap-3">
                 <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full">{h.submissionCount || 0} submitted</span>
+                <button onClick={() => openEditModal(h)} title="Edit" className="text-gray-500 hover:text-gray-700">
+                  <Edit className="h-4 w-4" />
+                </button>
+                <button onClick={() => handleDelete(h.id, h.title)} title="Delete" className="text-red-500 hover:text-red-700">
+                  <Trash2 className="h-4 w-4" />
+                </button>
               </div>
             </div>
           ))}
@@ -64,19 +111,19 @@ export default function HomeworkPage() {
         </div>
       )}
 
-      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Assign Homework">
-        <form onSubmit={handleCreate} className="space-y-4">
+      <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={editingId ? "Edit Homework" : "Assign Homework"}>
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div><label className="block text-sm font-medium mb-1">Title *</label>
             <input className="input-field" value={form.title} onChange={e => setForm({...form, title: e.target.value})} required /></div>
           <div><label className="block text-sm font-medium mb-1">Description</label>
             <textarea className="input-field" rows={3} value={form.description} onChange={e => setForm({...form, description: e.target.value})} /></div>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-sm font-medium mb-1">Class *</label>
-              <select className="input-field" value={form.classId} onChange={e => setForm({...form, classId: e.target.value})} required>
+              <select className="input-field" value={form.classId} onChange={e => setForm({...form, classId: e.target.value})} required disabled={!!editingId}>
                 <option value="">Select</option>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
             <div><label className="block text-sm font-medium mb-1">Subject *</label>
-              <select className="input-field" value={form.subjectId} onChange={e => setForm({...form, subjectId: e.target.value})} required>
+              <select className="input-field" value={form.subjectId} onChange={e => setForm({...form, subjectId: e.target.value})} required disabled={!!editingId}>
                 <option value="">Select</option>{subjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select></div>
             <div><label className="block text-sm font-medium mb-1">Due Date *</label>
@@ -84,7 +131,7 @@ export default function HomeworkPage() {
           </div>
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button>
-            <button type="submit" className="btn-primary">Assign</button>
+            <button type="submit" className="btn-primary">{editingId ? "Save Changes" : "Assign"}</button>
           </div>
         </form>
       </Modal>

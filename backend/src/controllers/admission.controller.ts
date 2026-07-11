@@ -254,3 +254,32 @@ export const updateAdmissionInquiryStatus = async (req: AuthRequest, res: Respon
     sendError(res, "Failed to update inquiry", 500, (error as Error).message);
   }
 };
+
+/**
+ * DELETE /api/admission/inquiries/:id
+ * Staff-only. An inquiry is just a lead/follow-up record (never a
+ * Student or financial record - see the model's doc comment), so
+ * removing a stale/duplicate/spam inquiry is always safe; nothing else
+ * in the schema references AdmissionInquiry as a foreign key.
+ */
+export const deleteAdmissionInquiry = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const inquiry = await prisma.admissionInquiry.findUnique({ where: { id } });
+    if (!inquiry) {
+      sendError(res, "Inquiry not found", 404);
+      return;
+    }
+
+    if (!canAccessBranch(req, inquiry.branchId)) {
+      sendError(res, "Inquiry not found", 404);
+      return;
+    }
+
+    await prisma.admissionInquiry.delete({ where: { id } });
+    sendSuccess(res, null, "Inquiry deleted");
+  } catch (error) {
+    sendError(res, "Failed to delete inquiry", 500, (error as Error).message);
+  }
+};

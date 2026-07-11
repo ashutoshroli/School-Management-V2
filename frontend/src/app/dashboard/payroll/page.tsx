@@ -44,6 +44,15 @@ export default function PayrollPage() {
     fetchPayslips();
   };
 
+  const markPaid = async (id: string) => {
+    try {
+      await api.patch(`/hr/payroll/payslip/${id}/paid`);
+      fetchPayslips();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to mark as paid");
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -117,11 +126,19 @@ export default function PayrollPage() {
                   <td className="px-4 py-3 text-right text-red-600">{formatCurrency(p.tdsAmount)}</td>
                   <td className="px-4 py-3 text-right font-bold text-green-700">{formatCurrency(p.netPay)}</td>
                   <td className="px-4 py-3 text-center">
-                    <span className={`px-2 py-0.5 rounded-full text-xs ${
-                      p.status === "PAID" ? "bg-green-100 text-green-700" :
-                      p.status === "APPROVED" ? "bg-blue-100 text-blue-700" :
-                      "bg-yellow-100 text-yellow-700"
-                    }`}>{p.status}</span>
+                    {p.status === "APPROVED" ? (
+                      <button
+                        onClick={() => markPaid(p.id)}
+                        className="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 hover:bg-blue-200"
+                        title="Mark as paid"
+                      >
+                        {p.status} - Mark Paid
+                      </button>
+                    ) : (
+                      <span className={`px-2 py-0.5 rounded-full text-xs ${
+                        p.status === "PAID" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
+                      }`}>{p.status}</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <button

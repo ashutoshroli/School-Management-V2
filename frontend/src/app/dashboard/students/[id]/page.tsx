@@ -3,18 +3,35 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award } from "lucide-react";
+import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award, Plus, ToggleLeft, ToggleRight } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { openPdfInNewTab } from "@/lib/pdf";
 import { resolveUploadUrl } from "@/lib/uploads";
 import FileUploadButton from "@/components/ui/FileUploadButton";
+import Modal from "@/components/ui/Modal";
+
+// yyyy-mm-dd for an HTML date input, from either an ISO string or a Date.
+const toDateInputValue = (value: string | Date | null | undefined): string =>
+  value ? new Date(value).toISOString().slice(0, 10) : "";
+
+const GENDERS = ["MALE", "FEMALE", "OTHER"];
+const DISCOUNT_TYPES = ["SIBLING", "MERIT_SCHOLARSHIP", "RTE", "STAFF_WARD", "CUSTOM"];
 
 export default function StudentProfilePage() {
   const params = useParams();
   const router = useRouter();
   const [student, setStudent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [classes, setClasses] = useState<any[]>([]);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: "", phone: "", classId: "", sectionId: "", rollNo: "",
+    dateOfBirth: "", gender: "MALE", bloodGroup: "", religion: "", caste: "",
+    category: "", nationality: "", motherTongue: "",
+    address: "", city: "", state: "", pincode: "", cardId: "", isActive: true,
+  });
 
   useEffect(() => {
     const fetchStudent = async () => {
@@ -29,11 +46,53 @@ export default function StudentProfilePage() {
       }
     };
     fetchStudent();
+    api.get("/classes").then((r) => setClasses(r.data.data || [])).catch(() => {});
   }, [params.id, router]);
 
   const refetchStudent = async () => {
     const res = await api.get(`/students/${params.id}`);
     setStudent(res.data.data);
+  };
+
+  const openEditModal = () => {
+    setEditForm({
+      name: student.user.name || "",
+      phone: student.user.phone || "",
+      classId: student.class?.id || "",
+      sectionId: student.section?.id || "",
+      rollNo: student.rollNo || "",
+      dateOfBirth: toDateInputValue(student.dateOfBirth),
+      gender: student.gender || "MALE",
+      bloodGroup: student.bloodGroup || "",
+      religion: student.religion || "",
+      caste: student.caste || "",
+      category: student.category || "",
+      nationality: student.nationality || "",
+      motherTongue: student.motherTongue || "",
+      address: student.address || "",
+      city: student.city || "",
+      state: student.state || "",
+      pincode: student.pincode || "",
+      cardId: student.cardId || "",
+      isActive: student.isActive,
+    });
+    setShowEditModal(true);
+  };
+
+  const selectedClass = classes.find((c) => c.id === editForm.classId);
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.put(`/students/${params.id}`, editForm);
+      setShowEditModal(false);
+      await refetchStudent();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to update student");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeleteDocument = async (docId: string) => {
@@ -43,6 +102,46 @@ export default function StudentProfilePage() {
       await refetchStudent();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to delete document");
+    }
+  };
+
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const [discountForm, setDiscountForm] = useState({ type: "SIBLING", name: "Sibling Discount", value: "", isPercent: false });
+
+  const handleAddDiscount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.post("/fees/discounts", {
+        studentId: params.id,
+        type: discountForm.type,
+        name: discountForm.name,
+        value: parseFloat(discountForm.value),
+        isPercent: discountForm.isPercent,
+      });
+      setShowDiscountModal(false);
+      setDiscountForm({ type: "SIBLING", name: "Sibling Discount", value: "", isPercent: false });
+      await refetchStudent();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to add discount");
+    }
+  };
+
+  const toggleDiscount = async (id: string) => {
+    try {
+      await api.patch(`/fees/discounts/${id}/toggle`);
+      await refetchStudent();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to toggle discount");
+    }
+  };
+
+  const deleteDiscount = async (id: string) => {
+    if (!confirm("Remove this discount?")) return;
+    try {
+      await api.delete(`/fees/discounts/${id}`);
+      await refetchStudent();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to remove discount");
     }
   };
 
@@ -75,7 +174,7 @@ export default function StudentProfilePage() {
         <Link href="/dashboard/certificates" className="btn-secondary flex items-center gap-2">
           <Award className="h-4 w-4" /> Certificates
         </Link>
-        <button className="btn-primary flex items-center gap-2">
+        <button onClick={openEditModal} className="btn-primary flex items-center gap-2">
           <Edit className="h-4 w-4" /> Edit
         </button>
       </div>
@@ -192,15 +291,31 @@ export default function StudentProfilePage() {
 
           {/* Discounts */}
           <div className="card">
-            <h3 className="text-sm font-semibold text-gray-600 mb-2">Discounts / Scholarships</h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-600">Discounts / Scholarships</h3>
+              <button onClick={() => setShowDiscountModal(true)} className="text-primary-600 hover:text-primary-700" title="Add discount">
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
             {student.discounts?.length > 0 ? (
               <div className="space-y-2">
                 {student.discounts.map((d: any) => (
-                  <div key={d.id} className="text-sm bg-purple-50 p-2 rounded">
-                    <span className="font-medium">{d.name}</span>
-                    <span className="text-purple-700 ml-2">
-                      {d.isPercent ? `${d.value}%` : `Rs ${d.value}`}
-                    </span>
+                  <div key={d.id} className={`text-sm p-2 rounded flex items-center justify-between ${d.isActive ? "bg-purple-50" : "bg-gray-50 opacity-60"}`}>
+                    <div>
+                      <span className="font-medium">{d.name}</span>
+                      <span className="text-purple-700 ml-2">
+                        {d.isPercent ? `${d.value}%` : `Rs ${d.value}`}
+                      </span>
+                      {!d.isActive && <span className="text-xs text-gray-400 ml-2">(inactive)</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => toggleDiscount(d.id)} title={d.isActive ? "Deactivate" : "Activate"} className="text-gray-500 hover:text-gray-700">
+                        {d.isActive ? <ToggleRight className="h-4 w-4 text-green-600" /> : <ToggleLeft className="h-4 w-4" />}
+                      </button>
+                      <button onClick={() => deleteDiscount(d.id)} title="Remove" className="text-red-500 hover:text-red-700">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -218,6 +333,152 @@ export default function StudentProfilePage() {
           </div>
         </div>
       </div>
+
+      <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Student" size="lg">
+        <form onSubmit={handleSaveEdit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Name</label>
+              <input className="input-field" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Phone</label>
+              <input className="input-field" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Class</label>
+              <select
+                className="input-field"
+                value={editForm.classId}
+                onChange={(e) => setEditForm({ ...editForm, classId: e.target.value, sectionId: "" })}
+              >
+                <option value="">Select</option>
+                {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Section</label>
+              <select className="input-field" value={editForm.sectionId} onChange={(e) => setEditForm({ ...editForm, sectionId: e.target.value })}>
+                <option value="">Select</option>
+                {(selectedClass?.sections || []).map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Roll No</label>
+              <input className="input-field" value={editForm.rollNo} onChange={(e) => setEditForm({ ...editForm, rollNo: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Date of Birth</label>
+              <input type="date" className="input-field" value={editForm.dateOfBirth} onChange={(e) => setEditForm({ ...editForm, dateOfBirth: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Gender</label>
+              <select className="input-field" value={editForm.gender} onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}>
+                {GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Blood Group</label>
+              <input className="input-field" value={editForm.bloodGroup} onChange={(e) => setEditForm({ ...editForm, bloodGroup: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Religion</label>
+              <input className="input-field" value={editForm.religion} onChange={(e) => setEditForm({ ...editForm, religion: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Caste</label>
+              <input className="input-field" value={editForm.caste} onChange={(e) => setEditForm({ ...editForm, caste: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Category</label>
+              <input className="input-field" value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Nationality</label>
+              <input className="input-field" value={editForm.nationality} onChange={(e) => setEditForm({ ...editForm, nationality: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Mother Tongue</label>
+              <input className="input-field" value={editForm.motherTongue} onChange={(e) => setEditForm({ ...editForm, motherTongue: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">RFID Card ID</label>
+              <input className="input-field" value={editForm.cardId} onChange={(e) => setEditForm({ ...editForm, cardId: e.target.value })} placeholder="Leave blank if none" />
+            </div>
+            <div className="flex items-center gap-2 mt-6">
+              <input
+                type="checkbox"
+                id="isActive"
+                checked={editForm.isActive}
+                onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
+              />
+              <label htmlFor="isActive" className="text-sm font-medium">Active</label>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Address</label>
+            <input className="input-field" value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">City</label>
+              <input className="input-field" value={editForm.city} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">State</label>
+              <input className="input-field" value={editForm.state} onChange={(e) => setEditForm({ ...editForm, state: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Pincode</label>
+              <input className="input-field" value={editForm.pincode} onChange={(e) => setEditForm({ ...editForm, pincode: e.target.value })} />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowEditModal(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary disabled:opacity-50">{saving ? "Saving..." : "Save Changes"}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={showDiscountModal} onClose={() => setShowDiscountModal(false)} title="Add Discount / Scholarship">
+        <form onSubmit={handleAddDiscount} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Type *</label>
+            <select
+              className="input-field"
+              value={discountForm.type}
+              onChange={(e) => setDiscountForm({ ...discountForm, type: e.target.value })}
+            >
+              {DISCOUNT_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Display Name *</label>
+            <input className="input-field" value={discountForm.name} onChange={(e) => setDiscountForm({ ...discountForm, name: e.target.value })} required />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Value *</label>
+              <input type="number" className="input-field" value={discountForm.value} onChange={(e) => setDiscountForm({ ...discountForm, value: e.target.value })} required />
+            </div>
+            <div className="flex items-center gap-2 mt-6">
+              <input
+                type="checkbox"
+                id="isPercent"
+                checked={discountForm.isPercent}
+                onChange={(e) => setDiscountForm({ ...discountForm, isPercent: e.target.checked })}
+              />
+              <label htmlFor="isPercent" className="text-sm font-medium">Value is a percentage (%)</label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowDiscountModal(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" className="btn-primary">Add Discount</button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -95,6 +95,48 @@ export default function ClassesPage() {
     }
   };
 
+  const [showEditClassModal, setShowEditClassModal] = useState(false);
+  const [editingClassId, setEditingClassId] = useState("");
+  const [editClassForm, setEditClassForm] = useState({ name: "", numericOrder: 0 });
+
+  const openEditClass = (cls: ClassItem) => {
+    setEditingClassId(cls.id);
+    setEditClassForm({ name: cls.name, numericOrder: cls.numericOrder });
+    setShowEditClassModal(true);
+  };
+
+  const handleUpdateClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.put(`/classes/${editingClassId}`, editClassForm);
+      setShowEditClassModal(false);
+      fetchClasses();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to update class");
+    }
+  };
+
+  const [showEditSectionModal, setShowEditSectionModal] = useState(false);
+  const [editingSectionId, setEditingSectionId] = useState("");
+  const [editSectionForm, setEditSectionForm] = useState({ name: "", capacity: 40 });
+
+  const openEditSection = (sec: Section) => {
+    setEditingSectionId(sec.id);
+    setEditSectionForm({ name: sec.name, capacity: sec.capacity });
+    setShowEditSectionModal(true);
+  };
+
+  const handleUpdateSection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.put(`/classes/sections/${editingSectionId}`, editSectionForm);
+      setShowEditSectionModal(false);
+      fetchClasses();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to update section");
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -125,6 +167,9 @@ export default function ClassesPage() {
                   <button onClick={() => { setSelectedClassId(cls.id); setShowSectionModal(true); }} className="p-1 rounded hover:bg-gray-100" title="Add Section">
                     <Plus className="h-4 w-4 text-green-600" />
                   </button>
+                  <button onClick={() => openEditClass(cls)} className="p-1 rounded hover:bg-gray-100" title="Edit">
+                    <Edit className="h-4 w-4 text-gray-600" />
+                  </button>
                   <button onClick={() => deleteClass(cls.id)} className="p-1 rounded hover:bg-gray-100" title="Delete">
                     <Trash2 className="h-4 w-4 text-red-500" />
                   </button>
@@ -141,6 +186,9 @@ export default function ClassesPage() {
                     <span className="text-sm font-medium">Section {sec.name}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-gray-500">{sec._count?.students || 0}/{sec.capacity}</span>
+                      <button onClick={() => openEditSection(sec)} className="text-gray-400 hover:text-gray-600">
+                        <Edit className="h-3 w-3" />
+                      </button>
                       <button onClick={() => deleteSection(sec.id)} className="text-red-400 hover:text-red-600">
                         <Trash2 className="h-3 w-3" />
                       </button>
@@ -186,6 +234,42 @@ export default function ClassesPage() {
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowSectionModal(false)} className="btn-secondary">Cancel</button>
             <button type="submit" className="btn-primary">Create Section</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit Class Modal */}
+      <Modal isOpen={showEditClassModal} onClose={() => setShowEditClassModal(false)} title="Edit Class">
+        <form onSubmit={handleUpdateClass} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Class Name *</label>
+            <input className="input-field" value={editClassForm.name} onChange={(e) => setEditClassForm({ ...editClassForm, name: e.target.value })} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Order (for sorting)</label>
+            <input type="number" className="input-field" value={editClassForm.numericOrder} onChange={(e) => setEditClassForm({ ...editClassForm, numericOrder: parseInt(e.target.value) || 0 })} />
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowEditClassModal(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" className="btn-primary">Save Changes</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit Section Modal */}
+      <Modal isOpen={showEditSectionModal} onClose={() => setShowEditSectionModal(false)} title="Edit Section">
+        <form onSubmit={handleUpdateSection} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Section Name *</label>
+            <input className="input-field" value={editSectionForm.name} onChange={(e) => setEditSectionForm({ ...editSectionForm, name: e.target.value })} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Capacity</label>
+            <input type="number" className="input-field" value={editSectionForm.capacity} onChange={(e) => setEditSectionForm({ ...editSectionForm, capacity: parseInt(e.target.value) || 40 })} />
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowEditSectionModal(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" className="btn-primary">Save Changes</button>
           </div>
         </form>
       </Modal>

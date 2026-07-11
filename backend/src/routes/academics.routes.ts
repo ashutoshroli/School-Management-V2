@@ -2,9 +2,9 @@ import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory } from "../controllers/studentAttendance.controller";
 import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } from "../controllers/timetable.controller";
-import { createExam, getExams, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
+import { createExam, getExams, updateExam, deleteExam, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
 import { getReportCardPdf } from "../controllers/document.controller";
-import { createHomework, getHomeworks, submitHomework, getSubmissions } from "../controllers/homework.controller";
+import { createHomework, getHomeworks, updateHomework, deleteHomework, submitHomework, getSubmissions } from "../controllers/homework.controller";
 import { bulkPromote } from "../controllers/promotion.controller";
 import { authenticate, authorize } from "../middleware/auth";
 
@@ -29,6 +29,8 @@ router.delete("/timetable/slot/:id", authenticate, authorize(...ADMIN), deleteSl
 // Exams
 router.post("/exams", authenticate, authorize(...ADMIN), createExam);
 router.get("/exams", authenticate, getExams);
+router.put("/exams/:id", authenticate, authorize(...ADMIN), updateExam);
+router.delete("/exams/:id", authenticate, authorize(...ADMIN), deleteExam);
 router.post("/exams/marks", authenticate, authorize(...TEACHERS), enterMarks);
 router.get("/exams/:examId/results", authenticate, getExamResults);
 router.get("/exams/:examId/report-card/:studentId", authenticate, getReportCardPdf);
@@ -37,6 +39,8 @@ router.patch("/exams/:id/publish", authenticate, authorize(...ADMIN), togglePubl
 // Homework
 router.post("/homework", authenticate, authorize(...TEACHERS), createHomework);
 router.get("/homework", authenticate, getHomeworks);
+router.put("/homework/:id", authenticate, authorize(...TEACHERS), updateHomework);
+router.delete("/homework/:id", authenticate, authorize(...TEACHERS), deleteHomework);
 router.post("/homework/submit", authenticate, authorize(UserRole.STUDENT), submitHomework);
 router.get("/homework/:homeworkId/submissions", authenticate, authorize(...TEACHERS), getSubmissions);
 

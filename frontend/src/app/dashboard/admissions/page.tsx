@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Inbox, Download } from "lucide-react";
+import { Inbox, Download, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import DataTable from "@/components/ui/DataTable";
@@ -53,6 +53,16 @@ export default function AdmissionInquiriesPage() {
     }
   };
 
+  const handleDelete = async (id: string, studentName: string) => {
+    if (!confirm(`Delete inquiry for "${studentName}"?`)) return;
+    try {
+      await api.delete(`/admission/inquiries/${id}`);
+      await fetchInquiries();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to delete inquiry");
+    }
+  };
+
   const columns = [
     {
       key: "studentName",
@@ -96,17 +106,27 @@ export default function AdmissionInquiriesPage() {
       ),
     },
     {
-      key: "pdf",
-      label: "Form",
+      key: "actions",
+      label: "Actions",
       render: (i: any) => (
-        <button
-          type="button"
-          onClick={() => openPdfInNewTab(`/admission/inquiries/${i.id}/pdf`)}
-          className="text-primary-600 hover:text-primary-700"
-          title="Download admission form PDF"
-        >
-          <Download className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => openPdfInNewTab(`/admission/inquiries/${i.id}/pdf`)}
+            className="text-primary-600 hover:text-primary-700"
+            title="Download admission form PDF"
+          >
+            <Download className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDelete(i.id, i.studentName)}
+            className="text-red-500 hover:text-red-700"
+            title="Delete inquiry"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       ),
     },
   ];
