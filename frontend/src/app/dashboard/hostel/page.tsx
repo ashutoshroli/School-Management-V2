@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Home, Plus, Trash2, Layers, DoorOpen, Users, UserPlus, UserMinus, Search, BarChart3 } from "lucide-react";
+import { Home, Plus, Trash2, Layers, DoorOpen, Users, UserPlus, UserMinus, Search, BarChart3, UsersRound, CheckCircle2, AlertTriangle } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -39,6 +39,19 @@ export default function HostelPage() {
   const [showOccupancy, setShowOccupancy] = useState(false);
   const [occupancyBuildings, setOccupancyBuildings] = useState<any[]>([]);
   const [occupancyLoading, setOccupancyLoading] = useState(false);
+
+  // Bulk Allocate (multiple students -> auto-filled into whatever rooms
+  // have space in a chosen building/floor)
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkBuildingId, setBulkBuildingId] = useState("");
+  const [bulkFloorId, setBulkFloorId] = useState("");
+  const [bulkReassign, setBulkReassign] = useState(false);
+  const [bulkSearch, setBulkSearch] = useState("");
+  const [bulkSearchResults, setBulkSearchResults] = useState<any[]>([]);
+  const [bulkSearchLoading, setBulkSearchLoading] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<Map<string, any>>(new Map());
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ allocated: any[]; skipped: any[]; total: number } | null>(null);
 
   const fetchBuildings = async () => {
     setLoading(true);
@@ -183,6 +196,62 @@ export default function HostelPage() {
   const totalCapacity = occupancySummary.reduce((sum, r) => sum + r.capacity, 0);
   const totalOccupied = occupancySummary.reduce((sum, r) => sum + r.occupied, 0);
 
+  const openBulkModal = () => {
+    setShowBulkModal(true);
+    setBulkBuildingId(buildings[0]?.id || "");
+    setBulkFloorId("");
+    setBulkReassign(false);
+    setBulkSearch("");
+    setBulkSearchResults([]);
+    setBulkSelectedIds(new Map());
+    setBulkResult(null);
+  };
+
+  const bulkBuilding = buildings.find((b) => b.id === bulkBuildingId);
+
+  const searchBulkStudents = async () => {
+    if (!bulkSearch.trim()) { setBulkSearchResults([]); return; }
+    setBulkSearchLoading(true);
+    try {
+      const res = await api.get("/students", { params: { search: bulkSearch, limit: 20 } });
+      setBulkSearchResults(res.data.data || []);
+    } catch {
+      setBulkSearchResults([]);
+    } finally {
+      setBulkSearchLoading(false);
+    }
+  };
+
+  const toggleBulkStudent = (student: any) => {
+    setBulkSelectedIds((prev) => {
+      const next = new Map(prev);
+      if (next.has(student.id)) next.delete(student.id);
+      else next.set(student.id, student);
+      return next;
+    });
+  };
+
+  const submitBulkAllocate = async () => {
+    if (!bulkBuildingId || bulkSelectedIds.size === 0) return;
+    setBulkSubmitting(true);
+    setBulkResult(null);
+    try {
+      const res = await api.post("/facilities/hostel/allocate/bulk", {
+        buildingId: bulkBuildingId,
+        floorId: bulkFloorId || undefined,
+        studentIds: Array.from(bulkSelectedIds.keys()),
+        reassignExisting: bulkReassign,
+      });
+      setBulkResult(res.data.data);
+      setBulkSelectedIds(new Map());
+      await fetchBuildings();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to bulk-allocate students");
+    } finally {
+      setBulkSubmitting(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
@@ -192,6 +261,9 @@ export default function HostelPage() {
         <div className="flex items-center gap-2">
           <button onClick={openOccupancy} className="btn-secondary flex items-center gap-2">
             <BarChart3 className="h-4 w-4" /> Occupancy
+          </button>
+          <button onClick={openBulkModal} disabled={buildings.length === 0} className="btn-secondary flex items-center gap-2 disabled:opacity-50">
+            <UsersRound className="h-4 w-4" /> Bulk Allocate
           </button>
           <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2">
             <Plus className="h-4 w-4" /> Add Building
@@ -475,6 +547,124 @@ export default function HostelPage() {
 
           <div className="flex justify-end pt-4 border-t">
             <button type="button" onClick={() => setShowOccupancy(false)} className="btn-secondary">Close</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Bulk Allocate - pick a building/floor + a batch of students, they
+          auto-fill whatever rooms have space, in floor/room order. */}
+      <Modal isOpen={showBulkModal} onClose={() => setShowBulkModal(false)} title="Bulk Allocate Students" size="lg">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">
+            Select students below - they'll be automatically placed into whichever rooms in the chosen building/floor
+            currently have free capacity, filling lowest floor/room number first.
+          </p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Building *</label>
+              <select className="input-field" value={bulkBuildingId} onChange={(e) => { setBulkBuildingId(e.target.value); setBulkFloorId(""); }}>
+                {buildings.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name} ({b.type})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Floor (optional - all floors if blank)</label>
+              <select className="input-field" value={bulkFloorId} onChange={(e) => setBulkFloorId(e.target.value)}>
+                <option value="">All floors</option>
+                {bulkBuilding?.floors?.map((f: any) => (
+                  <option key={f.id} value={f.id}>Floor {f.floorNo}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" checked={bulkReassign} onChange={(e) => setBulkReassign(e.target.checked)} />
+            Reassign students who already have an active room allocation (otherwise they're skipped)
+          </label>
+
+          {bulkResult && (
+            <div className="flex items-start gap-2 px-4 py-3 rounded-lg text-sm bg-green-50 text-green-700 border border-green-200">
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <div>
+                <p>{bulkResult.allocated.length} allocated, {bulkResult.skipped.length} skipped (of {bulkResult.total}).</p>
+                {bulkResult.skipped.length > 0 && (
+                  <ul className="mt-1 text-xs text-amber-700 list-disc list-inside">
+                    {bulkResult.skipped.map((s: any, i: number) => (
+                      <li key={i}>Student {s.studentId}: {s.reason}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="pt-2 border-t">
+            <div className="flex gap-2 mb-3">
+              <div className="relative flex-1">
+                <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  className="input-field pl-9 w-full"
+                  placeholder="Search students by name, admission no, roll no..."
+                  value={bulkSearch}
+                  onChange={(e) => setBulkSearch(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && searchBulkStudents()}
+                />
+              </div>
+              <button type="button" onClick={searchBulkStudents} className="btn-secondary text-sm">Search</button>
+            </div>
+
+            {bulkSearchLoading ? (
+              <div className="flex justify-center py-4">
+                <div className="animate-spin h-5 w-5 border-4 border-primary-600 border-t-transparent rounded-full" />
+              </div>
+            ) : bulkSearchResults.length > 0 ? (
+              <div className="space-y-1 max-h-48 overflow-y-auto border rounded-lg p-2">
+                {bulkSearchResults.map((s: any) => (
+                  <label key={s.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer text-sm">
+                    <input type="checkbox" checked={bulkSelectedIds.has(s.id)} onChange={() => toggleBulkStudent(s)} />
+                    <span className="font-medium">{s.user?.name}</span>
+                    <span className="text-xs text-gray-500">{s.admissionNo} &bull; {s.class?.name}{s.section?.name ? `-${s.section.name}` : ""}</span>
+                  </label>
+                ))}
+              </div>
+            ) : bulkSearch.trim() ? (
+              <p className="text-sm text-gray-400">No students found</p>
+            ) : null}
+          </div>
+
+          {bulkSelectedIds.size > 0 && (
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-1">Selected ({bulkSelectedIds.size})</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from(bulkSelectedIds.values()).map((s: any) => (
+                  <span key={s.id} className="inline-flex items-center gap-1 bg-primary-50 text-primary-700 text-xs px-2 py-1 rounded-full">
+                    {s.user?.name}
+                    <button onClick={() => toggleBulkStudent(s)} className="hover:text-primary-900">&times;</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!bulkBuilding?.floors?.length && (
+            <div className="flex items-center gap-2 text-xs text-amber-600">
+              <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" /> This building has no floors/rooms yet - add some first.
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowBulkModal(false)} className="btn-secondary">Close</button>
+            <button
+              type="button"
+              onClick={submitBulkAllocate}
+              disabled={bulkSubmitting || bulkSelectedIds.size === 0 || !bulkBuildingId}
+              className="btn-primary disabled:opacity-50"
+            >
+              {bulkSubmitting ? "Allocating..." : `Allocate ${bulkSelectedIds.size || ""} Student(s)`}
+            </button>
           </div>
         </div>
       </Modal>

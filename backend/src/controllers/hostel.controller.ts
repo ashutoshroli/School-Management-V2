@@ -118,14 +118,163 @@ export const allocateRoom = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
+    // BUG FIX: HostelAllocation.studentId is @unique (one CURRENT
+    // room per student, mirroring TransportAllocation's exact same
+    // shape) - the old code always did a plain `create`, which threw
+    // an unhandled unique-constraint error (surfacing as a generic 500
+    // "Failed") the moment anyone tried to re-allocate/move a student
+    // who already had ANY allocation row (even a past, already-ended
+    // one - the column has no filter on endDate). Mirrors
+    // transport.controller.ts's allocateStudent, which already upserts
+    // for this exact reason.
+    const existing = await prisma.hostelAllocation.findUnique({ where: { studentId } });
+    if (existing && !existing.endDate) {
+      sendError(res, "This student already has an active room allocation - deallocate it first", 400);
+      return;
+    }
+
     if (room.occupied >= room.capacity) { sendError(res, "Room full", 400); return; }
 
-    const alloc = await prisma.hostelAllocation.create({
-      data: { studentId, roomId, bedNo, startDate: new Date() },
+    const alloc = await prisma.hostelAllocation.upsert({
+      where: { studentId },
+      update: { roomId, bedNo, startDate: new Date(), endDate: null },
+      create: { studentId, roomId, bedNo, startDate: new Date() },
     });
     await prisma.hostelRoom.update({ where: { id: roomId }, data: { occupied: { increment: 1 } } });
     sendSuccess(res, alloc, "Room allocated", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Bulk-allocate a list of students into whatever hostel rooms in
+ * `buildingId` (optionally narrowed to a single `floorId`) currently
+ * have free capacity, filling rooms in floor/room order - the hostel
+ * counterpart to bulkAssignFees/bulkAssignSalaryStructure's "pick a
+ * scope, apply to many students" pattern. Unlike those two, each
+ * student here gets a DIFFERENT roomId (whichever has space when their
+ * turn comes), so this can't be a single bulk createMany the way an
+ * identical-data bulk write can - it's a loop, but the actual DB writes
+ * for all of it happen inside one transaction for atomicity.
+ *
+ * Students who already have an ACTIVE allocation are skipped by
+ * default (same "skip existing, don't silently move them" convention
+ * as bulkAssignSalaryStructure) - pass `reassignExisting: true` to
+ * instead deallocate their current room and place them into a new one
+ * from this batch.
+ *
+ * Returns a per-student outcome list (allocated with room number, or
+ * skipped with a reason) rather than just a count, since "which
+ * student landed in which room" is exactly what a warden needs to see
+ * after a bulk placement (unlike the salary/fee bulk endpoints, where
+ * every target gets identical treatment and a summary count suffices).
+ */
+export const bulkAllocateRoom = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { buildingId, floorId, studentIds, reassignExisting } = req.body;
+
+    const building = await prisma.hostelBuilding.findUnique({ where: { id: buildingId } });
+    if (!building) { sendError(res, "Building not found", 404); return; }
+    if (!canAccessBranch(req, building.branchId)) { sendError(res, "Building not found", 404); return; }
+
+    if (floorId) {
+      const floor = await prisma.hostelFloor.findUnique({ where: { id: floorId } });
+      if (!floor || floor.buildingId !== buildingId) {
+        sendError(res, "Floor not found in this building", 404);
+        return;
+      }
+    }
+
+    // Every room in scope, in a stable fill order (lowest floor first,
+    // then room number) - "next available space" always means the
+    // same physical room regardless of which student in the batch gets
+    // to it first.
+    const rooms = await prisma.hostelRoom.findMany({
+      where: { floor: { buildingId, ...(floorId ? { id: floorId } : {}) } },
+      include: { floor: true },
+      orderBy: [{ floor: { floorNo: "asc" } }, { roomNo: "asc" }],
+    });
+
+    // Validate every requested student up front: must exist and belong
+    // to the SAME branch as the building (IDOR guard, same pattern as
+    // allocateRoom/assignSalaryStructureToStaff).
+    const students = await prisma.student.findMany({
+      where: { id: { in: studentIds } },
+      select: { id: true, branchId: true },
+    });
+    const foundIds = new Set(students.map((s) => s.id));
+    const notFound = (studentIds as string[]).filter((id) => !foundIds.has(id));
+    if (notFound.length > 0) {
+      sendError(res, `${notFound.length} student(s) in this list were not found`, 404);
+      return;
+    }
+    const wrongBranch = students.some((s) => s.branchId !== building.branchId);
+    if (wrongBranch) {
+      sendError(res, "One or more students do not belong to this hostel building's branch", 403);
+      return;
+    }
+
+    const existingAllocations = await prisma.hostelAllocation.findMany({
+      where: { studentId: { in: studentIds }, endDate: null },
+    });
+    const existingByStudent = new Map(existingAllocations.map((a) => [a.studentId, a]));
+
+    // Track remaining free capacity per room in memory as we assign,
+    // so two students in the same batch never get double-booked into
+    // the same last free bed.
+    const freeCapacity = new Map(rooms.map((r) => [r.id, r.capacity - r.occupied]));
+
+    const allocated: { studentId: string; roomId: string; roomNo: string }[] = [];
+    const skipped: { studentId: string; reason: string }[] = [];
+    const roomOccupiedDelta = new Map<string, number>();
+    const writes: any[] = [];
+
+    for (const studentId of studentIds as string[]) {
+      const existing = existingByStudent.get(studentId);
+      if (existing && !reassignExisting) {
+        skipped.push({ studentId, reason: "Already has an active room allocation" });
+        continue;
+      }
+
+      const room = rooms.find((r) => (freeCapacity.get(r.id) || 0) > 0);
+      if (!room) {
+        skipped.push({ studentId, reason: "No available room capacity remaining in scope" });
+        continue;
+      }
+
+      freeCapacity.set(room.id, (freeCapacity.get(room.id) || 0) - 1);
+      roomOccupiedDelta.set(room.id, (roomOccupiedDelta.get(room.id) || 0) + 1);
+
+      if (existing) {
+        // Freeing up their old room's capacity too, in case it's also
+        // within this same scope (e.g. moving a student between floors
+        // of the same building).
+        roomOccupiedDelta.set(existing.roomId, (roomOccupiedDelta.get(existing.roomId) || 0) - 1);
+        writes.push(
+          prisma.hostelAllocation.update({
+            where: { studentId },
+            data: { roomId: room.id, bedNo: null, startDate: new Date(), endDate: null },
+          })
+        );
+      } else {
+        writes.push(prisma.hostelAllocation.create({ data: { studentId, roomId: room.id, startDate: new Date() } }));
+      }
+      allocated.push({ studentId, roomId: room.id, roomNo: room.roomNo });
+    }
+
+    for (const [roomId, delta] of roomOccupiedDelta) {
+      if (delta !== 0) writes.push(prisma.hostelRoom.update({ where: { id: roomId }, data: { occupied: { increment: delta } } }));
+    }
+
+    if (writes.length > 0) await prisma.$transaction(writes);
+
+    sendSuccess(
+      res,
+      { allocated, skipped, total: (studentIds as string[]).length },
+      `${allocated.length} student(s) allocated, ${skipped.length} skipped`
+    );
+  } catch (error) {
+    sendError(res, "Failed to bulk-allocate rooms", 500, (error as Error).message);
+  }
 };
 
 export const deallocateRoom = async (req: AuthRequest, res: Response): Promise<void> => {

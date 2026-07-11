@@ -35,3 +35,13 @@ export const allocateRoomSchema = z.object({
     bedNo: z.string().optional(),
   }),
 });
+
+export const bulkAllocateRoomSchema = z.object({
+  body: z.object({
+    buildingId: z.string().min(1, "buildingId is required"),
+    // Optional - narrows the fill-scope to a single floor within the building.
+    floorId: z.string().optional(),
+    studentIds: z.array(z.string().min(1)).min(1, "studentIds must be a non-empty array"),
+    reassignExisting: z.boolean().optional(),
+  }),
+});
