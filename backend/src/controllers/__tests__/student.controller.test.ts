@@ -12,17 +12,23 @@ jest.mock("../../services/notification/emailTemplates", () => ({
   welcomeEmail: jest.fn().mockReturnValue({ subject: "Welcome", text: "Welcome text", html: "<p>Welcome</p>" }),
 }));
 
+jest.mock("bcryptjs", () => ({
+  hash: jest.fn().mockResolvedValue("hashed-one-time-password"),
+}));
+
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     branch: { findUnique: jest.fn() },
     student: { count: jest.fn(), findUnique: jest.fn() },
+    user: { update: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
 
+import bcrypt from "bcryptjs";
 import prisma from "../../config/database";
-import { createStudent } from "../student.controller";
+import { createStudent, resetStudentPassword } from "../student.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -263,5 +269,107 @@ describe("student.controller - createStudent", () => {
 
     expect(res.status).toHaveBeenCalledWith(201);
     expect(capturedCardId).toBe("RFID-12345");
+  });
+});
+
+describe("student.controller - resetStudentPassword", () => {
+  const STUDENT = {
+    id: "student-1",
+    branchId: "branch-1",
+    userId: "user-1",
+    user: { id: "user-1", name: "Ravi Kumar", email: "ravi@test.com" },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.student.findUnique as jest.Mock).mockResolvedValue(STUDENT);
+    (prisma.user.update as jest.Mock).mockResolvedValue({});
+  });
+
+  it("returns 404 when the student does not exist", async () => {
+    (prisma.student.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "student-1" } });
+    const res = makeMockRes();
+
+    await resetStudentPassword(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("SECURITY: rejects a student from a different branch", async () => {
+    (prisma.student.findUnique as jest.Mock).mockResolvedValue({ ...STUDENT, branchId: "branch-OTHER" });
+    const req = makeReq({ params: { id: "student-1" } });
+    const res = makeMockRes();
+
+    await resetStudentPassword(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("hashes and saves a new password on the student's own User record", async () => {
+    const req = makeReq({ params: { id: "student-1" } });
+    const res = makeMockRes();
+
+    await resetStudentPassword(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { password: "hashed-one-time-password" },
+    });
+    expect(bcrypt.hash).toHaveBeenCalledTimes(1);
+    // 12 salt rounds, matching every other password hash in the app
+    // (changePassword, createBranchAdmin, ...).
+    expect((bcrypt.hash as jest.Mock).mock.calls[0][1]).toBe(12);
+  });
+
+  // SECURITY-CRITICAL: the whole point of a one-time password reveal
+  // is that the plaintext is shown to the admin exactly once and never
+  // persisted anywhere else - verify the response actually contains a
+  // plaintext password (not the hash), and that whatever gets audit-
+  // logged does NOT contain it.
+  it("returns the plaintext one-time password in the response, and does not include it in the audit log", async () => {
+    const req = makeReq({ params: { id: "student-1" } });
+    const res = makeMockRes();
+
+    await resetStudentPassword(req, res);
+
+    const jsonPayload = (res.json as jest.Mock).mock.calls[0][0];
+    expect(jsonPayload.data.oneTimePassword).toBeDefined();
+    expect(typeof jsonPayload.data.oneTimePassword).toBe("string");
+    expect(jsonPayload.data.oneTimePassword).not.toBe("hashed-one-time-password");
+    expect(jsonPayload.data.email).toBe("ravi@test.com");
+
+    const { logAuditFromRequest } = require("../../services/auditLog.service");
+    expect(logAuditFromRequest).toHaveBeenCalledTimes(1);
+    const auditCallArgs = JSON.stringify(logAuditFromRequest.mock.calls[0]);
+    expect(auditCallArgs).not.toContain(jsonPayload.data.oneTimePassword);
+  });
+
+  it("generates a fresh, different password on each call (never reuses the previous reset's password)", async () => {
+    const req = makeReq({ params: { id: "student-1" } });
+    const res1 = makeMockRes();
+    const res2 = makeMockRes();
+
+    await resetStudentPassword(req, res1);
+    await resetStudentPassword(req, res2);
+
+    const password1 = (res1.json as jest.Mock).mock.calls[0][0].data.oneTimePassword;
+    const password2 = (res2.json as jest.Mock).mock.calls[0][0].data.oneTimePassword;
+    expect(password1).not.toBe(password2);
+  });
+
+  it("the generated one-time password satisfies changePasswordSchema's own strength rule (8+ chars, uppercase, digit)", async () => {
+    const req = makeReq({ params: { id: "student-1" } });
+    const res = makeMockRes();
+
+    await resetStudentPassword(req, res);
+
+    const password = (res.json as jest.Mock).mock.calls[0][0].data.oneTimePassword;
+    expect(password.length).toBeGreaterThanOrEqual(8);
+    expect(password).toMatch(/[A-Z]/);
+    expect(password).toMatch(/[0-9]/);
   });
 });

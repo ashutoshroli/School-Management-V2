@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { Prisma, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
@@ -10,6 +11,28 @@ import { logAuditFromRequest } from "../services/auditLog.service";
 import { notify } from "../services/notification.service";
 import { welcomeEmail } from "../services/notification/emailTemplates";
 import { config } from "../config";
+
+/**
+ * Generates a random one-time login password for resetStudentPassword
+ * below. Built from an unambiguous character set (no 0/O/1/l/I) since
+ * this is meant to be read off a screen and typed/relayed by hand -
+ * still satisfies changePasswordSchema's own new-password rule
+ * (8+ chars, at least one uppercase letter, at least one digit) so a
+ * student can keep using it as-is or change it via the normal
+ * "Change Password" flow afterwards.
+ */
+const generateOneTimePassword = (): string => {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = crypto.randomBytes(10);
+  let password = "";
+  for (let i = 0; i < bytes.length; i++) {
+    password += chars[bytes[i] % chars.length];
+  }
+  // Guarantee at least one uppercase + one digit regardless of what
+  // the random draw above happened to produce, since the character
+  // pool doesn't make that certain on its own.
+  return `${password}A9`;
+};
 
 /**
  * Generate unique admission number.
@@ -412,6 +435,59 @@ export const updateStudent = async (req: AuthRequest, res: Response): Promise<vo
     sendSuccess(res, updated, "Student updated");
   } catch (error) {
     sendError(res, "Failed to update student", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Admin-triggered password reset for a student's login. Students are
+ * created with no password at all (see createStudent above - only an
+ * email/name/phone User record, meant for Google OAuth) - so this is
+ * also how a student who wants to switch to (or just have a fallback
+ * for) email/password login gets a password in the first place, not
+ * only how an existing one gets reset.
+ *
+ * Generates a fresh random one-time password, hashes and saves it,
+ * and returns the PLAINTEXT once in the response so the admin can
+ * hand it to the student/parent - it is never stored or logged
+ * anywhere in plaintext (the audit log below only records that a
+ * reset happened, never the password itself), and cannot be retrieved
+ * again after this response. The student should be told to change it
+ * via Settings > Change Password on first login.
+ */
+export const resetStudentPassword = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
+    if (!student) { sendError(res, "Student not found", 404); return; }
+    if (!canAccessBranch(req, student.branchId)) { sendError(res, "Student not found", 404); return; }
+
+    const oneTimePassword = generateOneTimePassword();
+    const hashedPassword = await bcrypt.hash(oneTimePassword, 12);
+
+    await prisma.user.update({
+      where: { id: student.userId },
+      data: { password: hashedPassword },
+    });
+
+    // Audit trail deliberately omits the password itself (oldData/
+    // newData below only ever holds non-secret identifiers) - a
+    // reset is worth recording (who did it, when, for whom), the
+    // plaintext credential it produced must never persist anywhere.
+    logAuditFromRequest(req, "UPDATE", "student_password_reset", id, {
+      newData: { studentId: id, userId: student.userId, resetBy: req.user!.userId },
+    });
+
+    sendSuccess(
+      res,
+      { email: student.user.email, oneTimePassword },
+      "Password reset - share this one-time password with the student now, it will not be shown again"
+    );
+  } catch (error) {
+    sendError(res, "Failed to reset password", 500, (error as Error).message);
   }
 };
 

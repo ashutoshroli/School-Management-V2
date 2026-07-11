@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award, Plus, ToggleLeft, ToggleRight, IndianRupee, ClipboardCheck, Download } from "lucide-react";
+import { GraduationCap, CreditCard, Users, ArrowLeft, Edit, BadgeCheck, FileText, Trash2, Award, Plus, ToggleLeft, ToggleRight, IndianRupee, ClipboardCheck, Download, KeyRound, Copy, Check, AlertTriangle } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate, formatCurrency } from "@/lib/utils";
 import { openPdfInNewTab } from "@/lib/pdf";
@@ -177,6 +177,37 @@ export default function StudentProfilePage() {
     }
   };
 
+  // Reset Password - two-step: a confirmation prompt, then (only on
+  // success) a one-time reveal modal showing the new plaintext
+  // password exactly once (the backend never returns it again after
+  // this response, and never stores it in plaintext anywhere).
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [oneTimePassword, setOneTimePassword] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleResetPassword = async () => {
+    setResetting(true);
+    try {
+      const res = await api.post(`/students/${params.id}/reset-password`);
+      setShowResetConfirm(false);
+      setOneTimePassword(res.data.data.oneTimePassword);
+      setCopied(false);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to reset password");
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const copyOneTimePassword = () => {
+    if (!oneTimePassword) return;
+    navigator.clipboard.writeText(oneTimePassword).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [discountForm, setDiscountForm] = useState({ type: "SIBLING", name: "Sibling Discount", value: "", isPercent: false });
 
@@ -246,6 +277,9 @@ export default function StudentProfilePage() {
         <Link href="/dashboard/certificates" className="btn-secondary flex items-center gap-2">
           <Award className="h-4 w-4" /> Certificates
         </Link>
+        <button onClick={() => setShowResetConfirm(true)} className="btn-secondary flex items-center gap-2">
+          <KeyRound className="h-4 w-4" /> Reset Password
+        </button>
         <button onClick={openEditModal} className="btn-primary flex items-center gap-2">
           <Edit className="h-4 w-4" /> Edit
         </button>
@@ -667,6 +701,55 @@ export default function StudentProfilePage() {
             <button type="submit" disabled={saving} className="btn-primary disabled:opacity-50">{saving ? "Saving..." : "Save Changes"}</button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={showResetConfirm} onClose={() => setShowResetConfirm(false)} title="Reset Password">
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800">
+              This immediately replaces {student.user.name}'s login password with a new randomly-generated
+              one-time password. Their current password (if any) will stop working right away.
+            </p>
+          </div>
+          <p className="text-sm text-gray-600">
+            The new password will be shown to you <span className="font-medium">once</span> - copy it and share it
+            with the student/parent. It cannot be retrieved again afterwards.
+          </p>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowResetConfirm(false)} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={handleResetPassword} disabled={resetting} className="btn-primary disabled:opacity-50">
+              {resetting ? "Resetting..." : "Reset Password"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={!!oneTimePassword} onClose={() => setOneTimePassword(null)} title="One-Time Password Generated">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Share this password with <span className="font-medium">{student.user.name}</span> ({student.user.email}) now.
+            It will <span className="font-medium">not be shown again</span> after you close this window.
+          </p>
+          <div className="flex items-center gap-2 bg-gray-50 border rounded-lg p-3">
+            <code className="flex-1 text-lg font-mono font-semibold tracking-wide text-gray-900">{oneTimePassword}</code>
+            <button
+              type="button"
+              onClick={copyOneTimePassword}
+              title="Copy to clipboard"
+              className={`p-2 rounded-lg ${copied ? "text-green-600 bg-green-50" : "text-gray-500 hover:bg-gray-100"}`}
+            >
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            </button>
+          </div>
+          {copied && <p className="text-xs text-green-600">Copied to clipboard.</p>}
+          <p className="text-xs text-gray-500">
+            The student/parent should change this password after logging in (Settings &gt; Change Password).
+          </p>
+          <div className="flex justify-end pt-4 border-t">
+            <button type="button" onClick={() => setOneTimePassword(null)} className="btn-primary">I've saved this - Close</button>
+          </div>
+        </div>
       </Modal>
 
       <Modal isOpen={showDiscountModal} onClose={() => setShowDiscountModal(false)} title="Add Discount / Scholarship">
