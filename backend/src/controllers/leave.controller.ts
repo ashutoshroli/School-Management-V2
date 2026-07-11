@@ -119,7 +119,19 @@ export const updateLeaveStatus = async (req: AuthRequest, res: Response): Promis
  */
 export const getLeaveBalance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const staffId = req.params.staffId || (await prisma.staff.findUnique({ where: { userId: req.user!.userId } }))?.id;
+    // BUG FIX: the frontend's "Leave Balance" tab (for a staff member
+    // viewing their own balance) calls GET /hr/leave/balance/self -
+    // "self" was previously used as a literal :staffId, so the query
+    // below matched zero LeaveApplication rows (a real Staff.id never
+    // equals the string "self") and silently returned every leave type
+    // at its full, unused balance instead of the caller's real usage.
+    // Resolve "self" (or a missing/blank param) to the caller's own
+    // Staff record instead of trusting it as a real id.
+    const requestedStaffId = req.params.staffId;
+    const staffId =
+      requestedStaffId && requestedStaffId !== "self"
+        ? requestedStaffId
+        : (await prisma.staff.findUnique({ where: { userId: req.user!.userId } }))?.id;
     if (!staffId) { sendError(res, "Staff not found", 404); return; }
 
     const leaveTypes = await prisma.leaveType.findMany({ where: { isActive: true } });

@@ -8,6 +8,7 @@ import { formatCurrency } from "@/lib/utils";
 
 interface FeeStructure {
   id: string;
+  classId: string;
   amount: number;
   frequency: string;
   dueDay: number;
@@ -115,7 +116,7 @@ export default function FeeStructuresPage() {
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-500">{s.academicYear.name}</td>
                   <td className="px-4 py-3">
-                    <button onClick={() => bulkAssign(s.id, s.class.name)} className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1">
+                    <button onClick={() => bulkAssign(s.id, s.classId)} className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1">
                       <Users className="h-3 w-3" /> Assign
                     </button>
                   </td>
