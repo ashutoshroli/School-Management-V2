@@ -64,17 +64,49 @@ hardening before it was safe to expose):**
 
 ---
 
-## Phase 2: Hostel Module Completion 🔴 (Item #9)
+## Phase 2: Hostel Module Completion ✅ COMPLETED (Item #9)
 
 **Priority:** HIGH (5 of 8 backend endpoints completely unused - half-built module)
-**Backend:** Fully ready (`addFloor`, `addRoom`, `allocateRoom`, `deallocateRoom`, `getOccupancy`)
+**Status:** ✅ **DONE**
 
-### Scope:
-- Add "+ Floor" button per building (modal: floor number)
-- Add "+ Room" button per floor (modal: room number, type, capacity, monthly fee)
-- "Allocate Student" flow (search student → pick room → allocate, mirrors Transport's allocate flow)
-- Deallocate action per allocation
-- Occupancy summary card/tab (`getOccupancy`)
+### What was actually done:
+
+**Backend fixes to `hostel.controller.ts`** (same IDOR pattern found and fixed
+in Phase 1's `bulkPromote` - `addFloor`/`addRoom`/`allocateRoom`/`deallocateRoom`
+all had **zero branch-access check**):
+- `addFloor`: now resolves the target building's own branch and requires `canAccessBranch`.
+- `addRoom`: now resolves the target floor's building's branch and requires `canAccessBranch`.
+- `allocateRoom`: now checks BOTH the room's building branch AND the student's
+  own branch, and requires they match each other (not just that the caller can
+  access one of them individually) - prevents allocating a student from one
+  branch into a different branch's hostel room.
+- `deallocateRoom`: now resolves the allocation's room's building's branch and
+  requires `canAccessBranch`.
+- `getBuildings` now includes each room's current (`endDate: null`) allocations
+  with resident name/admissionNo, so the frontend's room-management modal
+  doesn't need a second round trip for that.
+- **New tests:** 15 new cases in `hostel.controller.test.ts` covering every
+  branch-access check above plus the existing allocate/deallocate business logic.
+
+**Frontend** - rewrote `/dashboard/hostel`:
+- "+ Add Floor" button per building (modal: floor number)
+- "+ Add Room" button per floor (modal: room number, type, capacity, monthly fee)
+- Clicking any room opens a "Manage Room" modal: current residents list with a
+  deallocate button per resident, and a student search + bed-number field to
+  allocate a new resident (disabled once the room is full)
+- New "Occupancy" button opens a summary modal (using the existing `getOccupancy`
+  endpoint) showing overall occupancy % and a per-room breakdown table
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**60 suites / 550 tests**, up from
+  60/535 - zero regressions) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, `/dashboard/hostel` builds fine
+
+### Deliverables:
+- ✅ All 8 hostel backend endpoints now have frontend UI (was 3 of 8)
+- ✅ 4 IDOR vulnerabilities fixed
+- ✅ All existing + new tests passing, both builds clean
+- 🔲 Git branch + PR - pending user's "PR banao" instruction
 
 ---
 
