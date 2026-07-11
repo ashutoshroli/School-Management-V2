@@ -1,16 +1,21 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Award, Plus, FileDown } from "lucide-react";
+import { Award, Plus, FileDown, X } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
 import { resolveUploadUrl } from "@/lib/uploads";
 
-// Only these three types have a real PDF generator wired up (see
-// backend/src/services/certificateGenerator.service.ts) - ID_CARD has
-// its own dedicated endpoint (per-student "ID Card" button on the
-// student profile page) and CUSTOM has no generic renderer yet.
+// TRANSFER_CERTIFICATE/BONAFIDE/CHARACTER have a hardcoded PDFKit
+// layout as a fallback (see certificateGenerator.service.ts), so they
+// always produce a PDF even with no template uploaded. ID_CARD has its
+// own dedicated endpoint (per-student "ID Card" button on the student
+// profile page) - not generated from here at all. CUSTOM has NO
+// hardcoded fallback: it only produces a PDF once a .docx template is
+// uploaded for it on the Templates page, and any "Custom Fields" below
+// fill that template's own {{placeholders}} (student/branch fields
+// aren't enough since a CUSTOM template's fields aren't known ahead of time).
 const SUPPORTED_TYPES = ["TRANSFER_CERTIFICATE", "BONAFIDE", "CHARACTER"];
 
 export default function CertificatesPage() {
@@ -22,7 +27,21 @@ export default function CertificatesPage() {
   const [students, setStudents] = useState<any[]>([]);
   const [generating, setGenerating] = useState(false);
 
+  // CUSTOM-type certificates have no fixed field set (unlike
+  // Transfer/Bonafide/Character), so the admin supplies whatever
+  // {{placeholder}} key/value pairs their uploaded template needs,
+  // right here at generation time - the generic renderer for CUSTOM
+  // templates the gap-analysis called out as a real missing feature.
+  const [customFields, setCustomFields] = useState<{ key: string; value: string }[]>([{ key: "", value: "" }]);
+
   const selectedTemplate = templates.find((t) => t.id === form.templateId);
+  const isCustomType = selectedTemplate?.type === "CUSTOM";
+
+  const updateCustomField = (index: number, field: "key" | "value", value: string) => {
+    setCustomFields((prev) => prev.map((cf, i) => (i === index ? { ...cf, [field]: value } : cf)));
+  };
+  const addCustomFieldRow = () => setCustomFields((prev) => [...prev, { key: "", value: "" }]);
+  const removeCustomFieldRow = (index: number) => setCustomFields((prev) => prev.filter((_, i) => i !== index));
 
   const fetch = async () => {
     setLoading(true);
@@ -44,14 +63,21 @@ export default function CertificatesPage() {
     if (!form.templateId || !form.studentId) { alert("Select template and student"); return; }
     setGenerating(true);
     try {
+      const customFieldsPayload = customFields.reduce<Record<string, string>>((acc, { key, value }) => {
+        if (key.trim()) acc[key.trim()] = value;
+        return acc;
+      }, {});
+
       const res = await api.post("/communication/certificates/generate", {
         templateId: form.templateId,
         studentId: form.studentId,
         ...(form.purpose ? { purpose: form.purpose } : {}),
+        ...(Object.keys(customFieldsPayload).length > 0 ? { customFields: customFieldsPayload } : {}),
       });
       alert(`Certificate generated! Serial: ${res.data.data.serialNo}`);
       setShowModal(false);
       setForm({ templateId: "", studentSearch: "", studentId: "", purpose: "" });
+      setCustomFields([{ key: "", value: "" }]);
       fetch();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to generate certificate");
@@ -64,7 +90,7 @@ export default function CertificatesPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Award className="h-6 w-6 text-primary-600" /> Certificates</h1>
-        <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Generate</button>
+        <button onClick={() => { setForm({ templateId: "", studentSearch: "", studentId: "", purpose: "" }); setCustomFields([{ key: "", value: "" }]); setShowModal(true); }} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Generate</button>
       </div>
 
       {/* Templates */}
@@ -115,9 +141,15 @@ export default function CertificatesPage() {
             <select className="input-field" value={form.templateId} onChange={e => setForm({...form, templateId: e.target.value})}>
               <option value="">Select</option>{templates.map(t => <option key={t.id} value={t.id}>{t.name} ({t.type})</option>)}
             </select>
-            {selectedTemplate && !SUPPORTED_TYPES.includes(selectedTemplate.type) && (
+            {selectedTemplate && !SUPPORTED_TYPES.includes(selectedTemplate.type) && selectedTemplate.type !== "CUSTOM" && (
               <p className="text-xs text-amber-600 mt-1">
                 PDF generation for &quot;{selectedTemplate.type}&quot; isn&apos;t available yet - only Transfer Certificate, Bonafide, and Character certificates generate a real PDF today.
+              </p>
+            )}
+            {isCustomType && (
+              <p className="text-xs text-amber-600 mt-1">
+                CUSTOM certificates need a .docx template uploaded on the Templates page first - use the Custom Fields
+                below to fill in any placeholders that template needs beyond the standard student/branch fields.
               </p>
             )}
           </div>
@@ -130,6 +162,43 @@ export default function CertificatesPage() {
           {selectedTemplate?.type === "BONAFIDE" && (
             <div><label className="block text-sm font-medium mb-1">Purpose (optional)</label>
               <input className="input-field" placeholder="e.g., applying for a passport" value={form.purpose} onChange={e => setForm({...form, purpose: e.target.value})} />
+            </div>
+          )}
+          {isCustomType && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Custom Fields</label>
+              <p className="text-xs text-gray-400 mb-2">
+                Key = the placeholder name in your .docx template (without curly braces), Value = what to fill in.
+              </p>
+              <div className="space-y-2">
+                {customFields.map((cf, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <input
+                      className="input-field flex-1"
+                      placeholder="e.g. eventName"
+                      value={cf.key}
+                      onChange={(e) => updateCustomField(idx, "key", e.target.value)}
+                    />
+                    <input
+                      className="input-field flex-1"
+                      placeholder="e.g. Annual Sports Day"
+                      value={cf.value}
+                      onChange={(e) => updateCustomField(idx, "value", e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeCustomFieldRow(idx)}
+                      disabled={customFields.length === 1}
+                      className="text-red-400 hover:text-red-600 disabled:opacity-30 flex-shrink-0"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button type="button" onClick={addCustomFieldRow} className="mt-2 text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1">
+                <Plus className="h-3.5 w-3.5" /> Add Field
+              </button>
             </div>
           )}
           <div className="flex justify-end gap-3 pt-4 border-t">

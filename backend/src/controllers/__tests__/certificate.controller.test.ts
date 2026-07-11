@@ -167,6 +167,45 @@ describe("certificate.controller", () => {
     });
   });
 
+  describe("generateCertificate - CUSTOM certificate customFields", () => {
+    it("passes customFields through to the renderer as extraFields for a CUSTOM template", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue({ ...TEMPLATE, type: "CUSTOM", templateUrl: "/uploads/templates/custom.docx" });
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(makeStudent("branch-1"));
+      (renderCertificateByType as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+      (storage.save as jest.Mock).mockResolvedValue({ url: "/uploads/certificates/CERT-000003.pdf" });
+      (prisma.generatedCertificate.create as jest.Mock).mockResolvedValue({ id: "gc-3", serialNo: "CERT-000003" });
+
+      const req = makeReq({
+        body: { templateId: "tmpl-1", studentId: "student-1", customFields: { eventName: "Annual Sports Day" } },
+      });
+      const res = makeMockRes();
+
+      await generateCertificate(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(renderCertificateByType).toHaveBeenCalledWith(
+        "CUSTOM",
+        expect.objectContaining({ extraFields: { eventName: "Annual Sports Day" } })
+      );
+    });
+
+    it("still generates successfully with no customFields provided (optional field)", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue(TEMPLATE);
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(makeStudent("branch-1"));
+      (renderCertificateByType as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+      (storage.save as jest.Mock).mockResolvedValue({ url: "/uploads/certificates/CERT-000004.pdf" });
+      (prisma.generatedCertificate.create as jest.Mock).mockResolvedValue({ id: "gc-4", serialNo: "CERT-000004" });
+
+      const req = makeReq({ body: { templateId: "tmpl-1", studentId: "student-1" } });
+      const res = makeMockRes();
+
+      await generateCertificate(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(renderCertificateByType).toHaveBeenCalledWith("TRANSFER_CERTIFICATE", expect.objectContaining({ extraFields: undefined }));
+    });
+  });
+
   describe("getGeneratedCertificates - branch scoping", () => {
     it("SECURITY: scopes results to the caller's own branch for non-Super-Admin users", async () => {
       (prisma.generatedCertificate.findMany as jest.Mock).mockResolvedValue([]);
