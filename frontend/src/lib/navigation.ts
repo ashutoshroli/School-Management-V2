@@ -180,6 +180,12 @@ export const navigation: NavItem[] = [
     roles: ADMIN_ROLES,
   },
   {
+    label: "Attendance Devices",
+    href: "/dashboard/attendance-devices",
+    icon: "Radio",
+    roles: ADMIN_ROLES,
+  },
+  {
     label: "Notices",
     href: "/dashboard/notices",
     icon: "Bell",
