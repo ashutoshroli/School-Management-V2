@@ -3,16 +3,17 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    hostelBuilding: { create: jest.fn() },
-    hostelFloor: { create: jest.fn(), findUnique: jest.fn() },
-    hostelRoom: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
-    hostelAllocation: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
-    student: { findUnique: jest.fn() },
+    hostelBuilding: { create: jest.fn(), findUnique: jest.fn() },
+    hostelFloor: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
+    hostelRoom: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+    hostelAllocation: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), upsert: jest.fn() },
+    student: { findUnique: jest.fn(), findMany: jest.fn() },
+    $transaction: jest.fn(),
   },
 }));
 
 import prisma from "../../config/database";
-import { createBuilding, addFloor, addRoom, allocateRoom, deallocateRoom } from "../hostel.controller";
+import { createBuilding, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom } from "../hostel.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -168,7 +169,9 @@ describe("hostel.controller - allocateRoom (SECURITY: branch-access fix)", () =>
     jest.clearAllMocks();
     (prisma.hostelRoom.findUnique as jest.Mock).mockResolvedValue(ROOM);
     (prisma.student.findUnique as jest.Mock).mockResolvedValue(STUDENT);
-    (prisma.hostelAllocation.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "alloc-1", ...data }));
+    // No pre-existing allocation for this student by default (fresh allocation case).
+    (prisma.hostelAllocation.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.hostelAllocation.upsert as jest.Mock).mockImplementation(({ create }: any) => Promise.resolve({ id: "alloc-1", ...create }));
     (prisma.hostelRoom.update as jest.Mock).mockResolvedValue({});
   });
 
@@ -180,7 +183,7 @@ describe("hostel.controller - allocateRoom (SECURITY: branch-access fix)", () =>
     await allocateRoom(req, res);
 
     expect(res.status).toHaveBeenCalledWith(404);
-    expect(prisma.hostelAllocation.create).not.toHaveBeenCalled();
+    expect(prisma.hostelAllocation.upsert).not.toHaveBeenCalled();
   });
 
   it("SECURITY: rejects allocating a room whose building is in a DIFFERENT branch", async () => {
@@ -194,7 +197,7 @@ describe("hostel.controller - allocateRoom (SECURITY: branch-access fix)", () =>
     await allocateRoom(req, res);
 
     expect(res.status).toHaveBeenCalledWith(404);
-    expect(prisma.hostelAllocation.create).not.toHaveBeenCalled();
+    expect(prisma.hostelAllocation.upsert).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the student does not exist", async () => {
@@ -205,7 +208,7 @@ describe("hostel.controller - allocateRoom (SECURITY: branch-access fix)", () =>
     await allocateRoom(req, res);
 
     expect(res.status).toHaveBeenCalledWith(404);
-    expect(prisma.hostelAllocation.create).not.toHaveBeenCalled();
+    expect(prisma.hostelAllocation.upsert).not.toHaveBeenCalled();
   });
 
   it("SECURITY: rejects when the student belongs to a DIFFERENT branch than the room (even if caller could access either individually)", async () => {
@@ -219,7 +222,7 @@ describe("hostel.controller - allocateRoom (SECURITY: branch-access fix)", () =>
     await allocateRoom(req, res);
 
     expect(res.status).toHaveBeenCalledWith(403);
-    expect(prisma.hostelAllocation.create).not.toHaveBeenCalled();
+    expect(prisma.hostelAllocation.upsert).not.toHaveBeenCalled();
   });
 
   it("rejects when the room is already full", async () => {
@@ -230,20 +233,192 @@ describe("hostel.controller - allocateRoom (SECURITY: branch-access fix)", () =>
     await allocateRoom(req, res);
 
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(prisma.hostelAllocation.create).not.toHaveBeenCalled();
+    expect(prisma.hostelAllocation.upsert).not.toHaveBeenCalled();
   });
 
-  it("allocates the student and increments the room's occupied count", async () => {
+  it("BUG FIX: rejects re-allocating a student who already has an ACTIVE allocation (must deallocate first)", async () => {
+    (prisma.hostelAllocation.findUnique as jest.Mock).mockResolvedValue({ id: "alloc-old", roomId: "room-old", endDate: null });
+    const req = makeReq({ body: { studentId: "student-1", roomId: "room-1" } });
+    const res = makeMockRes();
+
+    await allocateRoom(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.hostelAllocation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("BUG FIX: allows re-allocating a student whose PAST allocation has already ended (upsert, not a plain create that would hit the @unique constraint)", async () => {
+    (prisma.hostelAllocation.findUnique as jest.Mock).mockResolvedValue({ id: "alloc-old", roomId: "room-old", endDate: new Date("2020-01-01") });
     const req = makeReq({ body: { studentId: "student-1", roomId: "room-1", bedNo: "A1" } });
     const res = makeMockRes();
 
     await allocateRoom(req, res);
 
     expect(res.status).toHaveBeenCalledWith(201);
-    expect(prisma.hostelAllocation.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ studentId: "student-1", roomId: "room-1", bedNo: "A1" }),
+    expect(prisma.hostelAllocation.upsert).toHaveBeenCalledWith({
+      where: { studentId: "student-1" },
+      update: expect.objectContaining({ roomId: "room-1", bedNo: "A1", endDate: null }),
+      create: expect.objectContaining({ studentId: "student-1", roomId: "room-1", bedNo: "A1" }),
+    });
+  });
+
+  it("allocates the student (fresh, no prior allocation) and increments the room's occupied count", async () => {
+    const req = makeReq({ body: { studentId: "student-1", roomId: "room-1", bedNo: "A1" } });
+    const res = makeMockRes();
+
+    await allocateRoom(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(prisma.hostelAllocation.upsert).toHaveBeenCalledWith({
+      where: { studentId: "student-1" },
+      update: expect.objectContaining({ roomId: "room-1", bedNo: "A1" }),
+      create: expect.objectContaining({ studentId: "student-1", roomId: "room-1", bedNo: "A1" }),
     });
     expect(prisma.hostelRoom.update).toHaveBeenCalledWith({ where: { id: "room-1" }, data: { occupied: { increment: 1 } } });
+  });
+});
+
+describe("hostel.controller - bulkAllocateRoom", () => {
+  const BUILDING = { id: "building-1", branchId: "branch-1" };
+  const ROOMS = [
+    { id: "room-101", roomNo: "101", capacity: 2, occupied: 0, floor: { floorNo: 1 } },
+    { id: "room-102", roomNo: "102", capacity: 1, occupied: 0, floor: { floorNo: 1 } },
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.hostelBuilding.findUnique as jest.Mock).mockResolvedValue(BUILDING);
+    (prisma.hostelFloor.findUnique as jest.Mock).mockResolvedValue({ id: "floor-1", buildingId: "building-1" });
+    (prisma.hostelRoom.findMany as jest.Mock).mockResolvedValue(ROOMS.map((r) => ({ ...r })));
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([
+      { id: "s1", branchId: "branch-1" },
+      { id: "s2", branchId: "branch-1" },
+      { id: "s3", branchId: "branch-1" },
+    ]);
+    (prisma.hostelAllocation.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.$transaction as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("returns 404 when the building does not exist", async () => {
+    (prisma.hostelBuilding.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("SECURITY: rejects when the building belongs to a DIFFERENT branch", async () => {
+    (prisma.hostelBuilding.findUnique as jest.Mock).mockResolvedValue({ id: "building-1", branchId: "branch-OTHER" });
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when a floorId is given that doesn't belong to the building", async () => {
+    (prisma.hostelFloor.findUnique as jest.Mock).mockResolvedValue({ id: "floor-1", buildingId: "building-OTHER" });
+    const req = makeReq({ body: { buildingId: "building-1", floorId: "floor-1", studentIds: ["s1"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns 404 when one or more studentIds don't exist", async () => {
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([{ id: "s1", branchId: "branch-1" }]);
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1", "s-missing"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects (IDOR) when a student belongs to a DIFFERENT branch than the building", async () => {
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([{ id: "s1", branchId: "branch-OTHER" }]);
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  it("fills rooms in floor/room order, spreading students across multiple rooms once one fills up", async () => {
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1", "s2", "s3"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const responseData = res.json.mock.calls[0][0].data;
+    // room-101 (capacity 2) takes s1+s2, room-102 (capacity 1) takes s3.
+    expect(responseData.allocated).toEqual([
+      { studentId: "s1", roomId: "room-101", roomNo: "101" },
+      { studentId: "s2", roomId: "room-101", roomNo: "101" },
+      { studentId: "s3", roomId: "room-102", roomNo: "102" },
+    ]);
+    expect(responseData.skipped).toEqual([]);
+  });
+
+  it("skips a student with no remaining room capacity in scope", async () => {
+    (prisma.hostelRoom.findMany as jest.Mock).mockResolvedValue([{ ...ROOMS[0], capacity: 1 }]);
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1", "s2"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    const responseData = res.json.mock.calls[0][0].data;
+    expect(responseData.allocated).toEqual([{ studentId: "s1", roomId: "room-101", roomNo: "101" }]);
+    expect(responseData.skipped).toEqual([{ studentId: "s2", reason: "No available room capacity remaining in scope" }]);
+  });
+
+  it("skips a student who already has an active allocation, by default (reassignExisting not set)", async () => {
+    (prisma.hostelAllocation.findMany as jest.Mock).mockResolvedValue([{ studentId: "s1", roomId: "room-old", endDate: null }]);
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1", "s2"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    const responseData = res.json.mock.calls[0][0].data;
+    expect(responseData.skipped).toEqual([{ studentId: "s1", reason: "Already has an active room allocation" }]);
+    expect(responseData.allocated).toEqual([{ studentId: "s2", roomId: "room-101", roomNo: "101" }]);
+  });
+
+  it("with reassignExisting=true, moves an already-allocated student into a new room instead of skipping", async () => {
+    (prisma.hostelAllocation.findMany as jest.Mock).mockResolvedValue([{ studentId: "s1", roomId: "room-old", endDate: null }]);
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1"], reassignExisting: true } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    const responseData = res.json.mock.calls[0][0].data;
+    expect(responseData.allocated).toEqual([{ studentId: "s1", roomId: "room-101", roomNo: "101" }]);
+    expect(responseData.skipped).toEqual([]);
+    expect(prisma.hostelAllocation.update).toHaveBeenCalledWith({
+      where: { studentId: "s1" },
+      data: expect.objectContaining({ roomId: "room-101", endDate: null }),
+    });
+  });
+
+  it("returns a summary with zero allocated when studentIds is a valid but entirely-skipped batch, without ever calling $transaction with empty writes", async () => {
+    (prisma.hostelRoom.findMany as jest.Mock).mockResolvedValue([]);
+    const req = makeReq({ body: { buildingId: "building-1", studentIds: ["s1"] } });
+    const res = makeMockRes();
+
+    await bulkAllocateRoom(req, res);
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    const responseData = res.json.mock.calls[0][0].data;
+    expect(responseData.allocated).toEqual([]);
+    expect(responseData.skipped).toEqual([{ studentId: "s1", reason: "No available room capacity remaining in scope" }]);
   });
 });
 
