@@ -22,6 +22,17 @@ describe("pushProvider", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (config as any).push = { projectId: "", clientEmail: "", privateKey: "" };
+    // sendPushToMany intentionally logs a console.error per failed token
+    // (see pushProvider.ts) so ops can spot dead/uninstalled-app tokens
+    // in production logs. Silence it here so the "reports failures
+    // without throwing" test doesn't spam CI output / trip any
+    // console-error-as-failure lint rule, while still letting us verify
+    // failures are handled correctly via the returned `failedTokens`.
+    jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   describe("isPushConfigured", () => {
