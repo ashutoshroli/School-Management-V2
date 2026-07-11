@@ -137,9 +137,67 @@ export const removeAllocation = async (req: AuthRequest, res: Response): Promise
 export const getVehicles = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);
-    const vehicles = await prisma.vehicle.findMany({ where: { branchId }, orderBy: { vehicleNo: "asc" } });
+    const vehicles = await prisma.vehicle.findMany({
+      where: { branchId },
+      // Needed by the Transport page to show which route(s) a vehicle
+      // is currently assigned to (see assignVehicleToRoute below) -
+      // the VehicleRoute join table existed in the schema with no way
+      // to ever populate or view it until now.
+      include: { routes: { include: { route: { select: { id: true, name: true } } } } },
+      orderBy: { vehicleNo: "asc" },
+    });
     sendSuccess(res, vehicles, "Vehicles fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Assign a vehicle to a route (populates the VehicleRoute join table).
+ * Both records must belong to the caller's own branch - and to each
+ * OTHER (a vehicle from branch A can never be assigned to a route in
+ * branch B), same defense-in-depth pattern as allocateStudent's
+ * route-vs-student branch check above.
+ */
+export const assignVehicleToRoute = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { vehicleId, routeId } = req.body;
+
+    const [vehicle, route] = await Promise.all([
+      prisma.vehicle.findUnique({ where: { id: vehicleId } }),
+      prisma.transportRoute.findUnique({ where: { id: routeId } }),
+    ]);
+    if (!vehicle) { sendError(res, "Vehicle not found", 404); return; }
+    if (!route) { sendError(res, "Route not found", 404); return; }
+    if (!canAccessBranch(req, vehicle.branchId)) { sendError(res, "Vehicle not found", 404); return; }
+    if (!canAccessBranch(req, route.branchId)) { sendError(res, "Route not found", 404); return; }
+    if (vehicle.branchId !== route.branchId) { sendError(res, "Vehicle and route must belong to the same branch", 400); return; }
+
+    const existing = await prisma.vehicleRoute.findUnique({ where: { vehicleId_routeId: { vehicleId, routeId } } });
+    if (existing) { sendError(res, "This vehicle is already assigned to this route", 400); return; }
+
+    const assignment = await prisma.vehicleRoute.create({ data: { vehicleId, routeId } });
+    sendSuccess(res, assignment, "Vehicle assigned to route", 201);
+  } catch (error) { sendError(res, "Failed to assign vehicle to route", 500, (error as Error).message); }
+};
+
+/**
+ * Remove a vehicle-route assignment. Looked up (and branch-checked)
+ * via the vehicle side, since deleteVehicle/deleteRoute already treat
+ * the vehicle as the "owning" side when bulk-clearing VehicleRoute rows.
+ */
+export const unassignVehicleFromRoute = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { vehicleId, routeId } = req.params;
+
+    const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId } });
+    if (!vehicle) { sendError(res, "Vehicle not found", 404); return; }
+    if (!canAccessBranch(req, vehicle.branchId)) { sendError(res, "Vehicle not found", 404); return; }
+
+    const existing = await prisma.vehicleRoute.findUnique({ where: { vehicleId_routeId: { vehicleId, routeId } } });
+    if (!existing) { sendError(res, "This vehicle is not assigned to this route", 404); return; }
+
+    await prisma.vehicleRoute.delete({ where: { vehicleId_routeId: { vehicleId, routeId } } });
+    sendSuccess(res, null, "Vehicle unassigned from route");
+  } catch (error) { sendError(res, "Failed to unassign vehicle from route", 500, (error as Error).message); }
 };
 
 export const addVehicle = async (req: AuthRequest, res: Response): Promise<void> => {

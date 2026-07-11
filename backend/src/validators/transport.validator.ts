@@ -43,3 +43,10 @@ export const addVehicleSchema = z.object({
     driverLicense: z.string().optional(),
   }),
 });
+
+export const assignVehicleToRouteSchema = z.object({
+  body: z.object({
+    vehicleId: z.string().min(1, "vehicleId is required"),
+    routeId: z.string().min(1, "routeId is required"),
+  }),
+});

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus, Signpost } from "lucide-react";
+import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus, Signpost, Link2, Link2Off } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -41,6 +41,14 @@ export default function TransportPage() {
   const [stopForm, setStopForm] = useState({ name: "", order: "", time: "" });
   const [addingStop, setAddingStop] = useState(false);
 
+  // Assign/unassign a vehicle to route(s) - populates the VehicleRoute
+  // join table, which previously had no endpoint that could ever
+  // create a row in it at all (see BACKEND_UX_GAP_PLAN.md Phase 1).
+  const [routeVehicle, setRouteVehicle] = useState<any>(null);
+  const [selectedRouteId, setSelectedRouteId] = useState("");
+  const [assigningRoute, setAssigningRoute] = useState(false);
+  const [unassigningRouteId, setUnassigningRouteId] = useState<string | null>(null);
+
   const fetch = async () => {
     setLoading(true);
     try {
@@ -69,8 +77,12 @@ export default function TransportPage() {
       const fresh = routes.find((r) => r.id === stopRoute.id);
       if (fresh) setStopRoute(fresh);
     }
+    if (routeVehicle) {
+      const fresh = vehicles.find((v) => v.id === routeVehicle.id);
+      if (fresh) setRouteVehicle(fresh);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routes]);
+  }, [routes, vehicles]);
 
   const openAssignModal = (route: any) => {
     setAssignRoute(route);
@@ -189,6 +201,38 @@ export default function TransportPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this route"); }
   };
 
+  const openRouteModal = (vehicle: any) => {
+    setRouteVehicle(vehicle);
+    setSelectedRouteId("");
+  };
+
+  const handleAssignRoute = async () => {
+    if (!routeVehicle || !selectedRouteId) return;
+    setAssigningRoute(true);
+    try {
+      await api.post("/facilities/transport/vehicle-routes", { vehicleId: routeVehicle.id, routeId: selectedRouteId });
+      await fetch();
+      setSelectedRouteId("");
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to assign route to vehicle");
+    } finally {
+      setAssigningRoute(false);
+    }
+  };
+
+  const handleUnassignRoute = async (routeId: string) => {
+    if (!routeVehicle) return;
+    setUnassigningRouteId(routeId);
+    try {
+      await api.delete(`/facilities/transport/vehicle-routes/${routeVehicle.id}/${routeId}`);
+      await fetch();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to unassign route from vehicle");
+    } finally {
+      setUnassigningRouteId(null);
+    }
+  };
+
   const deleteVehicle = async (id: string, vehicleNo: string) => {
     if (!confirm(`Delete vehicle "${vehicleNo}"?`)) return;
     try {
@@ -255,14 +299,29 @@ export default function TransportPage() {
             <div className="card"><h3 className="font-semibold mb-3">Vehicles ({vehicles.length})</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {vehicles.map(v => (
-                  <div key={v.id} className="bg-gray-50 p-3 rounded-lg text-sm flex items-start justify-between">
-                    <div>
-                      <p className="font-medium">{v.vehicleNo}</p>
-                      <p className="text-xs text-gray-500">{v.type} | Capacity: {v.capacity}</p>
-                      {v.driverName && <p className="text-xs text-gray-400">Driver: {v.driverName}</p>}
+                  <div key={v.id} className="bg-gray-50 p-3 rounded-lg text-sm">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-medium">{v.vehicleNo}</p>
+                        <p className="text-xs text-gray-500">{v.type} | Capacity: {v.capacity}</p>
+                        {v.driverName && <p className="text-xs text-gray-400">Driver: {v.driverName}</p>}
+                      </div>
+                      <button onClick={() => deleteVehicle(v.id, v.vehicleNo)} title="Delete Vehicle" className="text-red-400 hover:text-red-600">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                    <button onClick={() => deleteVehicle(v.id, v.vehicleNo)} title="Delete Vehicle" className="text-red-400 hover:text-red-600">
-                      <Trash2 className="h-3.5 w-3.5" />
+                    {v.routes?.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {v.routes.map((vr: any) => (
+                          <span key={vr.id} className="text-xs px-2 py-0.5 bg-white border border-gray-200 rounded-full text-gray-600">{vr.route.name}</span>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => openRouteModal(v)}
+                      className="mt-2 w-full text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-100 bg-white rounded-lg py-1 flex items-center justify-center gap-1"
+                    >
+                      <Link2 className="h-3.5 w-3.5" /> Manage Routes
                     </button>
                   </div>
                 ))}
@@ -416,6 +475,54 @@ export default function TransportPage() {
               </button>
             </div>
           </form>
+        </div>
+      </Modal>
+
+      <Modal isOpen={!!routeVehicle} onClose={() => setRouteVehicle(null)} title={`Manage Routes - ${routeVehicle?.vehicleNo || ""}`}>
+        <div className="space-y-4">
+          <div>
+            <h4 className="text-sm font-semibold text-gray-600 mb-2">
+              Assigned Routes ({routeVehicle?.routes?.length || 0})
+            </h4>
+            {routeVehicle?.routes?.length > 0 ? (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {routeVehicle.routes.map((vr: any) => (
+                  <div key={vr.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                    <span className="font-medium">{vr.route.name}</span>
+                    <button
+                      onClick={() => handleUnassignRoute(vr.route.id)}
+                      disabled={unassigningRouteId === vr.route.id}
+                      title="Unassign this route"
+                      className="p-1 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
+                    >
+                      <Link2Off className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">This vehicle is not assigned to any route yet.</p>
+            )}
+          </div>
+
+          <div className="pt-3 border-t space-y-3">
+            <h4 className="text-sm font-semibold text-gray-600">Assign a Route</h4>
+            <div className="flex gap-2">
+              <select className="input-field flex-1" value={selectedRouteId} onChange={(e) => setSelectedRouteId(e.target.value)}>
+                <option value="">Select a route</option>
+                {routes
+                  .filter((r) => !routeVehicle?.routes?.some((vr: any) => vr.route.id === r.id))
+                  .map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+              <button type="button" onClick={handleAssignRoute} disabled={!selectedRouteId || assigningRoute} className="btn-primary text-sm disabled:opacity-50">
+                {assigningRoute ? "Assigning..." : "Assign"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-4 border-t">
+            <button type="button" onClick={() => setRouteVehicle(null)} className="btn-secondary">Close</button>
+          </div>
         </div>
       </Modal>
 
