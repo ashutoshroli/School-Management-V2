@@ -64,6 +64,85 @@ export const bulkAssignFees = async (req: AuthRequest, res: Response): Promise<v
 };
 
 /**
+ * Assign a fee structure to a specific, hand-picked list of students -
+ * the counterpart to bulkAssignFees above (which targets an entire
+ * class/section). Used when a fee only applies to certain students
+ * rather than everyone in a class (e.g. a one-off lab fee for students
+ * who opted into a subject, or a hostel fee for students who transferred
+ * in mid-year and shouldn't get the whole-class assignment).
+ */
+export const assignFeesToStudents = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { feeStructureId, studentIds } = req.body;
+
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      sendError(res, "studentIds must be a non-empty array", 400);
+      return;
+    }
+
+    const structure = await prisma.feeStructure.findUnique({ where: { id: feeStructureId } });
+    if (!structure) { sendError(res, "Fee structure not found", 404); return; }
+
+    if (!canAccessBranch(req, structure.branchId)) {
+      sendError(res, "Fee structure not found", 404);
+      return;
+    }
+
+    // Look up all requested students in one query - both to validate
+    // they exist and to enforce that every one of them actually
+    // belongs to the fee structure's branch (a Branch Admin could
+    // otherwise smuggle in a studentId from another branch).
+    const students = await prisma.student.findMany({
+      where: { id: { in: studentIds } },
+      select: { id: true, branchId: true },
+    });
+
+    const foundIds = new Set(students.map((s) => s.id));
+    const notFound = studentIds.filter((id: string) => !foundIds.has(id));
+    if (notFound.length > 0) {
+      sendError(res, `${notFound.length} student(s) in this list were not found`, 404);
+      return;
+    }
+    const outOfBranch = students.some((s) => s.branchId !== structure.branchId);
+    if (outOfBranch) {
+      sendError(res, "One or more students do not belong to this fee structure's branch", 403);
+      return;
+    }
+
+    // Same N+1-avoidance pattern as bulkAssignFees: one query to find
+    // who already has this assignment, instead of a findUnique-per-student.
+    const existingAssignments = await prisma.feeAssignment.findMany({
+      where: { feeStructureId, studentId: { in: studentIds } },
+      select: { studentId: true },
+    });
+    const alreadyAssigned = new Set(existingAssignments.map((a) => a.studentId));
+
+    const toCreate = students.filter((s) => !alreadyAssigned.has(s.id));
+
+    if (toCreate.length > 0) {
+      await prisma.feeAssignment.createMany({
+        data: toCreate.map((student) => ({
+          studentId: student.id,
+          feeStructureId,
+          totalAmount: structure.amount,
+          paidAmount: 0,
+          discount: 0,
+          lateFee: 0,
+          status: "PENDING" as const,
+        })),
+      });
+    }
+
+    const created = toCreate.length;
+    const skipped = students.length - created;
+
+    sendSuccess(res, { created, skipped, total: students.length }, `Fees assigned to ${created} student(s) (${skipped} skipped - already assigned)`);
+  } catch (error) {
+    sendError(res, "Failed to assign fees", 500, (error as Error).message);
+  }
+};
+
+/**
  * Get student's pending fees
  */
 export const getStudentPendingFees = async (req: AuthRequest, res: Response): Promise<void> => {

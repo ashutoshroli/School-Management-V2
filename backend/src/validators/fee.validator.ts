@@ -41,6 +41,13 @@ export const bulkAssignFeesSchema = z.object({
   }),
 });
 
+export const assignFeesToStudentsSchema = z.object({
+  body: z.object({
+    feeStructureId: z.string().min(1, "feeStructureId is required"),
+    studentIds: z.array(z.string().min(1)).min(1, "studentIds must be a non-empty array"),
+  }),
+});
+
 export const createRazorpayOrderSchema = z.object({
   body: z.object({
     // Optional - see collectPaymentSchema's comment above.

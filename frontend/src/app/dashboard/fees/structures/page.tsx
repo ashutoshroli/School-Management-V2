@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileText, Plus, Users, Edit, Trash2 } from "lucide-react";
+import { FileText, Plus, Users, Edit, Trash2, ChevronDown, UserCheck, Search } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -19,6 +19,15 @@ interface FeeStructure {
   class: { name: string };
   academicYear: { name: string };
   installments: { installmentNo: number; amount: number; dueDate: string }[];
+}
+
+interface StudentOption {
+  id: string;
+  admissionNo: string;
+  rollNo: string | null;
+  user: { name: string };
+  class: { name: string } | null;
+  section: { name: string } | null;
 }
 
 export default function FeeStructuresPage() {
@@ -71,6 +80,93 @@ export default function FeeStructuresPage() {
       const res = await api.post("/fees/assign/bulk", { feeStructureId: structureId, classId });
       alert(res.data.message);
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
+  };
+
+  // --- "Assign" split-button: Whole Class (existing bulkAssign above)
+  // or Specific Students (new picker modal below) ---
+  const [assignMenuOpenFor, setAssignMenuOpenFor] = useState<string | null>(null);
+
+  const [showPickerModal, setShowPickerModal] = useState(false);
+  const [pickerStructure, setPickerStructure] = useState<FeeStructure | null>(null);
+  const [pickerSectionId, setPickerSectionId] = useState("");
+  const [pickerSearch, setPickerSearch] = useState("");
+  const [pickerStudents, setPickerStudents] = useState<StudentOption[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
+  const [assigningStudents, setAssigningStudents] = useState(false);
+  const [pickerClassSections, setPickerClassSections] = useState<any[]>([]);
+
+  const openStudentPicker = (structure: FeeStructure) => {
+    setPickerStructure(structure);
+    setPickerSectionId("");
+    setPickerSearch("");
+    setSelectedStudentIds(new Set());
+    const cls = classes.find((c: any) => c.id === structure.classId);
+    setPickerClassSections(cls?.sections || []);
+    setShowPickerModal(true);
+  };
+
+  const fetchPickerStudents = async () => {
+    if (!pickerStructure) return;
+    setPickerLoading(true);
+    try {
+      const res = await api.get("/students", {
+        params: {
+          classId: pickerStructure.classId,
+          sectionId: pickerSectionId || undefined,
+          search: pickerSearch || undefined,
+          limit: 100,
+        },
+      });
+      setPickerStudents(res.data.data || []);
+    } catch {
+      setPickerStudents([]);
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showPickerModal) fetchPickerStudents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPickerModal, pickerSectionId]);
+
+  const toggleStudentSelected = (id: string) => {
+    setSelectedStudentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    setSelectedStudentIds((prev) => {
+      const allVisibleSelected = pickerStudents.every((s) => prev.has(s.id));
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        pickerStudents.forEach((s) => next.delete(s.id));
+      } else {
+        pickerStudents.forEach((s) => next.add(s.id));
+      }
+      return next;
+    });
+  };
+
+  const handleAssignToSelectedStudents = async () => {
+    if (!pickerStructure || selectedStudentIds.size === 0) return;
+    setAssigningStudents(true);
+    try {
+      const res = await api.post("/fees/assign/students", {
+        feeStructureId: pickerStructure.id,
+        studentIds: Array.from(selectedStudentIds),
+      });
+      alert(res.data.message);
+      setShowPickerModal(false);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to assign fees to selected students");
+    } finally {
+      setAssigningStudents(false);
+    }
   };
 
   const [showEditModal, setShowEditModal] = useState(false);
@@ -162,9 +258,34 @@ export default function FeeStructuresPage() {
                   <td className="px-4 py-3 text-xs text-gray-500">{s.academicYear.name}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <button onClick={() => bulkAssign(s.id, s.classId)} className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1">
-                        <Users className="h-3 w-3" /> Assign
-                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={() => setAssignMenuOpenFor(assignMenuOpenFor === s.id ? null : s.id)}
+                          className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
+                        >
+                          <Users className="h-3 w-3" /> Assign <ChevronDown className="h-3 w-3" />
+                        </button>
+                        {assignMenuOpenFor === s.id && (
+                          <>
+                            {/* Backdrop to close the menu on outside click */}
+                            <div className="fixed inset-0 z-10" onClick={() => setAssignMenuOpenFor(null)} />
+                            <div className="absolute left-0 top-full mt-1 z-20 bg-white border rounded-lg shadow-lg w-52 overflow-hidden">
+                              <button
+                                onClick={() => { setAssignMenuOpenFor(null); bulkAssign(s.id, s.classId); }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 flex items-center gap-2"
+                              >
+                                <Users className="h-3.5 w-3.5 text-gray-400" /> Assign to Entire Class
+                              </button>
+                              <button
+                                onClick={() => { setAssignMenuOpenFor(null); openStudentPicker(s); }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 flex items-center gap-2 border-t"
+                              >
+                                <UserCheck className="h-3.5 w-3.5 text-gray-400" /> Assign to Specific Students
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                       <button onClick={() => openEditModal(s)} title="Edit" className="text-gray-500 hover:text-gray-700">
                         <Edit className="h-3.5 w-3.5" />
                       </button>
@@ -297,6 +418,97 @@ export default function FeeStructuresPage() {
             <button type="submit" className="btn-primary">Save Changes</button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={showPickerModal}
+        onClose={() => setShowPickerModal(false)}
+        title={pickerStructure ? `Assign "${pickerStructure.feeCategory.name}" to Specific Students` : "Assign to Specific Students"}
+        size="lg"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">
+            Only students in <span className="font-medium">{pickerStructure?.class.name}</span> are shown - narrow down by section or search, then tick the students who should get this fee.
+          </p>
+
+          <div className="flex flex-wrap gap-3">
+            <select className="input-field w-auto" value={pickerSectionId} onChange={(e) => setPickerSectionId(e.target.value)}>
+              <option value="">All Sections</option>
+              {pickerClassSections.map((sec: any) => <option key={sec.id} value={sec.id}>{sec.name}</option>)}
+            </select>
+            <div className="relative flex-1 min-w-[180px]">
+              <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                className="input-field pl-9 w-full"
+                placeholder="Search by name, admission no, roll no..."
+                value={pickerSearch}
+                onChange={(e) => setPickerSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && fetchPickerStudents()}
+              />
+            </div>
+            <button type="button" onClick={fetchPickerStudents} className="btn-secondary text-sm">Search</button>
+          </div>
+
+          <div className="border rounded-lg max-h-80 overflow-y-auto">
+            {pickerLoading ? (
+              <div className="flex justify-center py-8">
+                <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+              </div>
+            ) : pickerStudents.length === 0 ? (
+              <p className="text-center text-gray-400 text-sm py-8">No students found</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-gray-50">
+                  <tr className="border-b">
+                    <th className="px-3 py-2 text-left w-10">
+                      <input
+                        type="checkbox"
+                        checked={pickerStudents.length > 0 && pickerStudents.every((s) => selectedStudentIds.has(s.id))}
+                        onChange={toggleSelectAllVisible}
+                      />
+                    </th>
+                    <th className="px-3 py-2 text-left">Admission No</th>
+                    <th className="px-3 py-2 text-left">Name</th>
+                    <th className="px-3 py-2 text-left">Section</th>
+                    <th className="px-3 py-2 text-left">Roll No</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pickerStudents.map((s) => (
+                    <tr
+                      key={s.id}
+                      onClick={() => toggleStudentSelected(s.id)}
+                      className={`border-b cursor-pointer hover:bg-gray-50 ${selectedStudentIds.has(s.id) ? "bg-primary-50" : ""}`}
+                    >
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" checked={selectedStudentIds.has(s.id)} onChange={() => toggleStudentSelected(s.id)} />
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs">{s.admissionNo}</td>
+                      <td className="px-3 py-2 font-medium">{s.user.name}</td>
+                      <td className="px-3 py-2 text-gray-500">{s.section?.name || "-"}</td>
+                      <td className="px-3 py-2 text-gray-500">{s.rollNo || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-4 border-t">
+            <span className="text-sm text-gray-500">{selectedStudentIds.size} student(s) selected</span>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setShowPickerModal(false)} className="btn-secondary">Cancel</button>
+              <button
+                type="button"
+                onClick={handleAssignToSelectedStudents}
+                disabled={selectedStudentIds.size === 0 || assigningStudents}
+                className="btn-primary disabled:opacity-50"
+              >
+                {assigningStudents ? "Assigning..." : `Assign to ${selectedStudentIds.size || ""} Student(s)`}
+              </button>
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   );
