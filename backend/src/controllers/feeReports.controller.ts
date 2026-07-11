@@ -44,8 +44,15 @@ export const getCollectionDayBook = async (req: AuthRequest, res: Response): Pro
   }
 };
 
-/** Shared query behind both getDefaultersList (JSON) and exportDefaultersCsv (CSV) - kept in one place so the two never drift in what counts as a "defaulter". */
-const fetchDefaulters = async (branchId: string, classId?: string) => {
+/**
+ * Shared query behind both getDefaultersList (JSON) and
+ * exportDefaultersCsv (CSV) - kept in one place so the two never drift
+ * in what counts as a "defaulter". Exported (not just used internally)
+ * so workers/reportWorker.ts can build the exact same CSV in the
+ * background-job path (see queues/report.queue.ts) without duplicating
+ * this query.
+ */
+export const fetchDefaulters = async (branchId: string, classId?: string) => {
   const where: any = {
     status: { in: ["PENDING", "PARTIAL", "OVERDUE"] },
     student: { branchId, isActive: true },
@@ -90,9 +97,9 @@ export const getDefaultersList = async (req: AuthRequest, res: Response): Promis
   }
 };
 
-type DefaulterRow = Awaited<ReturnType<typeof fetchDefaulters>>[number];
+export type DefaulterRow = Awaited<ReturnType<typeof fetchDefaulters>>[number];
 
-const DEFAULTER_CSV_COLUMNS: CsvColumn<DefaulterRow>[] = [
+export const DEFAULTER_CSV_COLUMNS: CsvColumn<DefaulterRow>[] = [
   { header: "Student Name", accessor: (d) => d.student.user.name },
   { header: "Phone", accessor: (d) => d.student.user.phone },
   { header: "Class", accessor: (d) => d.student.class.name },

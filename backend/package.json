@@ -7,6 +7,8 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
+    "worker": "ts-node-dev --respawn --transpile-only src/workers/index.ts",
+    "worker:start": "node dist/workers/index.js",
     "lint": "eslint src/**/*.ts",
     "test": "jest",
     "test:coverage": "jest --coverage"
@@ -16,6 +18,7 @@
     "@sentry/node": "^10.65.0",
     "@types/qrcode": "^1.5.6",
     "bcryptjs": "^2.4.3",
+    "bull": "^4.16.5",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "docxtemplater": "^3.69.0",
