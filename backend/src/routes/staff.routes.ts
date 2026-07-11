@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { createStaff, getStaffList, getStaffById, updateStaff, deleteStaff } from "../controllers/staff.controller";
+import { createStaff, getStaffList, getStaffById, updateStaff, deleteStaff, resetStaffPassword } from "../controllers/staff.controller";
 import { getStaffIdCardPdf } from "../controllers/document.controller";
 import { uploadStaffDocument, deleteStaffDocument } from "../controllers/upload.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
@@ -19,6 +19,7 @@ router.get("/:id", getStaffById);
 // their own card (isSelf check inside the controller).
 router.get("/:id/id-card", getStaffIdCardPdf);
 router.put("/:id", authorize(...ADMIN), updateStaff);
+router.post("/:id/reset-password", authorize(...ADMIN), resetStaffPassword);
 router.delete("/:id", authorize(...ADMIN), deleteStaff);
 
 router.post("/:id/documents", authorize(...ADMIN), handleUploadErrors(uploadDocument), uploadStaffDocument);

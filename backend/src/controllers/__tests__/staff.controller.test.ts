@@ -4,17 +4,22 @@ jest.mock("bcryptjs", () => ({
   hash: jest.fn().mockResolvedValue("hashed-password"),
 }));
 
+jest.mock("../../services/auditLog.service", () => ({
+  logAuditFromRequest: jest.fn(),
+}));
+
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    user: { findUnique: jest.fn(), create: jest.fn() },
+    user: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
     staff: { count: jest.fn(), create: jest.fn(), findUnique: jest.fn() },
     branch: { findUnique: jest.fn() },
   },
 }));
 
+import bcrypt from "bcryptjs";
 import prisma from "../../config/database";
-import { createStaff } from "../staff.controller";
+import { createStaff, resetStaffPassword } from "../staff.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -259,5 +264,74 @@ describe("staff.controller - createStaff", () => {
       const userCreateCall = (prisma.user.create as jest.Mock).mock.calls[0][0];
       expect(userCreateCall.data.role).toBe(UserRole.ACCOUNTANT);
     });
+  });
+});
+
+describe("staff.controller - resetStaffPassword", () => {
+  const STAFF = {
+    id: "staff-1",
+    branchId: "branch-1",
+    userId: "user-1",
+    user: { id: "user-1", name: "Jane Teacher", email: "jane@test.com" },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (bcrypt.hash as jest.Mock).mockResolvedValue("hashed-one-time-password");
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue(STAFF);
+    (prisma.user.update as jest.Mock).mockResolvedValue({});
+  });
+
+  it("returns 404 when the staff member does not exist", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "staff-1" } });
+    const res = makeMockRes();
+
+    await resetStaffPassword(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("SECURITY: rejects a staff member from a different branch", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ ...STAFF, branchId: "branch-OTHER" });
+    const req = makeReq({ params: { id: "staff-1" } });
+    const res = makeMockRes();
+
+    await resetStaffPassword(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("hashes and saves a new password on the staff member's own User record", async () => {
+    const req = makeReq({ params: { id: "staff-1" } });
+    const res = makeMockRes();
+
+    await resetStaffPassword(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { password: "hashed-one-time-password" },
+    });
+    expect((bcrypt.hash as jest.Mock).mock.calls[0][1]).toBe(12);
+  });
+
+  it("returns the plaintext one-time password in the response, and does not include it in the audit log", async () => {
+    const req = makeReq({ params: { id: "staff-1" } });
+    const res = makeMockRes();
+
+    await resetStaffPassword(req, res);
+
+    const jsonPayload = (res.json as jest.Mock).mock.calls[0][0];
+    expect(jsonPayload.data.oneTimePassword).toBeDefined();
+    expect(jsonPayload.data.oneTimePassword).not.toBe("hashed-one-time-password");
+    expect(jsonPayload.data.email).toBe("jane@test.com");
+
+    const { logAuditFromRequest } = require("../../services/auditLog.service");
+    expect(logAuditFromRequest).toHaveBeenCalledTimes(1);
+    const auditCallArgs = JSON.stringify(logAuditFromRequest.mock.calls[0]);
+    expect(auditCallArgs).not.toContain(jsonPayload.data.oneTimePassword);
   });
 });

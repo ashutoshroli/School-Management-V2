@@ -9,7 +9,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { cardTapAttendance, markAttendance, bulkMarkAttendance } from "../staffAttendance.controller";
+import { cardTapAttendance, markAttendance, bulkMarkAttendance, getAttendanceCalendar } from "../staffAttendance.controller";
 import { AuthRequest } from "../../types";
 import { UserRole } from "@prisma/client";
 
@@ -302,5 +302,58 @@ describe("staffAttendance.controller - bulkMarkAttendance", () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ data: { created: 1, updated: 1 }, message: "Attendance saved: 1 new, 1 updated" })
     );
+  });
+});
+
+// SECURITY: getAttendanceCalendar previously had NO access check at
+// all beyond `authenticate` - any logged-in user could pull ANY other
+// staff member's attendance calendar just by supplying their staffId,
+// including staff in a different branch (IDOR). Regression guards for
+// the fix (canAccessStaffRecord).
+describe("staffAttendance.controller - getAttendanceCalendar (IDOR fix)", () => {
+  const makeCalendarReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
+    ({
+      body: {},
+      params: { staffId: "staff-victim" },
+      query: {},
+      user: { userId: "teacher-1", email: "t@test.com", role: UserRole.TEACHER, branchId: "branch-1" },
+      ...overrides,
+    } as any);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("SECURITY: rejects a Teacher reading another staff member's calendar in a DIFFERENT branch", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-OTHER", userId: "other-user" });
+    const req = makeCalendarReq();
+    const res = makeMockRes();
+
+    await getAttendanceCalendar(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.staffAttendance.findMany).not.toHaveBeenCalled();
+  });
+
+  it("allows a staff member within the SAME branch to read a colleague's calendar", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-1", userId: "other-user" });
+    (prisma.staffAttendance.findMany as jest.Mock).mockResolvedValue([]);
+    const req = makeCalendarReq();
+    const res = makeMockRes();
+
+    await getAttendanceCalendar(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it("allows a staff member to read their OWN calendar", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-OTHER", userId: "teacher-1" });
+    (prisma.staffAttendance.findMany as jest.Mock).mockResolvedValue([]);
+    const req = makeCalendarReq({ params: { staffId: "staff-self" } });
+    const res = makeMockRes();
+
+    await getAttendanceCalendar(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 });

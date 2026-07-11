@@ -5,6 +5,8 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError, sendPaginated } from "../utils/response";
 import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
+import { generateOneTimePassword } from "../utils/password";
+import { logAuditFromRequest } from "../services/auditLog.service";
 
 /**
  * Roles a Branch Admin is allowed to assign when creating a staff
@@ -318,6 +320,52 @@ export const updateStaff = async (req: AuthRequest, res: Response): Promise<void
     sendSuccess(res, updated, "Staff updated");
   } catch (error) {
     sendError(res, "Failed to update staff", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Admin-triggered password reset for a staff member's login - mirrors
+ * resetStudentPassword in student.controller.ts (see that function's
+ * doc comment for the full rationale). Generates a fresh random
+ * one-time password, hashes and saves it, and returns the PLAINTEXT
+ * once in the response so the admin can hand it to the staff member -
+ * it is never stored or logged anywhere in plaintext, and cannot be
+ * retrieved again after this response.
+ */
+export const resetStaffPassword = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const staff = await prisma.staff.findUnique({
+      where: { id },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
+    if (!staff) { sendError(res, "Staff not found", 404); return; }
+    if (!canAccessBranch(req, staff.branchId)) { sendError(res, "Staff not found", 404); return; }
+
+    const oneTimePassword = generateOneTimePassword();
+    const hashedPassword = await bcrypt.hash(oneTimePassword, 12);
+
+    await prisma.user.update({
+      where: { id: staff.userId },
+      data: { password: hashedPassword },
+    });
+
+    // Audit trail deliberately omits the password itself (oldData/
+    // newData below only ever holds non-secret identifiers) - a
+    // reset is worth recording (who did it, when, for whom), the
+    // plaintext credential it produced must never persist anywhere.
+    logAuditFromRequest(req, "UPDATE", "staff_password_reset", id, {
+      newData: { staffId: id, userId: staff.userId, resetBy: req.user!.userId },
+    });
+
+    sendSuccess(
+      res,
+      { email: staff.user.email, oneTimePassword },
+      "Password reset - share this one-time password with the staff member now, it will not be shown again"
+    );
+  } catch (error) {
+    sendError(res, "Failed to reset password", 500, (error as Error).message);
   }
 };
 
