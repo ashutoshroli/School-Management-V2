@@ -12,6 +12,7 @@ import { markStudentAttendanceSchema, cardTapSchema } from "../validators/attend
 import { getOrCreateTimetableSchema, upsertSlotSchema } from "../validators/timetable.validator";
 import { createExamSchema, updateExamSchema, enterMarksSchema } from "../validators/exam.validator";
 import { createHomeworkSchema, updateHomeworkSchema, submitHomeworkSchema } from "../validators/homework.validator";
+import { bulkPromoteSchema } from "../validators/promotion.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -50,6 +51,6 @@ router.post("/homework/submit", authenticate, authorize(UserRole.STUDENT), valid
 router.get("/homework/:homeworkId/submissions", authenticate, authorize(...TEACHERS), getSubmissions);
 
 // Promotion
-router.post("/promote", authenticate, authorize(...ADMIN), bulkPromote);
+router.post("/promote", authenticate, authorize(...ADMIN), validate(bulkPromoteSchema), bulkPromote);
 
 export default router;
