@@ -33,7 +33,12 @@ export const getTemplates = async (_req: AuthRequest, res: Response): Promise<vo
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 
-const getParentName = (
+/**
+ * Shared by generateCertificateCore below and getStudentIdCardPdf
+ * (document.controller.ts) - both need to resolve a student's
+ * father/mother name from the same StudentParent[] shape.
+ */
+export const getParentName = (
   parents: Array<{ parent: { relation: ParentRelation; user: { name: string } } }>,
   relation: ParentRelation
 ): string => parents.find((p) => p.parent.relation === relation)?.parent.user.name || "-";
