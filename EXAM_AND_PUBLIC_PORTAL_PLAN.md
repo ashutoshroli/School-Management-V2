@@ -305,38 +305,74 @@ guards, delete-blocked-by-applications guard), `notice.controller.test.ts`
 
 ---
 
-## Phase 5: Multi-Cabin Chambers + Bulk Floor/Room Creation
+## Phase 5: Multi-Cabin Chambers + Bulk Floor/Room Creation ✅ COMPLETED
 
+**Status:** ✅ **DONE - final phase of this plan**
+
+### What was actually done:
 **Multi-cabin chambers:**
-- New `RoomCabin` model: `roomId` (must be a CHAMBER/OFFICE-type
-  `SchoolRoom`), `cabinNo`, `staffId` (nullable - a vacant cabin), so one
-  physical room can hold several teachers' cabins (e.g. a shared staff
-  room with 6 cabins). `SchoolRoom.assignedStaffId` stays as-is for
-  single-occupant rooms (unaffected, fully backward compatible) - cabins
-  are opt-in only for rooms that need them.
-- `addRoomCabin`/`updateRoomCabin`/`deleteRoomCabin`/`getRoomCabins` -
-  same branch-scoping guard convention as every other facilities endpoint.
-- Frontend: a room card for CHAMBER-type rooms gains a "Cabins" expandable
-  list (add/edit/remove cabin, assign/unassign staff per cabin) instead of
-  the single staff picker.
+- New `RoomCabin` model: `roomId`, `cabinNo`, `staffId` (nullable - a
+  vacant/reserved cabin), `@@unique([roomId, cabinNo])`. Deliberately
+  opt-in and separate from `SchoolRoom.assignedStaffId` - the existing
+  field is left completely untouched for the common "one room = one
+  occupant" case (e.g. the Principal's own chamber); cabins are only
+  added for rooms that actually need several named seats tracked
+  individually (e.g. a shared staff room with 6 desks).
+- `addRoomCabin`/`getRoomCabins`/`updateRoomCabin`/`deleteRoomCabin` -
+  same branch-scoping guard convention (resolve the cabin's own room's
+  branch from the DB, `canAccessBranch`) as every other facilities
+  endpoint, plus the same staff-cross-branch check `addSchoolRoom`
+  already applies to `assignedStaffId`.
+- Frontend: a new "Cabins" button on CHAMBER/OFFICE/STAFF_ROOM-type
+  room cards opens a modal listing that room's cabins - add a cabin
+  (number + optional staff), reassign/unassign staff per cabin inline,
+  delete a cabin.
 
 **Bulk floor/room creation:**
-- `bulkAddSchoolFloors(buildingId, { count, startingFloorNo, namePrefix })`
-  - creates N floors at once (e.g. "Floor 1".."Floor 5").
-- `bulkAddSchoolRooms(floorId, { rooms: [{roomNo, name, type, capacity, ...}] })`
-  - creates a whole list of rooms on one floor in a single call, so
-  setting up an entire new building (say, 4 floors x 8 rooms) takes 2
-  calls instead of 32.
-- Frontend: "Add Multiple Floors" and "Add Multiple Rooms" bulk modals
-  alongside the existing single-add forms (both kept, not replaced).
+- `bulkAddSchoolFloors` (`POST /facilities/school-buildings/floors/bulk`) -
+  creates N sequential floors on one building in a single `createMany`
+  call, auto-numbered from an optional `startingFloorNo` (default 0)
+  with an optional `namePrefix` (e.g. "Wing A" → "Wing A Floor 1", "Wing
+  A Floor 2", ...).
+- `bulkAddSchoolRooms` (`POST /facilities/school-buildings/rooms/bulk`) -
+  creates a whole list of rooms on one floor in one call. Any
+  `assignedStaffId` cross-branch violations anywhere in the batch fail
+  the WHOLE call before anything is written (checked once up front for
+  every room in the list, not one lookup per room) - a partial bulk
+  result (7 of 8 rooms created) would be a confusing outcome for what's
+  meant to be one atomic "set up this floor" action.
+- Frontend: "Add Multiple Floors" (count/starting-number/name-prefix
+  form) and "Add Multiple Rooms" (repeatable row editor) buttons
+  alongside the existing single-add forms - both single-add flows are
+  kept, not replaced, for the common one-off case.
 
-**Multiple buildings:** already fully supported today - documented here
-for completeness, no code change needed; this phase's write-up will note
-it as "verified, not rebuilt."
+**Multiple buildings:** verified already fully supported (no code
+change needed) - `getSchoolBuildings` lists every building for the
+branch with no limit, confirmed during this session's initial codebase
+read.
 
-**Tests:** bulk floor/room creation counts and validation, cabin CRUD,
-cabin staff cross-branch guard, backward-compat check that existing
-single-staff CHAMBER rooms are untouched.
+**Tests:** 22 new tests in `schoolBuilding.controller.test.ts` -
+sequential floor numbering + custom starting-number/prefix, whole-batch
+rejection on a bad cross-branch `assignedStaffId` in bulk room creation,
+full cabin CRUD, cabin staff cross-branch guard, cross-branch guards on
+both bulk endpoints.
+
+### Verification performed:
+- Backend: `npx prisma generate` (schema valid) / `npx tsc --noEmit` /
+  `npm test` (**74 suites / 938 tests**, up from 916) / `npm run build` -
+  all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, `buildings`
+  page grew 5.5kB->7.18kB
+
+---
+
+## This plan is now fully complete
+All 5 phases have shipped, been tested, and merged: exam timetable +
+teacher-scoped question paper upload, exam seat plan generator
+(gender/section/roll-no filters, alternate-gender seating), per-sitting
+room-wise exam attendance, a public landing page with result/fee
+lookup + online payment + careers + a public notice board, and
+multi-cabin teacher chambers + bulk floor/room creation.
 
 ---
 

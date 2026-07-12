@@ -4,10 +4,11 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     schoolBuilding: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), delete: jest.fn() },
-    schoolFloor: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), deleteMany: jest.fn() },
-    schoolRoom: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
-    staff: { findUnique: jest.fn() },
+    schoolFloor: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), deleteMany: jest.fn(), createMany: jest.fn() },
+    schoolRoom: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn(), createMany: jest.fn() },
+    staff: { findUnique: jest.fn(), findMany: jest.fn() },
     section: { count: jest.fn() },
+    roomCabin: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), delete: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
@@ -22,6 +23,12 @@ import {
   deleteSchoolRoom,
   deleteSchoolBuilding,
   getSchoolOccupancySummary,
+  bulkAddSchoolFloors,
+  bulkAddSchoolRooms,
+  addRoomCabin,
+  getRoomCabins,
+  updateRoomCabin,
+  deleteRoomCabin,
 } from "../schoolBuilding.controller";
 import { AuthRequest } from "../../types";
 
@@ -373,5 +380,304 @@ describe("schoolBuilding.controller - getSchoolBuildings", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect((prisma.schoolBuilding.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ branchId: "branch-1" });
+  });
+});
+
+
+// New Features Phase 5: bulk floor/room creation + multi-cabin
+// chambers (RoomCabin).
+
+describe("schoolBuilding.controller - bulkAddSchoolFloors", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.schoolBuilding.findUnique as jest.Mock).mockResolvedValue({ id: "building-1", branchId: "branch-1" });
+    (prisma.schoolFloor.createMany as jest.Mock).mockResolvedValue({ count: 4 });
+    (prisma.schoolFloor.findMany as jest.Mock).mockResolvedValue([
+      { id: "f1", floorNo: 0 }, { id: "f2", floorNo: 1 }, { id: "f3", floorNo: 2 }, { id: "f4", floorNo: 3 },
+    ]);
+  });
+
+  it("returns 404 when the building does not exist", async () => {
+    (prisma.schoolBuilding.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ body: { buildingId: "building-1", count: 4 } });
+    const res = makeMockRes();
+
+    await bulkAddSchoolFloors(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a building belonging to a DIFFERENT branch", async () => {
+    (prisma.schoolBuilding.findUnique as jest.Mock).mockResolvedValue({ id: "building-1", branchId: "branch-OTHER" });
+    const req = makeReq({ body: { buildingId: "building-1", count: 4 } });
+    const res = makeMockRes();
+
+    await bulkAddSchoolFloors(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.schoolFloor.createMany).not.toHaveBeenCalled();
+  });
+
+  it("creates N sequential floors starting from 0 by default", async () => {
+    const req = makeReq({ body: { buildingId: "building-1", count: 4 } });
+    const res = makeMockRes();
+
+    await bulkAddSchoolFloors(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const data = (prisma.schoolFloor.createMany as jest.Mock).mock.calls[0][0].data;
+    expect(data.map((f: any) => f.floorNo)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("honors a custom startingFloorNo and namePrefix", async () => {
+    const req = makeReq({ body: { buildingId: "building-1", count: 2, startingFloorNo: 1, namePrefix: "Wing A" } });
+    const res = makeMockRes();
+
+    await bulkAddSchoolFloors(req, res);
+
+    const data = (prisma.schoolFloor.createMany as jest.Mock).mock.calls[0][0].data;
+    expect(data).toEqual([
+      { buildingId: "building-1", floorNo: 1, name: "Wing A Floor 1" },
+      { buildingId: "building-1", floorNo: 2, name: "Wing A Floor 2" },
+    ]);
+  });
+});
+
+describe("schoolBuilding.controller - bulkAddSchoolRooms", () => {
+  const FLOOR = { id: "floor-1", building: { id: "building-1", branchId: "branch-1" } };
+  const ROOMS_INPUT = [
+    { roomNo: "101", type: "CLASSROOM", capacity: 40 },
+    { roomNo: "102", type: "CLASSROOM", capacity: 40 },
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.schoolFloor.findUnique as jest.Mock).mockResolvedValue(FLOOR);
+    (prisma.schoolRoom.createMany as jest.Mock).mockResolvedValue({ count: 2 });
+    (prisma.schoolRoom.findMany as jest.Mock).mockResolvedValue([{ id: "r1", roomNo: "101" }, { id: "r2", roomNo: "102" }]);
+  });
+
+  it("returns 404 when the floor does not exist", async () => {
+    (prisma.schoolFloor.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ body: { floorId: "floor-1", rooms: ROOMS_INPUT } });
+    const res = makeMockRes();
+
+    await bulkAddSchoolRooms(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a floor belonging to a DIFFERENT branch", async () => {
+    (prisma.schoolFloor.findUnique as jest.Mock).mockResolvedValue({ id: "floor-1", building: { branchId: "branch-OTHER" } });
+    const req = makeReq({ body: { floorId: "floor-1", rooms: ROOMS_INPUT } });
+    const res = makeMockRes();
+
+    await bulkAddSchoolRooms(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.schoolRoom.createMany).not.toHaveBeenCalled();
+  });
+
+  it("creates every room in the list in one call", async () => {
+    const req = makeReq({ body: { floorId: "floor-1", rooms: ROOMS_INPUT } });
+    const res = makeMockRes();
+
+    await bulkAddSchoolRooms(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(prisma.schoolRoom.createMany).toHaveBeenCalledTimes(1);
+    expect((prisma.schoolRoom.createMany as jest.Mock).mock.calls[0][0].data).toHaveLength(2);
+  });
+
+  it("SECURITY: rejects the WHOLE batch when any assignedStaffId belongs to a DIFFERENT branch", async () => {
+    (prisma.staff.findMany as jest.Mock).mockResolvedValue([{ id: "staff-1", branchId: "branch-OTHER" }]);
+    const req = makeReq({
+      body: { floorId: "floor-1", rooms: [{ roomNo: "201", type: "CHAMBER", assignedStaffId: "staff-1" }] },
+    });
+    const res = makeMockRes();
+
+    await bulkAddSchoolRooms(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.schoolRoom.createMany).not.toHaveBeenCalled();
+  });
+
+  it("allows a valid assignedStaffId in the same branch", async () => {
+    (prisma.staff.findMany as jest.Mock).mockResolvedValue([{ id: "staff-1", branchId: "branch-1" }]);
+    const req = makeReq({
+      body: { floorId: "floor-1", rooms: [{ roomNo: "201", type: "CHAMBER", assignedStaffId: "staff-1" }] },
+    });
+    const res = makeMockRes();
+
+    await bulkAddSchoolRooms(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+  });
+});
+
+describe("schoolBuilding.controller - addRoomCabin", () => {
+  const ROOM = { id: "room-1", floor: { building: { branchId: "branch-1" } } };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue(ROOM);
+    (prisma.roomCabin.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "cabin-1", ...data }));
+  });
+
+  it("returns 404 when the room does not exist", async () => {
+    (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ body: { roomId: "room-1", cabinNo: "C1" } });
+    const res = makeMockRes();
+
+    await addRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a room belonging to a DIFFERENT branch", async () => {
+    (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue({ id: "room-1", floor: { building: { branchId: "branch-OTHER" } } });
+    const req = makeReq({ body: { roomId: "room-1", cabinNo: "C1" } });
+    const res = makeMockRes();
+
+    await addRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a staffId belonging to a DIFFERENT branch", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1", branchId: "branch-OTHER" });
+    const req = makeReq({ body: { roomId: "room-1", cabinNo: "C1", staffId: "staff-1" } });
+    const res = makeMockRes();
+
+    await addRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.roomCabin.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a vacant cabin (no staffId) successfully", async () => {
+    const req = makeReq({ body: { roomId: "room-1", cabinNo: "C1" } });
+    const res = makeMockRes();
+
+    await addRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(prisma.roomCabin.create).toHaveBeenCalledWith({ data: { roomId: "room-1", cabinNo: "C1", staffId: null } });
+  });
+
+  it("creates a cabin assigned to a valid same-branch staff member", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1", branchId: "branch-1" });
+    const req = makeReq({ body: { roomId: "room-1", cabinNo: "C2", staffId: "staff-1" } });
+    const res = makeMockRes();
+
+    await addRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+  });
+});
+
+describe("schoolBuilding.controller - getRoomCabins", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue({ id: "room-1", floor: { building: { branchId: "branch-1" } } });
+    (prisma.roomCabin.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("returns 404 when the room does not exist", async () => {
+    (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { roomId: "room-1" } });
+    const res = makeMockRes();
+
+    await getRoomCabins(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns the room's cabins ordered by cabinNo", async () => {
+    const req = makeReq({ params: { roomId: "room-1" } });
+    const res = makeMockRes();
+
+    await getRoomCabins(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect((prisma.roomCabin.findMany as jest.Mock).mock.calls[0][0].orderBy).toEqual({ cabinNo: "asc" });
+  });
+});
+
+describe("schoolBuilding.controller - updateRoomCabin", () => {
+  const CABIN = { id: "cabin-1", room: { floor: { building: { branchId: "branch-1" } } } };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.roomCabin.findUnique as jest.Mock).mockResolvedValue(CABIN);
+    (prisma.roomCabin.update as jest.Mock).mockResolvedValue({ id: "cabin-1" });
+  });
+
+  it("returns 404 when the cabin does not exist", async () => {
+    (prisma.roomCabin.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "cabin-1" }, body: {} });
+    const res = makeMockRes();
+
+    await updateRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a cabin whose room belongs to a DIFFERENT branch", async () => {
+    (prisma.roomCabin.findUnique as jest.Mock).mockResolvedValue({ id: "cabin-1", room: { floor: { building: { branchId: "branch-OTHER" } } } });
+    const req = makeReq({ params: { id: "cabin-1" }, body: {} });
+    const res = makeMockRes();
+
+    await updateRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects reassigning to a staffId in a DIFFERENT branch", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1", branchId: "branch-OTHER" });
+    const req = makeReq({ params: { id: "cabin-1" }, body: { staffId: "staff-1" } });
+    const res = makeMockRes();
+
+    await updateRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.roomCabin.update).not.toHaveBeenCalled();
+  });
+
+  it("allows unassigning a cabin (staffId: null)", async () => {
+    const req = makeReq({ params: { id: "cabin-1" }, body: { staffId: null } });
+    const res = makeMockRes();
+
+    await updateRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.roomCabin.update).toHaveBeenCalledWith({ where: { id: "cabin-1" }, data: { staffId: null } });
+  });
+});
+
+describe("schoolBuilding.controller - deleteRoomCabin", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.roomCabin.findUnique as jest.Mock).mockResolvedValue({ id: "cabin-1", room: { floor: { building: { branchId: "branch-1" } } } });
+  });
+
+  it("returns 404 when the cabin does not exist", async () => {
+    (prisma.roomCabin.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "cabin-1" } });
+    const res = makeMockRes();
+
+    await deleteRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("deletes the cabin when found and accessible", async () => {
+    const req = makeReq({ params: { id: "cabin-1" } });
+    const res = makeMockRes();
+
+    await deleteRoomCabin(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.roomCabin.delete).toHaveBeenCalledWith({ where: { id: "cabin-1" } });
   });
 });
