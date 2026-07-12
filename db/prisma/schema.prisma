@@ -276,6 +276,7 @@ model Student {
   certificates    GeneratedCertificate[]
   examSeatAllocations ExamSeatAllocation[]
   examAttendances     ExamAttendance[]
+  admitCards          AdmitCard[]
 }
 
 
@@ -938,6 +939,7 @@ model Exam {
   class        Class        @relation(fields: [classId], references: [id])
   marks        Mark[]
   schedules    ExamSchedule[]
+  admitCards   AdmitCard[]
 }
 
 enum ExamType {
@@ -1723,7 +1725,45 @@ enum DocTemplateType {
   PAYSLIP
   REPORT_CARD
   ADMISSION_FORM
+  ADMIT_CARD
   CUSTOM
+}
+
+// One row per (examId, studentId) - a generated admit card for one
+// student sitting one exam. Deliberately its own model rather than
+// reusing GeneratedCertificate - an admit card is tied to an Exam (not
+// a CertificateTemplate type) and carries eligibility-specific fields
+// (status/remarks/allowedSubjectIds) that have no equivalent on a
+// certificate.
+model AdmitCard {
+  id         String          @id @default(cuid())
+  examId     String
+  studentId  String
+  serialNo   String          @unique
+  pdfUrl     String?
+  status     AdmitCardStatus
+  remarks    String?
+  // null = every subject scheduled for this exam is allowed (the
+  // normal ELIGIBLE case). A non-null list restricts the student to
+  // ONLY these subjects - the PROVISIONAL case ("permitted for this
+  // exam's this subject only") for a student who fails an eligibility
+  // rule partway through the exam's subject list; sitting for any
+  // subject beyond this list requires a fresh generation cycle once
+  // the underlying issue (attendance/fees) is resolved.
+  allowedSubjectIds String[]
+  generatedAt DateTime       @default(now())
+  generatedBy String          // staff userId
+
+  exam    Exam    @relation(fields: [examId], references: [id])
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@unique([examId, studentId])
+}
+
+enum AdmitCardStatus {
+  ELIGIBLE
+  PROVISIONAL
+  DENIED
 }
 
 // ============================================

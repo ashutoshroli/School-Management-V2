@@ -105,74 +105,99 @@ numbering/prefix, bulk room creation, cross-branch guards on both).
 - Frontend: `npx tsc --noEmit` / `npm run build` - clean, `admissions`
   page grew to 6.47kB, `hostel` page grew to 7.94kB
 
-## Phase 2: Admit Card Generation - single + templates
+## Phase 2-4: Admit Card Generation + Eligibility Rules + Frontend ✅ COMPLETED
 
-- New `AdmitCardTemplate` reuse of the existing `DocumentTemplate`
-  model's `ADMISSION_FORM`-style pattern - a new `DocTemplateType`
-  value `ADMIT_CARD` (separate from `ID_CARD`/`REPORT_CARD` which
-  already exist) so admit cards get their own uploadable .docx template,
-  independent of the exam **result**/report-card template (which
-  already exists as its own type) - "separate templates for each exam
-  result and admit card" is already half-true today (report card has
-  its own template type) - this phase adds the missing admit-card-
-  specific type.
-- New `AdmitCard` model: one row per (examId, studentId) - `serialNo`,
-  `pdfUrl`, `status` (ELIGIBLE / PROVISIONAL / DENIED), `remarks`,
-  `allowedSubjectIds` (nullable - null means "all scheduled subjects",
-  a non-null list means "only sit for these specific subjects", for the
-  "sirf is exam ke is subject ko appear karne ki anumati hai" case),
-  `generatedAt`, `generatedBy`.
-- `POST /academics/exams/:examId/admit-cards/generate` (single student) +
-  `GET .../admit-cards/:studentId/pdf` (download, using the new template).
+**Status:** ✅ **DONE - shipped as one combined PR since the pieces are
+tightly interdependent (schema/controller/frontend all reference the
+same rule config shape).**
 
-## Phase 3: Admit Card eligibility rules + bulk generation
+### What was actually done:
 
-- New `AdmitCardRule` config per exam (or reusable rule sets): a
-  **checklist of independently toggleable rules** (multiple-choice
-  checkboxes, exactly as requested):
-  - ☑ Minimum attendance % (default 75%, editable) - computed from
-    `StudentAttendance` over a configurable date range (defaults to the
-    academic year so far).
-  - ☑ Fees cleared through a specific month (admin picks "cleared till
-    month X" from a dropdown - checks `FeeAssignment`/`Payment` status
-    for monthly-frequency fee structures up to and including that month).
-  - Both rules can be enabled together, either alone, or neither
-    (in which case every enrolled student is simply eligible).
-- `POST /academics/exams/:examId/admit-cards/bulk-generate` `{ruleConfig}` -
-  evaluates every active student in the exam's class against the
-  enabled rules:
-  - **Passes all enabled rules** → full `ELIGIBLE` admit card, every
-    scheduled subject allowed.
-  - **Fails one or more rules** → admin's choice (a second checklist,
-    same request): either (a) `DENIED` (no admit card at all, with a
-    `remarks` string explaining which rule(s) failed - e.g. "Attendance
-    68% - below 75% requirement"), or (b) `PROVISIONAL` - a limited
-    admit card restricted to only the subjects **already sat/scheduled
-    before the failure was detected** ("kewal is exam ke is subject ko
-    appear karne ki anumati" - i.e. `allowedSubjectIds` is the subset
-    already eligible, and after that the student needs a **fresh
-    generation cycle** re-run once they've fixed the issue - e.g. paid
-    the outstanding fee - to be re-evaluated and get a new/updated
-    admit card, rather than the system auto-updating them silently).
-  - Returns a per-student outcome list (eligible/denied/provisional +
-    the specific reason), same "show what happened to each one"
-    convention as `bulkAllocateRoom`/`bulkGenerateCertificates`.
-- Regeneration is idempotent per (examId, studentId) - re-running bulk
-  generation after a student's situation changes (fee paid, attendance
-  corrected) produces an updated admit card reflecting the new
-  evaluation, rather than requiring a delete-first step.
+**Separate admit-card template (Phase 2):**
+- New `DocTemplateType` value `ADMIT_CARD` - now genuinely separate from
+  `REPORT_CARD` (results). Templates page gained a new "Admit Card" slot
+  with its own placeholder guide (`{{studentName}}`, `{{examName}}`,
+  `{{status}}`, `{{remarks}}`, plus a `{#subjects}...{/subjects}` loop
+  for the per-subject date/time/room table) and a hand-built sample
+  `ADMIT_CARD.docx` (verified to render correctly via docxtemplater).
 
-## Phase 4: Frontend - Admit Card UI
+**AdmitCard model + single generation (Phase 2):**
+- New `AdmitCard` model: one row per `(examId, studentId)` -
+  `serialNo` (unique), `pdfUrl`, `status` (`ELIGIBLE`/`PROVISIONAL`/
+  `DENIED`), `remarks`, `allowedSubjectIds` (empty array = every
+  scheduled subject allowed; a non-empty list restricts to only those
+  subjects), `generatedAt`/`generatedBy`.
+- `POST /academics/exams/:examId/admit-cards/generate` (single student) -
+  admin-driven; defaults to `ELIGIBLE` with no rules unless explicitly
+  passed a `ruleConfig`.
+- `GET .../admit-cards/:studentId/pdf` - template-first/PDFKit-fallback
+  PDF (same convention as every other document generator), showing only
+  `allowedSubjectIds`' schedule rows for a `PROVISIONAL` card, and a
+  visible reason banner. A `DENIED` card returns 403 (nothing to
+  download).
 
-- New tab/section on the Exam Timetable page (or a new
-  `/dashboard/exams/[id]/admit-cards` page) - admin picks which rules to
-  enable (checklist), the attendance % threshold, the "fees cleared
-  till" month, and the ineligible-student policy (deny vs. provisional),
-  then runs bulk generation - shows the resulting eligible/provisional/
-  denied breakdown with remarks, single-student regenerate, and a bulk
-  PDF download.
-- Admit Card template upload UI alongside the existing Certificate/
-  Document Templates page.
+**Eligibility rule engine + bulk generation (Phase 3):**
+- New `admitCardEligibility.service.ts` - a checklist of two
+  independently toggleable rules:
+  - Minimum attendance % (default 75%, editable) - counts PRESENT+LATE
+    as present, over a configurable date range (defaults to the exam's
+    academic year start through today).
+  - Monthly fees cleared through a chosen `YYYY-MM` - pro-rates each
+    MONTHLY-frequency `FeeAssignment` (monthly rate x months elapsed
+    since the academic year start through the target month inclusive)
+    against `paidAmount + discount`; a student with no MONTHLY fee
+    assignments passes trivially.
+  - Both/either/neither can be enabled - a student passes only if every
+    enabled rule passes.
+- `POST /academics/exams/:examId/admit-cards/bulk-generate` -
+  evaluates every active student in the class:
+  - Passes all enabled rules → `ELIGIBLE`, every scheduled subject
+    allowed.
+  - Fails → admin's choice: `DENY` (no card, `remarks` explains which
+    rule(s) failed) or `PROVISIONAL` (restricted to every subject
+    already scheduled for the exam - "kewal is exam ke jo subject
+    schedule ho chuke hain unhi ko appear karne ki anumati" - a fresh
+    generation run after the issue is fixed is required to get an
+    updated card; nothing auto-upgrades).
+  - Returns a per-student outcome + totals (eligible/provisional/denied
+    counts), same "show what happened to each one" convention as
+    `bulkAllocateRoom`.
+- Regeneration is idempotent via `upsert` on `(examId, studentId)` - a
+  student's situation changing (fee paid, attendance corrected) and
+  re-running bulk generation produces an updated card, no delete-first
+  step needed.
+
+**Frontend (Phase 4):**
+- New "Admit Cards" section on the Exam Timetable page
+  (`/dashboard/exams/[id]/schedule`) - admin-only "Bulk Generate" button
+  opens a modal with the rules checklist (attendance % + month picker,
+  each independently toggleable), a deny-vs-provisional radio choice,
+  and a result summary after running. The list below shows every
+  generated card's status/remarks with a PDF download (any role) and a
+  delete action (admin).
+- Templates page gained the "Admit Card" upload slot alongside the
+  existing certificate/document slots.
+
+**Tests:** 48 new tests - `admitCardEligibility.service.test.ts` (new,
+14: both rules independently and together, edge cases like zero
+attendance records and multiple fee assignments), `admitCard.controller.test.ts`
+(new, 34: single/bulk generation for all three outcomes, cross-branch
+guards, DENIED-blocks-PDF-download, PROVISIONAL-filters-schedule).
+
+### Verification performed:
+- Backend: `npx prisma generate` (schema valid) / `npx tsc --noEmit` /
+  `npm test` (**76 suites / 988 tests**, up from 954) / `npm run build` -
+  all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, `exams/[id]/schedule`
+  page grew to 11.2kB, `templates` page grew to 6.64kB
+
+---
+
+## This plan is now fully complete
+Both bugs are fixed, the sidebar/hostel UX additions shipped, and the
+full Admit Card system (separate template, single + bulk generation,
+75% attendance rule, fees-cleared-till-month rule, deny/provisional
+policy) is live.
 
 ## Workflow
 Same as every prior phase: implement backend -> tests -> typecheck+build
