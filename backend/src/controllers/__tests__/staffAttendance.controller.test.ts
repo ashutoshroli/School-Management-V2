@@ -4,12 +4,21 @@ jest.mock("../../config/database", () => ({
     attendanceDevice: { findUnique: jest.fn() },
     staff: { findUnique: jest.fn(), findMany: jest.fn() },
     staffAttendance: { findUnique: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), upsert: jest.fn() },
+    holiday: { count: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
 
 import prisma from "../../config/database";
-import { cardTapAttendance, markAttendance, bulkMarkAttendance, getAttendanceCalendar } from "../staffAttendance.controller";
+import {
+  cardTapAttendance,
+  markAttendance,
+  bulkMarkAttendance,
+  getAttendanceCalendar,
+  selfMarkAttendance,
+  getStaffAttendanceReport,
+  exportStaffAttendanceReportCsv,
+} from "../staffAttendance.controller";
 import { AuthRequest } from "../../types";
 import { UserRole } from "@prisma/client";
 
@@ -71,14 +80,53 @@ describe("staffAttendance.controller - cardTapAttendance", () => {
     (prisma.staffAttendance.findUnique as jest.Mock).mockResolvedValue(null);
     (prisma.staffAttendance.create as jest.Mock).mockResolvedValue({ id: "att-1" });
 
-    const req = makeReq({ cardId: "CARD-STAFF-001", deviceId: "device-uuid-1", apiKey: DEVICE.apiKey });
+    const req = makeReq({ cardId: "CARD-STAFF-001", deviceId: "device-uuid-1", apiKey: DEVICE.apiKey, timestamp: "2024-03-15T03:00:00.000Z" }); // 08:30 IST-ish/before cutoff regardless of TZ math, just needs to be a normal morning time
     const res = makeMockRes();
 
     await cardTapAttendance(req, res);
 
     expect(res.status).toHaveBeenCalledWith(201);
     expect(prisma.staffAttendance.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: "PRESENT", source: "CARD_TAP" }) })
+      expect.objectContaining({ data: expect.objectContaining({ source: "CARD_TAP" }) })
+    );
+  });
+
+  // New Features Phase 5: auto-flag LATE instead of PRESENT when the
+  // tap time is past the day-start cutoff (09:15), instead of requiring
+  // an admin to fix it up manually afterwards.
+  it("BUG FIX: auto-flags a card-tap IN as LATE when past the day-start cutoff", async () => {
+    (prisma.attendanceDevice.findUnique as jest.Mock).mockResolvedValue(DEVICE);
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue(STAFF);
+    (prisma.staffAttendance.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.staffAttendance.create as jest.Mock).mockResolvedValue({ id: "att-1" });
+
+    const lateTime = new Date();
+    lateTime.setHours(10, 30, 0, 0); // well past 09:15 in local time
+    const req = makeReq({ cardId: "CARD-STAFF-001", deviceId: "device-uuid-1", apiKey: DEVICE.apiKey, timestamp: lateTime.toISOString() });
+    const res = makeMockRes();
+
+    await cardTapAttendance(req, res);
+
+    expect(prisma.staffAttendance.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "LATE" }) })
+    );
+  });
+
+  it("still marks PRESENT for a card-tap IN before the day-start cutoff", async () => {
+    (prisma.attendanceDevice.findUnique as jest.Mock).mockResolvedValue(DEVICE);
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue(STAFF);
+    (prisma.staffAttendance.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.staffAttendance.create as jest.Mock).mockResolvedValue({ id: "att-1" });
+
+    const onTimeTap = new Date();
+    onTimeTap.setHours(8, 0, 0, 0); // well before 09:15
+    const req = makeReq({ cardId: "CARD-STAFF-001", deviceId: "device-uuid-1", apiKey: DEVICE.apiKey, timestamp: onTimeTap.toISOString() });
+    const res = makeMockRes();
+
+    await cardTapAttendance(req, res);
+
+    expect(prisma.staffAttendance.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "PRESENT" }) })
     );
   });
 
@@ -195,6 +243,176 @@ describe("staffAttendance.controller - markAttendance", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: "Attendance updated" }));
+  });
+
+  // New Features Phase 5: auto-upgrade a manually-picked PRESENT to
+  // LATE based on inTime, instead of requiring the admin to remember
+  // to pick LATE themselves.
+  it("BUG FIX: auto-upgrades PRESENT to LATE when inTime is past the day-start cutoff", async () => {
+    const req = makeMarkReq({ body: { staffId: "staff-1", date: "2024-03-15", status: "PRESENT", inTime: "2024-03-15T10:30:00" } });
+    const res = makeMockRes();
+
+    await markAttendance(req, res);
+
+    expect((prisma.staffAttendance.upsert as jest.Mock).mock.calls[0][0].create.status).toBe("LATE");
+  });
+
+  it("does NOT upgrade an explicitly-picked ABSENT/HALF_DAY/ON_LEAVE status even with a late inTime", async () => {
+    const req = makeMarkReq({ body: { staffId: "staff-1", date: "2024-03-15", status: "HALF_DAY", inTime: "2024-03-15T10:30:00" } });
+    const res = makeMockRes();
+
+    await markAttendance(req, res);
+
+    expect((prisma.staffAttendance.upsert as jest.Mock).mock.calls[0][0].create.status).toBe("HALF_DAY");
+  });
+
+  it("keeps PRESENT as-is when inTime is before the day-start cutoff", async () => {
+    const req = makeMarkReq({ body: { staffId: "staff-1", date: "2024-03-15", status: "PRESENT", inTime: "2024-03-15T08:00:00" } });
+    const res = makeMockRes();
+
+    await markAttendance(req, res);
+
+    expect((prisma.staffAttendance.upsert as jest.Mock).mock.calls[0][0].create.status).toBe("PRESENT");
+  });
+
+  it("keeps PRESENT as-is when no inTime is provided at all", async () => {
+    const req = makeMarkReq();
+    const res = makeMockRes();
+
+    await markAttendance(req, res);
+
+    expect((prisma.staffAttendance.upsert as jest.Mock).mock.calls[0][0].create.status).toBe("PRESENT");
+  });
+});
+
+// New Features Phase 5: self check-in/out - a staff member punches
+// their OWN attendance, restricted to their own staffId and today's date.
+describe("staffAttendance.controller - selfMarkAttendance", () => {
+  const makeSelfReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
+    ({ body: {}, params: {}, query: {}, user: { userId: "user-1", email: "s@test.com", role: UserRole.TEACHER, branchId: "branch-1" }, ...overrides } as any);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the user has no linked staff record", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeSelfReq();
+    const res = makeMockRes();
+
+    await selfMarkAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("creates an IN record on the first call of the day", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.staffAttendance.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.staffAttendance.create as jest.Mock).mockResolvedValue({ id: "att-1", status: "PRESENT" });
+    const req = makeSelfReq();
+    const res = makeMockRes();
+
+    await selfMarkAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.action).toBe("IN");
+    expect(prisma.staffAttendance.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ staffId: "staff-1", source: "MANUAL" }) })
+    );
+  });
+
+  it("records the OUT time on a second call the same day (no outTime yet)", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.staffAttendance.findUnique as jest.Mock).mockResolvedValue({ id: "att-1", outTime: null });
+    (prisma.staffAttendance.update as jest.Mock).mockResolvedValue({ id: "att-1" });
+    const req = makeSelfReq();
+    const res = makeMockRes();
+
+    await selfMarkAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.action).toBe("OUT");
+  });
+
+  it("rejects a third call the same day (already checked in AND out)", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.staffAttendance.findUnique as jest.Mock).mockResolvedValue({ id: "att-1", outTime: new Date() });
+    const req = makeSelfReq();
+    const res = makeMockRes();
+
+    await selfMarkAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.staffAttendance.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("staffAttendance.controller - getStaffAttendanceReport / exportStaffAttendanceReportCsv", () => {
+  const makeReportReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
+    ({ body: {}, params: {}, query: { month: "3", year: "2024" }, user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" }, ...overrides } as any);
+
+  const STAFF_WITH_ATTENDANCE = [
+    {
+      employeeId: "EMP-001", designation: "PGT", department: "Science",
+      user: { name: "Jane Teacher" },
+      attendances: [
+        { status: "PRESENT" }, { status: "PRESENT" }, { status: "ABSENT" }, { status: "LATE" }, { status: "HALF_DAY" },
+      ],
+    },
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.staff.findMany as jest.Mock).mockResolvedValue(STAFF_WITH_ATTENDANCE);
+    (prisma.holiday.count as jest.Mock).mockResolvedValue(0);
+  });
+
+  it("returns 400 when no branchId can be resolved", async () => {
+    const req = makeReportReq({ user: { userId: "u1", email: "e", role: UserRole.ACCOUNTANT, branchId: undefined } });
+    const res = makeMockRes();
+
+    await getStaffAttendanceReport(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("computes present/absent/late/halfDay counts and an attendance percentage per staff member", async () => {
+    const req = makeReportReq();
+    const res = makeMockRes();
+
+    await getStaffAttendanceReport(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.rows).toHaveLength(1);
+    expect(payload.rows[0]).toEqual(
+      expect.objectContaining({ employeeId: "EMP-001", present: 2, absent: 1, late: 1, halfDay: 1, onLeave: 0 })
+    );
+  });
+
+  it("DATA INTEGRITY: excludes declared holidays from the working-days denominator", async () => {
+    (prisma.holiday.count as jest.Mock).mockResolvedValue(4); // 4 holidays in March
+    const req = makeReportReq();
+    const res = makeMockRes();
+
+    await getStaffAttendanceReport(req, res);
+
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    // March has 31 days; 31 - 4 holidays = 27 working days
+    expect(payload.rows[0].workingDays).toBe(27);
+  });
+
+  it("exportStaffAttendanceReportCsv sends a CSV attachment with the same computed rows", async () => {
+    const req = makeReportReq();
+    const res: any = { setHeader: jest.fn(), send: jest.fn() };
+
+    await exportStaffAttendanceReportCsv(req, res);
+
+    expect(res.setHeader).toHaveBeenCalledWith("Content-Type", "text/csv; charset=utf-8");
+    expect(res.send).toHaveBeenCalledWith(expect.stringContaining("EMP-001"));
+    expect(res.send).toHaveBeenCalledWith(expect.stringContaining("Jane Teacher"));
   });
 });
 

@@ -67,6 +67,7 @@ model Branch {
   hostelBuildings HostelBuilding[]
   schoolBuildings SchoolBuilding[]
   periodConfigs   PeriodConfig[]
+  holidays        Holiday[]
   libraryBooks    LibraryBook[]
   inventoryItems  InventoryItem[]
   devices         AttendanceDevice[]
@@ -812,6 +813,21 @@ enum AttendanceSource {
   CARD_TAP
   QR_CODE
   BIOMETRIC
+}
+
+// Declared non-working days for a branch (public holidays, festivals,
+// school-specific closures) - so attendance reports/calendars can
+// exclude these dates from the "should have been present" denominator
+// instead of wrongly implying absence on a day nobody was expected in.
+model Holiday {
+  id       String   @id @default(cuid())
+  branchId String
+  date     DateTime
+  name     String
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@unique([branchId, date])
 }
 
 model LeaveType {

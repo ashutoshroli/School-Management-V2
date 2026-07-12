@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle, DatabaseZap, Plus, Trash2, GraduationCap, Pencil } from "lucide-react";
+import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle, DatabaseZap, Plus, Trash2, GraduationCap, Pencil, Clock, CalendarDays } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { resolveUploadUrl } from "@/lib/uploads";
@@ -249,6 +249,127 @@ export default function SettingsPage() {
     }
   };
 
+  // Period Config (periods-per-day schedule used by the attendance
+  // page's period picker, see PeriodConfig model doc comment) -
+  // admins edit the whole list at once (add/remove rows, then Save),
+  // matching upsertPeriodConfigs' "replace the whole branch list"
+  // semantics rather than per-row CRUD.
+  const [periods, setPeriods] = useState<any[]>([]);
+  const [periodsLoading, setPeriodsLoading] = useState(false);
+  const [savingPeriods, setSavingPeriods] = useState(false);
+  const [periodsMessage, setPeriodsMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  const fetchPeriodConfigs = async () => {
+    if (!isAdmin) return;
+    setPeriodsLoading(true);
+    try {
+      const res = await api.get("/academics/period-config");
+      const data = res.data.data || [];
+      setPeriods(
+        data.length > 0
+          ? data.map((p: any) => ({ periodNo: p.periodNo, label: p.label || "", startTime: p.startTime, endTime: p.endTime, isBreak: p.isBreak }))
+          : []
+      );
+    } catch {
+      setPeriods([]);
+    } finally {
+      setPeriodsLoading(false);
+    }
+  };
+
+  const addPeriodRow = () => {
+    const nextNo = periods.length > 0 ? Math.max(...periods.map((p) => p.periodNo)) + 1 : 1;
+    setPeriods([...periods, { periodNo: nextNo, label: "", startTime: "", endTime: "", isBreak: false }]);
+  };
+
+  const updatePeriodRow = (index: number, field: string, value: any) => {
+    setPeriods(periods.map((p, i) => (i === index ? { ...p, [field]: value } : p)));
+  };
+
+  const removePeriodRow = (index: number) => {
+    setPeriods(periods.filter((_, i) => i !== index));
+  };
+
+  const handleSavePeriods = async () => {
+    setPeriodsMessage(null);
+    if (periods.length === 0) {
+      setPeriodsMessage({ type: "error", text: "Add at least one period before saving" });
+      return;
+    }
+    for (const p of periods) {
+      if (!p.startTime || !p.endTime) {
+        setPeriodsMessage({ type: "error", text: "Every period needs a start and end time" });
+        return;
+      }
+    }
+    setSavingPeriods(true);
+    try {
+      const res = await api.put("/academics/period-config", { periods });
+      const data = res.data.data || [];
+      setPeriods(data.map((p: any) => ({ periodNo: p.periodNo, label: p.label || "", startTime: p.startTime, endTime: p.endTime, isBreak: p.isBreak })));
+      setPeriodsMessage({ type: "success", text: "Period schedule saved" });
+    } catch (err: any) {
+      setPeriodsMessage({ type: "error", text: err.response?.data?.message || "Failed to save period schedule" });
+    } finally {
+      setSavingPeriods(false);
+    }
+  };
+
+  // Holiday calendar (declared non-working days, see Holiday model doc
+  // comment) - attendance reports exclude these from the "should have
+  // been present" denominator.
+  const [holidays, setHolidays] = useState<any[]>([]);
+  const [holidaysLoading, setHolidaysLoading] = useState(false);
+  const [holidayYear, setHolidayYear] = useState(new Date().getFullYear());
+  const [showHolidayModal, setShowHolidayModal] = useState(false);
+  const [holidayForm, setHolidayForm] = useState({ date: "", name: "" });
+  const [savingHoliday, setSavingHoliday] = useState(false);
+  const [holidayError, setHolidayError] = useState("");
+
+  const fetchHolidays = async (year = holidayYear) => {
+    if (!isAdmin) return;
+    setHolidaysLoading(true);
+    try {
+      const res = await api.get("/hr/holidays", { params: { year } });
+      setHolidays(res.data.data || []);
+    } catch {
+      setHolidays([]);
+    } finally {
+      setHolidaysLoading(false);
+    }
+  };
+
+  const openAddHoliday = () => {
+    setHolidayForm({ date: "", name: "" });
+    setHolidayError("");
+    setShowHolidayModal(true);
+  };
+
+  const handleSaveHoliday = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingHoliday(true);
+    setHolidayError("");
+    try {
+      await api.post("/hr/holidays", holidayForm);
+      setShowHolidayModal(false);
+      await fetchHolidays();
+    } catch (err: any) {
+      setHolidayError(err.response?.data?.message || "Failed to add holiday");
+    } finally {
+      setSavingHoliday(false);
+    }
+  };
+
+  const handleDeleteHoliday = async (h: any) => {
+    if (!confirm(`Delete holiday "${h.name}" (${formatDate(h.date)})?`)) return;
+    try {
+      await api.delete(`/hr/holidays/${h.id}`);
+      fetchHolidays();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to delete holiday");
+    }
+  };
+
   const fetchProfile = async () => {
     setLoading(true);
     setError(null);
@@ -284,6 +405,8 @@ export default function SettingsPage() {
     fetchOwnBranch();
     fetchDemoStatus();
     fetchGradeBands();
+    fetchPeriodConfigs();
+    fetchHolidays();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -527,6 +650,172 @@ export default function SettingsPage() {
 
               <button onClick={openAddBand} className="btn-secondary flex items-center gap-2 text-sm">
                 <Plus className="h-4 w-4" /> Add Grade Band
+              </button>
+            </div>
+          )}
+
+          {/* Period Config (periods-per-day schedule) - admins only */}
+          {isAdmin && (
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                <Clock className="h-5 w-5 text-cyan-600" /> Period Schedule
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Configure the periods-per-day schedule (start/end time, breaks) used by the attendance page&apos;s
+                period picker and the timetable editor. Edit the whole list and click Save.
+              </p>
+
+              {periodsMessage && (
+                <div
+                  className={`mb-4 text-sm rounded-lg px-3 py-2 ${
+                    periodsMessage.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+                  }`}
+                >
+                  {periodsMessage.text}
+                </div>
+              )}
+
+              {periodsLoading ? (
+                <div className="flex justify-center py-6">
+                  <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+                </div>
+              ) : (
+                <div className="overflow-x-auto mb-4">
+                  <table className="w-full text-sm">
+                    <thead><tr className="border-b bg-gray-50">
+                      <th className="px-3 py-2 text-left">#</th>
+                      <th className="px-3 py-2 text-left">Label</th>
+                      <th className="px-3 py-2 text-left">Start</th>
+                      <th className="px-3 py-2 text-left">End</th>
+                      <th className="px-3 py-2 text-center">Break?</th>
+                      <th className="px-3 py-2 text-center">Actions</th>
+                    </tr></thead>
+                    <tbody>
+                      {periods.map((p, i) => (
+                        <tr key={i} className="border-b">
+                          <td className="px-3 py-2">
+                            <input
+                              type="number"
+                              min={1}
+                              className="input-field w-16"
+                              value={p.periodNo}
+                              onChange={(e) => updatePeriodRow(i, "periodNo", parseInt(e.target.value) || 1)}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              className="input-field"
+                              placeholder={`Period ${p.periodNo}`}
+                              value={p.label}
+                              onChange={(e) => updatePeriodRow(i, "label", e.target.value)}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="time"
+                              className="input-field"
+                              value={p.startTime}
+                              onChange={(e) => updatePeriodRow(i, "startTime", e.target.value)}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              type="time"
+                              className="input-field"
+                              value={p.endTime}
+                              onChange={(e) => updatePeriodRow(i, "endTime", e.target.value)}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={p.isBreak}
+                              onChange={(e) => updatePeriodRow(i, "isBreak", e.target.checked)}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <button onClick={() => removePeriodRow(i)} className="text-red-500 hover:text-red-700" title="Remove">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {periods.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">No periods configured yet</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button onClick={addPeriodRow} className="btn-secondary flex items-center gap-2 text-sm">
+                  <Plus className="h-4 w-4" /> Add Period
+                </button>
+                <button onClick={handleSavePeriods} disabled={savingPeriods} className="btn-primary flex items-center gap-2 text-sm disabled:opacity-60">
+                  {savingPeriods && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {savingPeriods ? "Saving..." : "Save Schedule"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Holiday calendar (declared non-working days) - admins only */}
+          {isAdmin && (
+            <div className="card">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <CalendarDays className="h-5 w-5 text-rose-600" /> Holiday Calendar
+                </h3>
+                <select
+                  className="input-field w-auto"
+                  value={holidayYear}
+                  onChange={(e) => {
+                    const y = parseInt(e.target.value);
+                    setHolidayYear(y);
+                    fetchHolidays(y);
+                  }}
+                >
+                  {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 1 + i).map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Declared non-working days for this branch. Staff attendance reports exclude these dates so absence
+                isn&apos;t wrongly implied on a day nobody was expected in.
+              </p>
+
+              {holidaysLoading ? (
+                <div className="flex justify-center py-6">
+                  <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+                </div>
+              ) : (
+                <div className="overflow-x-auto mb-4">
+                  <table className="w-full text-sm">
+                    <thead><tr className="border-b bg-gray-50">
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Name</th>
+                      <th className="px-3 py-2 text-center">Actions</th>
+                    </tr></thead>
+                    <tbody>
+                      {holidays.map((h) => (
+                        <tr key={h.id} className="border-b">
+                          <td className="px-3 py-2">{formatDate(h.date)}</td>
+                          <td className="px-3 py-2">{h.name}</td>
+                          <td className="px-3 py-2 text-center">
+                            <button onClick={() => handleDeleteHoliday(h)} className="text-red-500 hover:text-red-700" title="Delete">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {holidays.length === 0 && <tr><td colSpan={3} className="px-3 py-4 text-center text-gray-400">No holidays declared for {holidayYear}</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <button onClick={openAddHoliday} className="btn-secondary flex items-center gap-2 text-sm">
+                <Plus className="h-4 w-4" /> Add Holiday
               </button>
             </div>
           )}
@@ -800,6 +1089,38 @@ export default function SettingsPage() {
             <button type="button" onClick={() => setShowGradeModal(false)} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={savingBand} className="btn-primary disabled:opacity-50">
               {savingBand ? "Saving..." : editingBand ? "Save Changes" : "Create"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={showHolidayModal} onClose={() => setShowHolidayModal(false)} title="Add Holiday" size="sm">
+        <form onSubmit={handleSaveHoliday} className="space-y-4">
+          {holidayError && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{holidayError}</div>}
+          <div>
+            <label className="block text-sm font-medium mb-1">Date *</label>
+            <input
+              type="date"
+              className="input-field"
+              value={holidayForm.date}
+              onChange={(e) => setHolidayForm({ ...holidayForm, date: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Name *</label>
+            <input
+              className="input-field"
+              value={holidayForm.name}
+              onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
+              placeholder="e.g. Diwali"
+              required
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={() => setShowHolidayModal(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={savingHoliday} className="btn-primary disabled:opacity-50">
+              {savingHoliday ? "Saving..." : "Add Holiday"}
             </button>
           </div>
         </form>

@@ -1,13 +1,15 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCalendar, getDateAttendance } from "../controllers/staffAttendance.controller";
+import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCalendar, getDateAttendance, selfMarkAttendance, getStaffAttendanceReport, exportStaffAttendanceReportCsv } from "../controllers/staffAttendance.controller";
 import { getLeaveTypes, getLeaveTypeById, applyLeave, getLeaveApplications, updateLeaveStatus, bulkUpdateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType } from "../controllers/leave.controller";
 import { upsertSalaryStructure, bulkAssignSalaryStructure, assignSalaryStructureToStaff, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
+import { getHolidays, createHoliday, deleteHoliday } from "../controllers/holiday.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { markStaffAttendanceSchema, bulkMarkStaffAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
 import { applyLeaveSchema, updateLeaveStatusSchema, bulkUpdateLeaveStatusSchema, createLeaveTypeSchema, updateLeaveTypeSchema } from "../validators/leave.validator";
 import { upsertSalaryStructureSchema, bulkAssignSalaryStructureSchema, assignSalaryStructureToStaffSchema, runPayrollSchema } from "../validators/payroll.validator";
+import { createHolidaySchema } from "../validators/holiday.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -19,6 +21,14 @@ router.post("/attendance/bulk", authenticate, authorize(...ADMIN), validate(bulk
 router.post("/attendance/card-tap", validate(cardTapSchema), cardTapAttendance); // No auth - device uses API key in body
 router.get("/attendance/calendar/:staffId", authenticate, getAttendanceCalendar);
 router.get("/attendance/date", authenticate, authorize(...ADMIN), getDateAttendance);
+router.post("/attendance/self", authenticate, authorize(...STAFF_ROLES), selfMarkAttendance);
+router.get("/attendance/report", authenticate, authorize(...ADMIN), getStaffAttendanceReport);
+router.get("/attendance/report/csv", authenticate, authorize(...ADMIN), exportStaffAttendanceReportCsv);
+
+// ===== HOLIDAYS =====
+router.get("/holidays", authenticate, getHolidays);
+router.post("/holidays", authenticate, authorize(...ADMIN), validate(createHolidaySchema), createHoliday);
+router.delete("/holidays/:id", authenticate, authorize(...ADMIN), deleteHoliday);
 
 // ===== LEAVE MANAGEMENT =====
 router.get("/leave/types", authenticate, getLeaveTypes);
