@@ -276,6 +276,9 @@ model Student {
   certificates    GeneratedCertificate[]
   examSeatAllocations ExamSeatAllocation[]
   examAttendances     ExamAttendance[]
+  healthRecord        StudentHealth?
+  disciplineIncidents DisciplineIncident[]
+  quizAttempts        QuizAttempt[]
 }
 
 
@@ -1845,4 +1848,395 @@ enum JobApplicationStatus {
   SHORTLISTED
   REJECTED
   HIRED
+}
+
+
+
+// ============================================
+// SECTION 25: STUDENT HEALTH MODULE (Feature Parity)
+// ============================================
+
+model StudentHealth {
+  id              String   @id @default(cuid())
+  studentId       String   @unique
+  height          Decimal? @db.Decimal(5, 2)
+  weight          Decimal? @db.Decimal(5, 2)
+  allergies       String?
+  chronicConditions String?
+  medications     String?
+  emergencyContact String?
+  emergencyPhone  String?
+  doctorName      String?
+  doctorPhone     String?
+  insuranceId     String?
+  lastCheckupDate DateTime?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  student       Student        @relation(fields: [studentId], references: [id])
+  immunizations Immunization[]
+  healthVisits  HealthVisit[]
+}
+
+model Immunization {
+  id              String   @id @default(cuid())
+  studentHealthId String
+  vaccineName     String
+  doseNumber      Int      @default(1)
+  dateGiven       DateTime
+  nextDueDate     DateTime?
+  administeredBy  String?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  studentHealth StudentHealth @relation(fields: [studentHealthId], references: [id])
+}
+
+model HealthVisit {
+  id              String   @id @default(cuid())
+  studentHealthId String
+  visitDate       DateTime
+  reason          String
+  diagnosis       String?
+  treatment       String?
+  attendedBy      String
+  followUpDate    DateTime?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  studentHealth StudentHealth @relation(fields: [studentHealthId], references: [id])
+}
+
+// ============================================
+// SECTION 26: DISCIPLINE MODULE (Feature Parity)
+// ============================================
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentAction {
+  WARNING
+  DETENTION
+  SUSPENSION
+  EXPULSION
+  COUNSELING
+  COMMUNITY_SERVICE
+}
+
+model DisciplineIncident {
+  id           String           @id @default(cuid())
+  branchId     String
+  studentId    String
+  reportedBy   String
+  incidentDate DateTime
+  severity     IncidentSeverity
+  category     String
+  description  String
+  witnesses    String?
+  actionTaken  IncidentAction?
+  actionDate   DateTime?
+  actionBy     String?
+  parentNotified Boolean       @default(false)
+  resolution   String?
+  status       String           @default("OPEN")
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@index([branchId, studentId])
+  @@index([branchId, incidentDate])
+}
+
+
+
+// ============================================
+// SECTION 27: EVENTS / CALENDAR (Feature Parity)
+// ============================================
+
+enum EventType {
+  ACADEMIC
+  CULTURAL
+  SPORTS
+  MEETING
+  PTM
+  HOLIDAY
+  EXAM
+  OTHER
+}
+
+enum EventStatus {
+  UPCOMING
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+model Event {
+  id             String      @id @default(cuid())
+  branchId       String
+  title          String
+  description    String?
+  type           EventType
+  status         EventStatus @default(UPCOMING)
+  startDate      DateTime
+  endDate        DateTime
+  startTime      String?
+  endTime        String?
+  venue          String?
+  organizer      String
+  targetAudience String?
+  targetClassId  String?
+  isRecurring    Boolean     @default(false)
+  attachmentUrl  String?
+  maxParticipants Int?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  attendees EventAttendee[]
+
+  @@index([branchId, startDate])
+  @@index([branchId, type])
+}
+
+model EventAttendee {
+  id         String   @id @default(cuid())
+  eventId    String
+  userId     String
+  rsvpStatus String   @default("PENDING")
+  attended   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id])
+
+  @@unique([eventId, userId])
+}
+
+// ============================================
+// SECTION 28: GRIEVANCE MODULE (Feature Parity)
+// ============================================
+
+enum GrievanceStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  ESCALATED
+}
+
+enum GrievancePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum GrievanceCategory {
+  ACADEMIC
+  ADMINISTRATIVE
+  INFRASTRUCTURE
+  BULLYING
+  DISCRIMINATION
+  FEES
+  TRANSPORT
+  HOSTEL
+  OTHER
+}
+
+model Grievance {
+  id          String             @id @default(cuid())
+  branchId    String
+  ticketNo    String             @unique
+  submittedBy String
+  category    GrievanceCategory
+  priority    GrievancePriority  @default(MEDIUM)
+  subject     String
+  description String
+  attachmentUrl String?
+  status      GrievanceStatus    @default(OPEN)
+  assignedTo  String?
+  resolution  String?
+  resolvedAt  DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  responses GrievanceResponse[]
+
+  @@index([branchId, status])
+  @@index([submittedBy])
+}
+
+model GrievanceResponse {
+  id          String   @id @default(cuid())
+  grievanceId String
+  respondedBy String
+  message     String
+  attachmentUrl String?
+  createdAt   DateTime @default(now())
+
+  grievance Grievance @relation(fields: [grievanceId], references: [id])
+}
+
+
+
+// ============================================
+// SECTION 29: ONLINE QUIZ / QUESTION BANK (Feature Parity)
+// ============================================
+
+enum QuestionType {
+  MCQ
+  TRUE_FALSE
+  SHORT_ANSWER
+  FILL_BLANK
+  MULTI_SELECT
+}
+
+enum QuizStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+}
+
+model QuestionBank {
+  id            String       @id @default(cuid())
+  branchId      String
+  subjectId     String
+  classId       String
+  chapter       String?
+  question      String
+  type          QuestionType
+  options       String?
+  correctAnswer String
+  explanation   String?
+  difficulty    String       @default("MEDIUM")
+  marks         Decimal      @default(1) @db.Decimal(4, 1)
+  tags          String?
+  imageUrl      String?
+  createdBy     String
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  quizQuestions QuizQuestion[]
+
+  @@index([branchId, subjectId, classId])
+}
+
+model Quiz {
+  id              String     @id @default(cuid())
+  branchId        String
+  classId         String
+  sectionId       String?
+  subjectId       String
+  title           String
+  description     String?
+  status          QuizStatus @default(DRAFT)
+  totalMarks      Decimal    @db.Decimal(5, 1)
+  passingMarks    Decimal?   @db.Decimal(5, 1)
+  durationMinutes Int
+  startDateTime   DateTime?
+  endDateTime     DateTime?
+  maxAttempts     Int        @default(1)
+  shuffleQuestions Boolean   @default(false)
+  showResults     Boolean    @default(true)
+  showAnswers     Boolean    @default(false)
+  createdBy       String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([branchId, classId, subjectId])
+  @@index([branchId, status])
+}
+
+model QuizQuestion {
+  id             String  @id @default(cuid())
+  quizId         String
+  questionBankId String
+  questionNo     Int
+  marks          Decimal @db.Decimal(4, 1)
+
+  quiz     Quiz         @relation(fields: [quizId], references: [id])
+  question QuestionBank @relation(fields: [questionBankId], references: [id])
+
+  @@unique([quizId, questionNo])
+  @@unique([quizId, questionBankId])
+}
+
+model QuizAttempt {
+  id            String   @id @default(cuid())
+  quizId        String
+  studentId     String
+  attemptNo     Int      @default(1)
+  startedAt     DateTime @default(now())
+  submittedAt   DateTime?
+  totalMarks    Decimal? @db.Decimal(5, 1)
+  obtainedMarks Decimal? @db.Decimal(5, 1)
+  percentage    Decimal? @db.Decimal(5, 2)
+  isPassed      Boolean?
+  status        String   @default("IN_PROGRESS")
+
+  quiz    Quiz         @relation(fields: [quizId], references: [id])
+  answers QuizAnswer[]
+
+  @@unique([quizId, studentId, attemptNo])
+  @@index([studentId])
+}
+
+model QuizAnswer {
+  id             String   @id @default(cuid())
+  attemptId      String
+  questionBankId String
+  answer         String
+  isCorrect      Boolean?
+  marksAwarded   Decimal? @db.Decimal(4, 1)
+  feedback       String?
+
+  attempt QuizAttempt @relation(fields: [attemptId], references: [id])
+
+  @@unique([attemptId, questionBankId])
+}
+
+// ============================================
+// SECTION 30: SYSTEM SETTINGS (Feature Parity)
+// ============================================
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  branchId  String?
+  key       String
+  value     String
+  type      String   @default("STRING")
+  category  String
+  label     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, key])
+  @@index([category])
+}
+
+// ============================================
+// SECTION 31: PASSWORD RESET (Feature Parity)
+// ============================================
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([token])
 }

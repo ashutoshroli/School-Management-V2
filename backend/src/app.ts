@@ -3,11 +3,13 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
+import compression from "compression";
 import rateLimit from "express-rate-limit";
 import swaggerUi from "swagger-ui-express";
 import passport from "./config/passport";
 import routes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
+import { requestId } from "./middleware/requestId";
 import { config } from "./config";
 import { initSentry, setupSentryErrorHandler } from "./config/sentry";
 import { swaggerSpec, isDocsEnabled } from "./docs/swagger";
@@ -18,6 +20,15 @@ const app = express();
 // middleware/routes are registered so Sentry's auto-instrumentation can
 // see the full request lifecycle. No-ops if SENTRY_DSN isn't set.
 initSentry(app);
+
+// Request ID - assigns a unique ID to every request for distributed
+// tracing / log correlation. Added early so all downstream middleware
+// and route handlers can reference req.id in their logs.
+app.use(requestId);
+
+// Response compression (gzip/brotli) - reduces payload sizes by 60-80%
+// for JSON responses. Placed before routes so all responses benefit.
+app.use(compression());
 
 // Security middleware
 app.use(helmet());

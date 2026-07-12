@@ -1,0 +1,848 @@
+// ============================================
+// MIGRATION: NEW MODELS FOR FEATURE PARITY
+// These additions bring the schema to full ERP parity
+// with OpenEduCat reference repository.
+// 
+// Instructions: Merge these into schema.prisma, then run:
+//   cd db && npx prisma migrate dev --name feature_parity_migration
+// ============================================
+
+
+// ============================================
+// SECTION A: NEW ENUMS
+// ============================================
+
+enum TransportMode {
+  SCHOOL_BUS
+  PRIVATE_VEHICLE
+  WALK
+  BICYCLE
+  PUBLIC_TRANSPORT
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentAction {
+  WARNING
+  DETENTION
+  SUSPENSION
+  EXPULSION
+  COUNSELING
+  COMMUNITY_SERVICE
+}
+
+
+enum EventType {
+  ACADEMIC
+  CULTURAL
+  SPORTS
+  MEETING
+  PTM
+  HOLIDAY
+  EXAM
+  OTHER
+}
+
+enum EventStatus {
+  UPCOMING
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+enum GrievanceStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  ESCALATED
+}
+
+enum GrievancePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum GrievanceCategory {
+  ACADEMIC
+  ADMINISTRATIVE
+  INFRASTRUCTURE
+  BULLYING
+  DISCRIMINATION
+  FEES
+  TRANSPORT
+  HOSTEL
+  OTHER
+}
+
+enum BookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  COMPLETED
+}
+
+enum QuizStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+}
+
+enum QuestionType {
+  MCQ
+  TRUE_FALSE
+  SHORT_ANSWER
+  LONG_ANSWER
+  FILL_BLANK
+  MULTI_SELECT
+}
+
+enum MaterialType {
+  PDF
+  VIDEO
+  LINK
+  DOCUMENT
+  IMAGE
+  AUDIO
+  PRESENTATION
+}
+
+enum ScholarshipStatus {
+  APPLIED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  DISBURSED
+  REVOKED
+}
+
+enum VisitorPurpose {
+  PARENT_MEETING
+  OFFICIAL
+  DELIVERY
+  INTERVIEW
+  VENDOR
+  OTHER
+}
+
+enum AlumniStatus {
+  ACTIVE
+  INACTIVE
+}
+
+
+
+// ============================================
+// SECTION B: STUDENT HEALTH MODULE
+// ============================================
+
+model StudentHealth {
+  id              String   @id @default(cuid())
+  studentId       String   @unique
+  bloodGroup      String?
+  height          Decimal? @db.Decimal(5, 2) // cm
+  weight          Decimal? @db.Decimal(5, 2) // kg
+  allergies       String?  // comma-separated
+  chronicConditions String? // e.g. asthma, diabetes
+  medications     String?  // current medications
+  emergencyContact String?
+  emergencyPhone  String?
+  doctorName      String?
+  doctorPhone     String?
+  insuranceId     String?
+  lastCheckupDate DateTime?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  student      Student          @relation(fields: [studentId], references: [id])
+  immunizations Immunization[]
+  healthVisits  HealthVisit[]
+}
+
+model Immunization {
+  id              String   @id @default(cuid())
+  studentHealthId String
+  vaccineName     String
+  doseNumber      Int      @default(1)
+  dateGiven       DateTime
+  nextDueDate     DateTime?
+  administeredBy  String?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  studentHealth StudentHealth @relation(fields: [studentHealthId], references: [id])
+}
+
+model HealthVisit {
+  id              String   @id @default(cuid())
+  studentHealthId String
+  visitDate       DateTime
+  reason          String
+  diagnosis       String?
+  treatment       String?
+  attendedBy      String   // nurse/doctor name
+  followUpDate    DateTime?
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  studentHealth StudentHealth @relation(fields: [studentHealthId], references: [id])
+}
+
+
+
+// ============================================
+// SECTION C: DISCIPLINE / BEHAVIOR MODULE
+// ============================================
+
+model DisciplineIncident {
+  id          String           @id @default(cuid())
+  branchId    String
+  studentId   String
+  reportedBy  String           // staff userId
+  incidentDate DateTime
+  severity    IncidentSeverity
+  category    String           // bullying, misbehavior, damage, etc.
+  description String
+  witnesses   String?          // comma-separated names
+  actionTaken IncidentAction?
+  actionDate  DateTime?
+  actionBy    String?          // staff userId who took action
+  parentNotified Boolean       @default(false)
+  parentNotifiedDate DateTime?
+  resolution  String?
+  followUpDate DateTime?
+  attachmentUrl String?
+  status      String           @default("OPEN") // OPEN, RESOLVED, ESCALATED
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@index([branchId, studentId])
+  @@index([branchId, incidentDate])
+}
+
+
+// ============================================
+// SECTION D: CALENDAR / EVENT MODULE
+// ============================================
+
+model Event {
+  id          String      @id @default(cuid())
+  branchId    String
+  title       String
+  description String?
+  type        EventType
+  status      EventStatus @default(UPCOMING)
+  startDate   DateTime
+  endDate     DateTime
+  startTime   String?     // "09:00"
+  endTime     String?     // "17:00"
+  venue       String?
+  roomId      String?     // SchoolRoom reference
+  organizer   String      // staff userId
+  targetAudience String?  // ALL, STUDENTS, STAFF, PARENTS, CLASS_SPECIFIC
+  targetClassId String?
+  isRecurring Boolean     @default(false)
+  attachmentUrl String?
+  maxParticipants Int?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  attendees EventAttendee[]
+
+  @@index([branchId, startDate])
+  @@index([branchId, type])
+}
+
+model EventAttendee {
+  id        String   @id @default(cuid())
+  eventId   String
+  userId    String
+  rsvpStatus String  @default("PENDING") // PENDING, ACCEPTED, DECLINED
+  attended  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id])
+
+  @@unique([eventId, userId])
+}
+
+
+
+// ============================================
+// SECTION E: SYLLABUS / LESSON PLANNING
+// ============================================
+
+model Syllabus {
+  id          String   @id @default(cuid())
+  branchId    String
+  subjectId   String
+  classId     String
+  academicYearId String
+  title       String   // "Chapter 1: Introduction to Physics"
+  chapterNo   Int
+  topics      String   // comma-separated or JSON list
+  objectives  String?
+  duration    String?  // "4 weeks"
+  resources   String?  // reference books, links
+  fileUrl     String?  // uploaded syllabus PDF
+  createdBy   String   // staff userId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lessonPlans LessonPlan[]
+
+  @@unique([branchId, subjectId, classId, academicYearId, chapterNo])
+  @@index([branchId, classId, subjectId])
+}
+
+model LessonPlan {
+  id          String   @id @default(cuid())
+  syllabusId  String?
+  teacherId   String   // staff userId
+  subjectId   String
+  classId     String
+  sectionId   String?
+  date        DateTime
+  topic       String
+  objectives  String?  // learning objectives
+  methodology String?  // teaching method
+  resources   String?  // materials needed
+  activities  String?  // class activities
+  homework    String?  // homework assigned
+  assessment  String?  // how assessed
+  remarks     String?  // teacher's notes post-class
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  syllabus Syllabus? @relation(fields: [syllabusId], references: [id])
+
+  @@index([teacherId, date])
+  @@index([classId, subjectId, date])
+}
+
+model StudyMaterial {
+  id          String       @id @default(cuid())
+  branchId    String
+  subjectId   String
+  classId     String
+  sectionId   String?      // null = all sections
+  title       String
+  description String?
+  type        MaterialType
+  fileUrl     String?
+  externalUrl String?      // YouTube, etc.
+  uploadedBy  String       // staff userId
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([branchId, classId, subjectId])
+}
+
+
+
+// ============================================
+// SECTION F: VISITOR MANAGEMENT
+// ============================================
+
+model Visitor {
+  id          String         @id @default(cuid())
+  branchId    String
+  name        String
+  phone       String?
+  email       String?
+  organization String?      // company/school name
+  purpose     VisitorPurpose
+  purposeDetail String?
+  toMeet      String?       // staff name or userId
+  idType      String?       // Aadhar, DL, etc.
+  idNumber    String?
+  photoUrl    String?
+  vehicleNo   String?
+  inTime      DateTime      @default(now())
+  outTime     DateTime?
+  passNo      String?       // gate pass number
+  approvedBy  String?       // staff userId
+  remarks     String?
+  createdAt   DateTime      @default(now())
+
+  @@index([branchId, inTime])
+}
+
+
+// ============================================
+// SECTION G: ALUMNI MODULE
+// ============================================
+
+model Alumni {
+  id              String       @id @default(cuid())
+  branchId        String
+  studentId       String?      // link to former Student record
+  name            String
+  email           String?
+  phone           String?
+  batchYear       Int          // graduation year
+  classAtExit     String?      // "Class 12"
+  currentOrg      String?      // current employer
+  designation     String?
+  city            String?
+  linkedinUrl     String?
+  photoUrl        String?
+  achievements    String?
+  status          AlumniStatus @default(ACTIVE)
+  registeredAt    DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([branchId, batchYear])
+}
+
+
+// ============================================
+// SECTION H: SCHOLARSHIP MODULE
+// ============================================
+
+model Scholarship {
+  id              String            @id @default(cuid())
+  branchId        String
+  name            String
+  description     String?
+  eligibility     String?           // criteria description
+  amount          Decimal           @db.Decimal(10, 2)
+  isPercentage    Boolean           @default(false) // of total fee
+  maxRecipients   Int?
+  academicYearId  String
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  applications ScholarshipApplication[]
+
+  @@index([branchId, academicYearId])
+}
+
+model ScholarshipApplication {
+  id             String            @id @default(cuid())
+  scholarshipId  String
+  studentId      String
+  appliedDate    DateTime          @default(now())
+  documents      String?           // uploaded proof URLs (JSON array)
+  reason         String?
+  status         ScholarshipStatus @default(APPLIED)
+  reviewedBy     String?
+  reviewNotes    String?
+  approvedAmount Decimal?          @db.Decimal(10, 2)
+  disbursedDate  DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  scholarship Scholarship @relation(fields: [scholarshipId], references: [id])
+
+  @@unique([scholarshipId, studentId])
+  @@index([studentId])
+}
+
+
+
+// ============================================
+// SECTION I: GRIEVANCE MODULE
+// ============================================
+
+model Grievance {
+  id          String             @id @default(cuid())
+  branchId    String
+  ticketNo    String             @unique // auto-generated GRV-XXXX
+  submittedBy String             // userId
+  category    GrievanceCategory
+  priority    GrievancePriority  @default(MEDIUM)
+  subject     String
+  description String
+  attachmentUrl String?
+  status      GrievanceStatus    @default(OPEN)
+  assignedTo  String?            // staff userId for resolution
+  resolution  String?
+  resolvedAt  DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  responses GrievanceResponse[]
+
+  @@index([branchId, status])
+  @@index([submittedBy])
+}
+
+model GrievanceResponse {
+  id          String   @id @default(cuid())
+  grievanceId String
+  respondedBy String   // userId
+  message     String
+  attachmentUrl String?
+  createdAt   DateTime @default(now())
+
+  grievance Grievance @relation(fields: [grievanceId], references: [id])
+}
+
+
+// ============================================
+// SECTION J: FACILITY BOOKING
+// ============================================
+
+model FacilityBooking {
+  id          String        @id @default(cuid())
+  branchId    String
+  roomId      String        // SchoolRoom reference
+  bookedBy    String        // userId
+  purpose     String
+  date        DateTime
+  startTime   String        // "09:00"
+  endTime     String        // "11:00"
+  participants Int?
+  status      BookingStatus @default(PENDING)
+  approvedBy  String?
+  remarks     String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([branchId, roomId, date])
+  @@index([branchId, date])
+}
+
+
+// ============================================
+// SECTION K: FEEDBACK / SURVEY MODULE
+// ============================================
+
+model FeedbackForm {
+  id          String   @id @default(cuid())
+  branchId    String
+  title       String
+  description String?
+  targetRole  String   // STUDENT, PARENT, STAFF, ALL
+  targetClassId String?
+  isAnonymous Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  startDate   DateTime
+  endDate     DateTime
+  createdBy   String   // staff userId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  questions FeedbackQuestion[]
+  responses FeedbackResponse[]
+
+  @@index([branchId, isActive])
+}
+
+model FeedbackQuestion {
+  id          String   @id @default(cuid())
+  formId      String
+  questionNo  Int
+  question    String
+  type        String   // RATING, TEXT, MCQ, YES_NO
+  options     String?  // JSON array for MCQ options
+  isRequired  Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  form    FeedbackForm       @relation(fields: [formId], references: [id])
+  answers FeedbackAnswer[]
+
+  @@unique([formId, questionNo])
+}
+
+model FeedbackResponse {
+  id        String   @id @default(cuid())
+  formId    String
+  userId    String?  // null if anonymous
+  createdAt DateTime @default(now())
+
+  form    FeedbackForm     @relation(fields: [formId], references: [id])
+  answers FeedbackAnswer[]
+
+  @@index([formId])
+}
+
+model FeedbackAnswer {
+  id          String @id @default(cuid())
+  responseId  String
+  questionId  String
+  answer      String // text answer, rating number, or MCQ choice
+
+  response FeedbackResponse @relation(fields: [responseId], references: [id])
+  question FeedbackQuestion @relation(fields: [questionId], references: [id])
+
+  @@unique([responseId, questionId])
+}
+
+
+
+// ============================================
+// SECTION L: ONLINE QUIZ / QUESTION BANK
+// ============================================
+
+model QuestionBank {
+  id          String       @id @default(cuid())
+  branchId    String
+  subjectId   String
+  classId     String
+  chapter     String?
+  question    String
+  type        QuestionType
+  options     String?      // JSON array for MCQ/MULTI_SELECT
+  correctAnswer String     // answer or JSON for multi-select
+  explanation String?      // explanation of correct answer
+  difficulty  String       @default("MEDIUM") // EASY, MEDIUM, HARD
+  marks       Decimal      @default(1) @db.Decimal(4, 1)
+  tags        String?      // comma-separated tags
+  imageUrl    String?      // question image
+  createdBy   String       // staff userId
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  quizQuestions QuizQuestion[]
+
+  @@index([branchId, subjectId, classId])
+  @@index([branchId, subjectId, chapter])
+}
+
+model Quiz {
+  id             String     @id @default(cuid())
+  branchId       String
+  classId        String
+  sectionId      String?    // null = all sections
+  subjectId      String
+  title          String
+  description    String?
+  status         QuizStatus @default(DRAFT)
+  totalMarks     Decimal    @db.Decimal(5, 1)
+  passingMarks   Decimal?   @db.Decimal(5, 1)
+  durationMinutes Int
+  startDateTime  DateTime?
+  endDateTime    DateTime?
+  maxAttempts    Int        @default(1)
+  shuffleQuestions Boolean  @default(false)
+  showResults    Boolean    @default(true) // show result to student after
+  showAnswers    Boolean    @default(false) // show correct answers
+  createdBy      String     // staff userId
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([branchId, classId, subjectId])
+  @@index([branchId, status])
+}
+
+model QuizQuestion {
+  id             String  @id @default(cuid())
+  quizId         String
+  questionBankId String
+  questionNo     Int
+  marks          Decimal @db.Decimal(4, 1)
+
+  quiz     Quiz         @relation(fields: [quizId], references: [id])
+  question QuestionBank @relation(fields: [questionBankId], references: [id])
+
+  @@unique([quizId, questionNo])
+  @@unique([quizId, questionBankId])
+}
+
+model QuizAttempt {
+  id           String   @id @default(cuid())
+  quizId       String
+  studentId    String
+  attemptNo    Int      @default(1)
+  startedAt    DateTime @default(now())
+  submittedAt  DateTime?
+  totalMarks   Decimal? @db.Decimal(5, 1)
+  obtainedMarks Decimal? @db.Decimal(5, 1)
+  percentage   Decimal? @db.Decimal(5, 2)
+  isPassed     Boolean?
+  status       String   @default("IN_PROGRESS") // IN_PROGRESS, SUBMITTED, GRADED
+
+  quiz    Quiz         @relation(fields: [quizId], references: [id])
+  answers QuizAnswer[]
+
+  @@unique([quizId, studentId, attemptNo])
+  @@index([studentId])
+}
+
+model QuizAnswer {
+  id           String  @id @default(cuid())
+  attemptId    String
+  questionBankId String
+  answer       String  // student's answer
+  isCorrect    Boolean?
+  marksAwarded Decimal? @db.Decimal(4, 1)
+  feedback     String?  // teacher feedback for subjective
+
+  attempt QuizAttempt @relation(fields: [attemptId], references: [id])
+
+  @@unique([attemptId, questionBankId])
+}
+
+
+
+// ============================================
+// SECTION M: PASSWORD RESET & SECURITY
+// ============================================
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+
+// ============================================
+// SECTION N: SYSTEM SETTINGS (Key-Value Store)
+// ============================================
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  branchId  String?  // null = global/org-level
+  key       String
+  value     String
+  type      String   @default("STRING") // STRING, NUMBER, BOOLEAN, JSON
+  category  String   // general, academic, fees, communication, etc.
+  label     String?  // human-readable label
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, key])
+  @@index([category])
+}
+
+
+// ============================================
+// SECTION O: SUBJECT GROUPS / STREAMS
+// ============================================
+
+model SubjectGroup {
+  id        String   @id @default(cuid())
+  branchId  String
+  name      String   // "Science", "Commerce", "Arts", "General"
+  classId   String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subjects SubjectGroupMapping[]
+
+  @@unique([branchId, classId, name])
+}
+
+model SubjectGroupMapping {
+  id             String @id @default(cuid())
+  subjectGroupId String
+  subjectId      String
+
+  subjectGroup SubjectGroup @relation(fields: [subjectGroupId], references: [id])
+
+  @@unique([subjectGroupId, subjectId])
+}
+
+
+// ============================================
+// SECTION P: LEAVE BALANCE TRACKING
+// ============================================
+
+model LeaveBalance {
+  id           String @id @default(cuid())
+  staffId      String
+  leaveTypeId  String
+  academicYear String // "2025-26"
+  entitled     Int    // annual entitlement
+  taken        Int    @default(0)
+  carriedOver  Int    @default(0) // from previous year
+  adjusted     Int    @default(0) // manual adjustments
+  remaining    Int    // entitled + carriedOver + adjusted - taken
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([staffId, leaveTypeId, academicYear])
+  @@index([staffId, academicYear])
+}
+
+
+// ============================================
+// SECTION Q: LIBRARY RESERVATION
+// ============================================
+
+model LibraryReservation {
+  id          String   @id @default(cuid())
+  bookId      String
+  userId      String   // student or staff
+  reservedAt  DateTime @default(now())
+  expiresAt   DateTime // auto-cancel if not picked up
+  status      String   @default("ACTIVE") // ACTIVE, FULFILLED, EXPIRED, CANCELLED
+  notifiedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([bookId, status])
+  @@index([userId])
+}
+
+
+// ============================================
+// SECTION R: ADDITIONAL RELATION FIELDS
+// (Add to existing models - shown here for reference)
+// ============================================
+
+// --- Add to Student model: ---
+// healthRecord   StudentHealth?
+// disciplineIncidents DisciplineIncident[]
+// quizAttempts   QuizAttempt[]
+// scholarshipApps ScholarshipApplication[]
+
+// --- Add to User model: ---
+// failedLoginAttempts Int @default(0)
+// lockedUntil        DateTime?
+// passwordResetTokens PasswordResetToken[]
+
+// --- Add to Organization model: ---
+// timezone           String? @default("Asia/Kolkata")
+// currency           String? @default("INR")
+// locale             String? @default("en-IN")
+// financialYearStart Int?    @default(4) // April
+
+// --- Add to Branch model: ---
+// principalId        String?
+// affiliation        String? // CBSE, ICSE, State Board
+// affiliationNo      String?
+// events             Event[]
+// visitors           Visitor[]
+// alumni             Alumni[]
+// scholarships       Scholarship[]
+// grievances         Grievance[]
+// facilityBookings   FacilityBooking[]
+// feedbackForms      FeedbackForm[]
+// syllabi            Syllabus[]
+// studyMaterials     StudyMaterial[]
+// quizzes            Quiz[]
+// questionBanks      QuestionBank[]
+// systemSettings     SystemSetting[]
+// subjectGroups      SubjectGroup[]
+
+// --- Add to Notification model: ---
+// readAt             DateTime?

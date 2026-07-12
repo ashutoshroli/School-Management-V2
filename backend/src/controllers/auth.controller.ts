@@ -6,6 +6,7 @@ import { config } from "../config";
 import { generateToken } from "../utils/jwt";
 import { sendSuccess, sendError } from "../utils/response";
 import { AuthRequest, JwtPayload } from "../types";
+import { initiatePasswordReset, resetPassword } from "../services/passwordReset.service";
 
 /**
  * Login with email + password (Admin/Teacher/Accountant/Staff)
@@ -296,5 +297,44 @@ export const changePassword = async (req: AuthRequest, res: Response): Promise<v
     sendSuccess(res, null, "Password changed successfully");
   } catch (error) {
     sendError(res, "Failed to change password", 500);
+  }
+};
+
+
+// ===== PASSWORD RESET (Public, no auth) =====
+
+/**
+ * POST /auth/forgot-password
+ * Sends a password reset email. Always returns success (never reveals
+ * whether the email exists to prevent user enumeration attacks).
+ */
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+    await initiatePasswordReset(email);
+    // Always return success to prevent email enumeration
+    sendSuccess(res, null, "If that email exists in our system, a reset link has been sent.");
+  } catch (error) {
+    sendError(res, "Failed to process password reset request", 500);
+  }
+};
+
+/**
+ * POST /auth/reset-password
+ * Validates the token and sets the new password.
+ */
+export const resetPasswordHandler = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, newPassword } = req.body;
+    const result = await resetPassword(token, newPassword);
+
+    if (!result.success) {
+      sendError(res, result.message, 400);
+      return;
+    }
+
+    sendSuccess(res, null, result.message);
+  } catch (error) {
+    sendError(res, "Failed to reset password", 500);
   }
 };

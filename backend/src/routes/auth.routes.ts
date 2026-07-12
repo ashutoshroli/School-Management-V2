@@ -1,11 +1,11 @@
 import { Router, Request, Response, NextFunction } from "express";
 import passport from "passport";
-import { login, googleCallback, getProfile, changePassword, switchBranch } from "../controllers/auth.controller";
+import { login, googleCallback, getProfile, changePassword, switchBranch, forgotPassword, resetPasswordHandler } from "../controllers/auth.controller";
 import { uploadOwnAvatar } from "../controllers/upload.controller";
 import { authenticate } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { uploadAvatar, handleUploadErrors } from "../middleware/upload";
-import { loginSchema, changePasswordSchema, switchBranchSchema } from "../validators/auth.validator";
+import { loginSchema, changePasswordSchema, switchBranchSchema, forgotPasswordSchema, resetPasswordSchema } from "../validators/auth.validator";
 import { isGoogleOAuthConfigured } from "../config/passport";
 import { sendError } from "../utils/response";
 
@@ -46,6 +46,10 @@ const router = Router();
  */
 // Credentials login (admin/teacher/accountant/staff)
 router.post("/login", validate(loginSchema), login);
+
+// Password reset (public, no auth required)
+router.post("/forgot-password", validate(forgotPasswordSchema), forgotPassword);
+router.post("/reset-password", validate(resetPasswordSchema), resetPasswordHandler);
 
 /**
  * Returns a clear 503 instead of letting passport.authenticate("google")
