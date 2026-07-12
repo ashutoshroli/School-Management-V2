@@ -7,6 +7,8 @@ jest.mock("../../config/database", () => ({
     mark: { upsert: jest.fn(), groupBy: jest.fn() },
     exam: { findUnique: jest.fn() },
     subject: { findMany: jest.fn() },
+    examSchedule: { findUnique: jest.fn() },
+    examAttendance: { findMany: jest.fn() },
   },
 }));
 
@@ -39,6 +41,10 @@ describe("exam.controller - enterMarks grade lookup", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (prisma.mark.upsert as jest.Mock).mockResolvedValue({});
+    // No per-subject exam schedule exists for these older/basic tests -
+    // the exam-attendance cross-check is a no-op (schedule: null) and
+    // never blocks marks entry.
+    (prisma.examSchedule.findUnique as jest.Mock).mockResolvedValue(null);
   });
 
   it("falls back to the hardcoded scale when no grade bands are configured", async () => {
@@ -98,6 +104,77 @@ describe("exam.controller - enterMarks grade lookup", () => {
 
     expect(prisma.gradeSystem.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.mark.upsert).toHaveBeenCalledTimes(2);
+  });
+});
+
+// New Features Phase 3: enterMarks cross-checks against ExamAttendance
+// for this subject's sitting (when one exists) and returns a
+// non-blocking `warnings` list - never blocks marks entry, just
+// surfaces a real edge case (e.g. supplementary exam for a student who
+// was marked absent for the exam).
+describe("exam.controller - enterMarks exam-attendance cross-check", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.mark.upsert as jest.Mock).mockResolvedValue({});
+    (prisma.gradeSystem.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("returns no warnings when no exam schedule exists for this subject", async () => {
+    (prisma.examSchedule.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({
+      body: { examId: "exam-1", subjectId: "sub-1", marks: [{ studentId: "stu-1", maxMarks: 100, obtainedMarks: 90 }] },
+    });
+    const res = makeMockRes();
+
+    await enterMarks(req, res);
+
+    expect(prisma.examAttendance.findMany).not.toHaveBeenCalled();
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.warnings).toEqual([]);
+  });
+
+  it("returns no warnings when the student was marked PRESENT for the exam", async () => {
+    (prisma.examSchedule.findUnique as jest.Mock).mockResolvedValue({ id: "sch-1" });
+    (prisma.examAttendance.findMany as jest.Mock).mockResolvedValue([{ studentId: "stu-1", status: "PRESENT" }]);
+    const req = makeReq({
+      body: { examId: "exam-1", subjectId: "sub-1", marks: [{ studentId: "stu-1", maxMarks: 100, obtainedMarks: 90 }] },
+    });
+    const res = makeMockRes();
+
+    await enterMarks(req, res);
+
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.warnings).toEqual([]);
+  });
+
+  it("warns (but still saves) when marks are entered for a student marked ABSENT for the exam", async () => {
+    (prisma.examSchedule.findUnique as jest.Mock).mockResolvedValue({ id: "sch-1" });
+    (prisma.examAttendance.findMany as jest.Mock).mockResolvedValue([{ studentId: "stu-1", status: "ABSENT" }]);
+    const req = makeReq({
+      body: { examId: "exam-1", subjectId: "sub-1", marks: [{ studentId: "stu-1", maxMarks: 100, obtainedMarks: 90 }] },
+    });
+    const res = makeMockRes();
+
+    await enterMarks(req, res);
+
+    expect(prisma.mark.upsert).toHaveBeenCalledTimes(1);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.saved).toBe(1);
+    expect(payload.warnings).toEqual([{ studentId: "stu-1", examAttendanceStatus: "ABSENT" }]);
+  });
+
+  it("warns when marks are entered for a student marked UNFAIR_MEANS for the exam", async () => {
+    (prisma.examSchedule.findUnique as jest.Mock).mockResolvedValue({ id: "sch-1" });
+    (prisma.examAttendance.findMany as jest.Mock).mockResolvedValue([{ studentId: "stu-1", status: "UNFAIR_MEANS" }]);
+    const req = makeReq({
+      body: { examId: "exam-1", subjectId: "sub-1", marks: [{ studentId: "stu-1", maxMarks: 100, obtainedMarks: 90 }] },
+    });
+    const res = makeMockRes();
+
+    await enterMarks(req, res);
+
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.warnings).toEqual([{ studentId: "stu-1", examAttendanceStatus: "UNFAIR_MEANS" }]);
   });
 });
 

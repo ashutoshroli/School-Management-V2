@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CalendarClock, Save, Plus, Trash2, Upload, FileText, Loader2, Armchair, X, Users } from "lucide-react";
+import { ArrowLeft, CalendarClock, Save, Plus, Trash2, Upload, FileText, Loader2, Armchair, X, Users, ClipboardCheck } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import ErrorBanner from "@/components/ui/ErrorBanner";
@@ -68,6 +68,15 @@ export default function ExamSchedulePage() {
   const [viewingSeatPlanFor, setViewingSeatPlanFor] = useState<string | null>(null);
   const [seatPlanView, setSeatPlanView] = useState<any>(null);
   const [loadingSeatPlanView, setLoadingSeatPlanView] = useState(false);
+
+  // Exam Attendance - per scheduled subject sitting, room-wise if a
+  // seat plan exists, otherwise the whole class roster unroomed.
+  const [markingAttendanceFor, setMarkingAttendanceFor] = useState<string | null>(null);
+  const [attendanceRooms, setAttendanceRooms] = useState<any[]>([]);
+  const [attendanceEdits, setAttendanceEdits] = useState<Record<string, string>>({}); // studentId -> status
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
+  const [savingAttendance, setSavingAttendance] = useState(false);
+  const [attendanceMessage, setAttendanceMessage] = useState("");
 
   const flattenRooms = (buildings: any[]) =>
     buildings.flatMap((b: any) =>
@@ -290,6 +299,67 @@ export default function ExamSchedulePage() {
     }
   };
 
+  const openAttendancePanel = async (examScheduleId: string) => {
+    setMarkingAttendanceFor(examScheduleId);
+    setAttendanceMessage("");
+    setLoadingAttendance(true);
+    try {
+      const res = await api.get(`/academics/exams/schedule/${examScheduleId}/attendance`);
+      const roomsData = res.data.data?.rooms || [];
+      setAttendanceRooms(roomsData);
+      const edits: Record<string, string> = {};
+      for (const room of roomsData) {
+        for (const s of room.students) {
+          if (s.status) edits[s.studentId] = s.status;
+        }
+      }
+      setAttendanceEdits(edits);
+    } catch (err: any) {
+      setAttendanceRooms([]);
+      setAttendanceMessage(err.response?.data?.message || "Failed to load exam attendance");
+    } finally {
+      setLoadingAttendance(false);
+    }
+  };
+
+  const setAttendanceStatus = (studentId: string, status: string) => {
+    setAttendanceEdits((prev) => ({ ...prev, [studentId]: status }));
+  };
+
+  const markAllPresent = (roomStudents: any[]) => {
+    setAttendanceEdits((prev) => {
+      const next = { ...prev };
+      for (const s of roomStudents) next[s.studentId] = "PRESENT";
+      return next;
+    });
+  };
+
+  const handleSaveAttendance = async (roomId: string | null) => {
+    if (!markingAttendanceFor) return;
+    const room = attendanceRooms.find((r) => r.roomId === roomId);
+    if (!room) return;
+    const records = room.students
+      .filter((s: any) => attendanceEdits[s.studentId])
+      .map((s: any) => ({ studentId: s.studentId, status: attendanceEdits[s.studentId] }));
+    if (records.length === 0) {
+      setAttendanceMessage("Mark at least one student's status before saving");
+      return;
+    }
+    setSavingAttendance(true);
+    setAttendanceMessage("");
+    try {
+      await api.post(`/academics/exams/schedule/${markingAttendanceFor}/attendance`, {
+        ...(roomId && { roomId }),
+        records,
+      });
+      setAttendanceMessage("Attendance saved");
+    } catch (err: any) {
+      setAttendanceMessage(err.response?.data?.message || "Failed to save attendance");
+    } finally {
+      setSavingAttendance(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center gap-4 mb-6">
@@ -395,6 +465,9 @@ export default function ExamSchedulePage() {
                         <button onClick={() => viewSeatPlan(r.id!)} className="btn-secondary flex items-center gap-2 text-xs">
                           <Users className="h-3.5 w-3.5" /> View Seating
                         </button>
+                        <button onClick={() => openAttendancePanel(r.id!)} className="btn-secondary flex items-center gap-2 text-xs">
+                          <ClipboardCheck className="h-3.5 w-3.5" /> Exam Attendance
+                        </button>
                         <label className="btn-secondary flex items-center gap-2 text-xs cursor-pointer disabled:opacity-60">
                           {uploadingFor === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                           Upload Paper
@@ -468,6 +541,69 @@ export default function ExamSchedulePage() {
                           </div>
                         ) : (
                           <p className="text-xs text-gray-400">No seat plan generated yet for this subject.</p>
+                        )}
+                      </div>
+                    )}
+
+                    {markingAttendanceFor === r.id && (
+                      <div className="mt-3 pt-3 border-t">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold flex items-center gap-2"><ClipboardCheck className="h-4 w-4 text-emerald-600" /> Exam Attendance</h4>
+                          <button onClick={() => setMarkingAttendanceFor(null)} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+                        </div>
+                        {attendanceMessage && (
+                          <div className="mb-2 text-xs rounded px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200">{attendanceMessage}</div>
+                        )}
+                        {loadingAttendance ? (
+                          <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-primary-600" /></div>
+                        ) : attendanceRooms.length === 0 ? (
+                          <p className="text-xs text-gray-400">No students found for this exam's class.</p>
+                        ) : (
+                          <div className="space-y-3">
+                            {attendanceRooms.map((room: any) => (
+                              <div key={room.roomId || "unroomed"} className="border rounded-lg p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs font-medium">
+                                    {room.roomNo ? `Room ${room.roomNo}${room.roomName ? ` (${room.roomName})` : ""}` : "All Students"} - {room.students.length} student(s)
+                                  </span>
+                                  <button onClick={() => markAllPresent(room.students)} className="text-xs text-primary-600 hover:underline">Mark all Present</button>
+                                </div>
+                                <table className="w-full text-xs">
+                                  <thead><tr className="text-gray-500"><th className="text-left py-1">Name</th><th className="text-left py-1">Roll No</th><th className="text-left py-1">Status</th></tr></thead>
+                                  <tbody>
+                                    {room.students.map((s: any) => (
+                                      <tr key={s.studentId} className="border-t">
+                                        <td className="py-1">{s.studentName}</td>
+                                        <td className="py-1">{s.rollNo || "-"}</td>
+                                        <td className="py-1">
+                                          <select
+                                            className="input-field text-xs py-0.5"
+                                            value={attendanceEdits[s.studentId] || ""}
+                                            onChange={(e) => setAttendanceStatus(s.studentId, e.target.value)}
+                                          >
+                                            <option value="">-</option>
+                                            <option value="PRESENT">Present</option>
+                                            <option value="ABSENT">Absent</option>
+                                            <option value="LATE">Late</option>
+                                            <option value="UNFAIR_MEANS">Unfair Means</option>
+                                          </select>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                                <div className="flex justify-end mt-2">
+                                  <button
+                                    onClick={() => handleSaveAttendance(room.roomId)}
+                                    disabled={savingAttendance}
+                                    className="btn-primary text-xs flex items-center gap-1 disabled:opacity-60"
+                                  >
+                                    {savingAttendance && <Loader2 className="h-3 w-3 animate-spin" />} Save
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
                     )}

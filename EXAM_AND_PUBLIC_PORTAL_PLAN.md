@@ -165,23 +165,61 @@ regeneration behavior, and the seat-slip PDF's access control.
 
 ---
 
-## Phase 3: Exam Attendance
+## Phase 3: Exam Attendance ✅ COMPLETED
 
-- New `ExamAttendance` model: `examScheduleId`, `studentId`, `status`
-  (PRESENT/ABSENT/UNFAIR_MEANS/LATE), `markedBy`, `remarks` - deliberately
-  separate from daily `StudentAttendance` (a student can be present for
-  daily attendance but absent for one specific exam paper, or vice versa).
-- `markExamAttendance` (bulk, room-wise - the invigilator marks everyone
-  in their allocated room in one call, pre-filled from `ExamSeatAllocation`),
-  `getExamAttendance` (by examScheduleId, room-wise), `getExamAttendanceSummary`
-  (present/absent/unfair-means counts for the whole exam across all subjects).
-- `enterMarks` gets an optional cross-check: warns (not blocks - a student
-  marked absent for the exam attendance but somehow later given marks is a
-  real edge case, e.g. supplementary) if marks are entered for a student
-  marked ABSENT in `ExamAttendance` for that subject's sitting.
+**Status:** ✅ **DONE**
 
-**Tests:** bulk marking, room-scoped invigilator access, the marks-entry
-cross-check warning.
+### What was actually done:
+(`ExamAttendance` model + `ExamAttendanceStatus` enum were already
+declared in Phase 1's migration - this phase adds the actual marking/
+viewing/summary endpoints and the marks-entry cross-check.)
+
+- `markExamAttendance` (`POST /academics/exams/schedule/:examScheduleId/attendance`,
+  teacher+admin) - bulk upsert, room-wise. When a `roomId` is supplied,
+  every `studentId` in the batch MUST actually be seated in that room
+  for this schedule entry (via `ExamSeatAllocation`) - stops an
+  invigilator for Room A from marking (accidentally or otherwise)
+  students seated in Room B. When `roomId` is omitted, any student
+  enrolled in the exam's class may be marked (covers a class with no
+  seat plan generated yet).
+- `getExamAttendance` (`GET .../attendance`) - room-wise roster,
+  pre-filled from `ExamSeatAllocation` if a seat plan exists
+  (`source: "SEAT_PLAN"`) so every seated student shows up even before
+  being marked; falls back to the whole active class roster, unroomed,
+  when no seat plan has been generated yet (`source: "CLASS_ROSTER"`).
+- `getExamAttendanceSummary` (`GET /academics/exams/:examId/attendance-summary`) -
+  present/absent/unfair-means/late counts per subject sitting across
+  the WHOLE exam, so attendance can be reviewed exam-wide rather than
+  one subject at a time.
+- `enterMarks` (exam.controller.ts) now cross-checks this subject's
+  `ExamSchedule`/`ExamAttendance` (if any exist - never blocks marks
+  entry for an exam that has no schedule/attendance data at all) and
+  returns a non-blocking `warnings` array for any student marked
+  ABSENT or UNFAIR_MEANS for the exam but still given marks - a real
+  edge case (e.g. a supplementary/makeup exam) surfaced to whoever
+  entered the marks without silently hiding it OR blocking a
+  legitimate override.
+
+**Frontend:** the exam schedule page gained an "Exam Attendance" button
+per scheduled subject - an inline room-wise (or whole-roster) marking
+panel with a per-student status dropdown and a "Mark all Present"
+shortcut. The Exams list's existing "View Details" modal gained an
+Exam Attendance-by-subject summary table (present/absent/late/unfair-
+means counts) alongside its existing marks-recorded summary.
+
+**Tests:** 15 new tests in `examAttendance.controller.test.ts`
+(room-scoped invigilator access enforcement, class-membership guard
+when unroomed, SEAT_PLAN vs CLASS_ROSTER fallback, attendance
+pre-fill, summary aggregation) + 4 new tests in
+`exam.controller.test.ts` for the `enterMarks` cross-check (no-schedule
+no-op, PRESENT = no warning, ABSENT/UNFAIR_MEANS = warning without
+blocking the save).
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**72 suites / 878 tests**, up
+  from 859) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, `exams` page
+  grew 3.89kB->4.09kB, `exams/[id]/schedule` grew 8.38kB->9.21kB
 
 ---
 

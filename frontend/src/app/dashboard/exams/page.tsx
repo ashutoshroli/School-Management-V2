@@ -22,13 +22,19 @@ export default function ExamsPage() {
   // endpoint for its subject-wise marks-recorded summary.
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [attendanceSummary, setAttendanceSummary] = useState<any[]>([]);
 
   const openDetail = async (id: string) => {
     setDetail({});
+    setAttendanceSummary([]);
     setDetailLoading(true);
     try {
-      const res = await api.get(`/academics/exams/${id}`);
-      setDetail(res.data.data);
+      const [detailRes, attendanceRes] = await Promise.all([
+        api.get(`/academics/exams/${id}`),
+        api.get(`/academics/exams/${id}/attendance-summary`).catch(() => ({ data: { data: [] } })),
+      ]);
+      setDetail(detailRes.data.data);
+      setAttendanceSummary(attendanceRes.data.data || []);
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to load exam details");
       setDetail(null);
@@ -213,6 +219,29 @@ export default function ExamsPage() {
                 </div>
               ) : (
                 <p className="text-sm text-gray-400">No marks recorded yet for any subject.</p>
+              )}
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Exam Attendance by Subject</h4>
+              {attendanceSummary.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-gray-500"><th className="text-left py-1">Subject</th><th className="text-center py-1">Present</th><th className="text-center py-1">Absent</th><th className="text-center py-1">Late</th><th className="text-center py-1">Unfair Means</th></tr></thead>
+                    <tbody>
+                      {attendanceSummary.map((s: any) => (
+                        <tr key={s.examScheduleId} className="border-t">
+                          <td className="py-1">{s.subject}</td>
+                          <td className="py-1 text-center">{s.PRESENT}</td>
+                          <td className="py-1 text-center">{s.ABSENT}</td>
+                          <td className="py-1 text-center">{s.LATE}</td>
+                          <td className="py-1 text-center">{s.UNFAIR_MEANS}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">No exam attendance recorded yet for any subject.</p>
               )}
             </div>
             <div className="flex justify-end pt-2 border-t">
