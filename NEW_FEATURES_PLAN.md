@@ -92,19 +92,38 @@ for the `roomId` create/update behavior (including the cross-branch guard).
 
 ---
 
-## Phase 2: Class-wise Subject Assignment (formalized) + Classroom Linking
+## Phase 2: Class-wise Subject Assignment (formalized) + Classroom Linking ✅ COMPLETED
 
-- Add `Section.roomId` (optional FK to `SchoolRoom`) - "assign this
-  section to Room 204" - occupied/vacant seat count then derives from
-  live student headcount vs. that room's `capacity`.
-- New `getClassSubjectMatrix(classId)` endpoint: one call returning every
-  subject for a class + which teacher(s) teach it in each section -
-  today this data exists but only via separate `getClassSubjects`/
-  `getSubjectTeachers` calls with no combined "matrix" view.
-- **Frontend:** new "Class-wise Assignment" tab/page - a grid of
-  Class × Section × Subject × Teacher, with inline bulk-assign (reuses
-  the already-built `bulkAssignSubjectToClass`/`assignSubjectTeacher`).
-  Also add a Room picker to the existing Section create/edit form.
+**Status:** ✅ **DONE**
+(Note: `Section.roomId` + classroom picker were already delivered as part
+of Phase 1 since the room FK needed to exist before it could be
+displayed/edited anywhere - this phase focused on the combined matrix view.)
+
+### What was actually done:
+- New `getClassSubjectMatrix(classId)` endpoint (`GET /classes/:classId/subject-matrix`):
+  one call returning the class's sections (with classTeacher/room/student
+  count) + every subject assigned to it + which teacher(s) teach each
+  subject, distinguishing a class-specific assignment from a subject's
+  school-wide default teacher (`classId: null` on `SubjectTeacher`) -
+  previously this required manually cross-referencing `getClassSubjects`
+  and `getSubjectTeachers` calls.
+- **Frontend:** new "Class-wise View" tab on `/dashboard/teacher-assign`
+  (alongside the existing Class Teacher / Subject Teacher tabs) - shows
+  every section's teacher/room/headcount, a subject→teacher(s) table
+  (class-specific teachers visually distinguished from school-wide
+  defaults), one-click "add a subject to this class" for any unassigned
+  subject, and a quick-assign form for wiring up a teacher.
+
+**Tests:** 4 new tests in `class.controller.test.ts` for
+`getClassSubjectMatrix` (404, cross-branch security, the class-specific-
+vs-default teacher distinction, and the "no subjects yet" short-circuit
+that skips the extra query).
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**66 suites / 751 tests**, up
+  from 747) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, `teacher-assign`
+  page grew 3.69kB->4.83kB
 
 ---
 

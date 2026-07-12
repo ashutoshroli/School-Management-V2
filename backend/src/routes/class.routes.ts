@@ -4,7 +4,7 @@ import {
   createClass, getClasses, updateClass, deleteClass,
   createSection, getSections, updateSection, deleteSection,
   createSubject, getSubjects, getSubjectById, updateSubject, deleteSubject,
-  assignSubjectToClass, bulkAssignSubjectToClass, getClassSubjects, removeSubjectFromClass,
+  assignSubjectToClass, bulkAssignSubjectToClass, getClassSubjects, getClassSubjectMatrix, removeSubjectFromClass,
   assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher,
 } from "../controllers/class.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
@@ -39,6 +39,7 @@ router.delete("/subjects/:id", authorize(...ADMIN), deleteSubject);
 router.post("/subjects/assign", authorize(...ADMIN), assignSubjectToClass);
 router.post("/subjects/assign/bulk", authorize(...ADMIN), validate(bulkAssignSubjectToClassSchema), bulkAssignSubjectToClass);
 router.get("/:classId/subjects", getClassSubjects);
+router.get("/:classId/subject-matrix", getClassSubjectMatrix);
 router.delete("/subjects/mapping/:id", authorize(...ADMIN), removeSubjectFromClass);
 
 // Subject-Teacher assignment ("who teaches Subject X to Class Y") -

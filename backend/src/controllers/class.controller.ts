@@ -597,6 +597,66 @@ export const bulkAssignSubjectToClass = async (req: AuthRequest, res: Response):
   }
 };
 
+/**
+ * Combined "Class-wise Assignment" view: every subject assigned to a
+ * class (ClassSubject), each with the teacher(s) currently assigned to
+ * teach it for that class (SubjectTeacher) - previously only
+ * obtainable via two separate calls (getClassSubjects +
+ * getSubjectTeachers) that the caller had to join client-side. Also
+ * includes the class's sections (with their classTeacher/room) for a
+ * full one-screen picture, since "who teaches what, in which room, in
+ * which section" is really one combined admin workflow.
+ */
+export const getClassSubjectMatrix = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { classId } = req.params;
+
+    const cls = await prisma.class.findUnique({
+      where: { id: classId },
+      include: {
+        sections: {
+          orderBy: { name: "asc" },
+          include: {
+            classTeacher: { select: { id: true, user: { select: { name: true } } } },
+            room: { select: { id: true, roomNo: true, name: true } },
+            _count: { select: { students: true } },
+          },
+        },
+      },
+    });
+    if (!cls) { sendError(res, "Class not found", 404); return; }
+    if (!canAccessBranch(req, cls.branchId)) { sendError(res, "Class not found", 404); return; }
+
+    const classSubjects = await prisma.classSubject.findMany({ where: { classId }, include: { subject: true } });
+    const subjectIds = classSubjects.map((cs) => cs.subjectId);
+
+    // Includes classId: null rows too (a subject's school-wide default
+    // teacher, if this class hasn't been given its own override) - the
+    // frontend groups these separately per subject via `classSpecific`.
+    const teacherAssignments = subjectIds.length > 0
+      ? await prisma.subjectTeacher.findMany({
+          where: { subjectId: { in: subjectIds }, OR: [{ classId }, { classId: null }] },
+          include: { staff: { select: { id: true, user: { select: { name: true } } } } },
+        })
+      : [];
+
+    const matrix = classSubjects.map((cs) => ({
+      subject: cs.subject,
+      teachers: teacherAssignments
+        .filter((t) => t.subjectId === cs.subjectId)
+        .map((t) => ({ assignmentId: t.id, staffId: t.staffId, staffName: t.staff.user.name, classSpecific: t.classId !== null })),
+    }));
+
+    sendSuccess(
+      res,
+      { class: { id: cls.id, name: cls.name }, sections: cls.sections, subjects: matrix },
+      "Class subject matrix fetched"
+    );
+  } catch (error) {
+    sendError(res, "Failed to fetch class subject matrix", 500, (error as Error).message);
+  }
+};
+
 export const getClassSubjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { classId } = req.params;

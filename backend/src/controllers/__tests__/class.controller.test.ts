@@ -14,7 +14,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { createClass, createSection, updateSection, createSubject, getSubjectById, bulkAssignSubjectToClass, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
+import { createClass, createSection, updateSection, createSubject, getSubjectById, getClassSubjectMatrix, bulkAssignSubjectToClass, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -210,6 +210,76 @@ describe("class.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect((prisma.subject.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+    });
+  });
+
+  // New Features Phase 2: combined "who teaches what, in which
+  // section/room" view - previously only obtainable via two separate
+  // calls (getClassSubjects + getSubjectTeachers) joined client-side.
+  describe("getClassSubjectMatrix", () => {
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it("returns 404 when the class does not exist", async () => {
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ params: { classId: "class-1" } });
+      const res = makeMockRes();
+
+      await getClassSubjectMatrix(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("SECURITY: rejects a class belonging to a DIFFERENT branch", async () => {
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue({ id: "class-1", branchId: "branch-OTHER", sections: [] });
+      const req = makeReq({ params: { classId: "class-1" } });
+      const res = makeMockRes();
+
+      await getClassSubjectMatrix(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("returns the sections and a subject->teacher matrix, distinguishing class-specific vs school-wide default teachers", async () => {
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue({
+        id: "class-1", name: "Class 5", branchId: "branch-1",
+        sections: [{ id: "sec-1", name: "A", classTeacher: null, room: null, _count: { students: 30 } }],
+      });
+      (prisma.classSubject.findMany as jest.Mock).mockResolvedValue([
+        { subjectId: "sub-1", subject: { id: "sub-1", name: "Maths" } },
+      ]);
+      (prisma.subjectTeacher.findMany as jest.Mock).mockResolvedValue([
+        { id: "st-1", staffId: "staff-1", subjectId: "sub-1", classId: "class-1", staff: { id: "staff-1", user: { name: "Mrs. Sharma" } } },
+        { id: "st-2", staffId: "staff-2", subjectId: "sub-1", classId: null, staff: { id: "staff-2", user: { name: "Mr. Verma" } } },
+      ]);
+      const req = makeReq({ params: { classId: "class-1" } });
+      const res = makeMockRes();
+
+      await getClassSubjectMatrix(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+      expect(payload.sections).toHaveLength(1);
+      expect(payload.subjects).toHaveLength(1);
+      expect(payload.subjects[0].teachers).toEqual([
+        { assignmentId: "st-1", staffId: "staff-1", staffName: "Mrs. Sharma", classSpecific: true },
+        { assignmentId: "st-2", staffId: "staff-2", staffName: "Mr. Verma", classSpecific: false },
+      ]);
+    });
+
+    it("returns an empty subjects array (no extra query) when the class has no subjects assigned yet", async () => {
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue({ id: "class-1", branchId: "branch-1", sections: [] });
+      (prisma.classSubject.findMany as jest.Mock).mockResolvedValue([]);
+      const req = makeReq({ params: { classId: "class-1" } });
+      const res = makeMockRes();
+
+      await getClassSubjectMatrix(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.subjectTeacher.findMany).not.toHaveBeenCalled();
+      const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+      expect(payload.subjects).toEqual([]);
     });
   });
 
