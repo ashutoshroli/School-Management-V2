@@ -6,7 +6,7 @@ import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../u
 
 export const createNotice = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { title, body, type, targetClass, attachmentUrl, isPinned, expiryDate } = req.body;
+    const { title, body, type, targetClass, attachmentUrl, isPinned, isPublic, expiryDate } = req.body;
     // BUG FIX: the "Create Notice" form has no branch-picker, so
     // req.body.branchId always arrived as "" - see
     // resolveEffectiveBranchId's doc comment.
@@ -15,7 +15,7 @@ export const createNotice = async (req: AuthRequest, res: Response): Promise<voi
     if (!branchId) { sendError(res, "Branch ID could not be resolved - please select a branch", 400); return; }
     if (!canAccessBranch(req, branchId)) { sendError(res, "Access denied: branch mismatch", 403); return; }
     const notice = await prisma.notice.create({
-      data: { branchId, title, body, type, targetClass, attachmentUrl, isPinned: isPinned || false, expiryDate: expiryDate ? new Date(expiryDate) : null, publishedBy: req.user!.userId },
+      data: { branchId, title, body, type, targetClass, attachmentUrl, isPinned: isPinned || false, isPublic: isPublic || false, expiryDate: expiryDate ? new Date(expiryDate) : null, publishedBy: req.user!.userId },
     });
 
     // Fan out an IN_APP notification to everyone the notice targets.
@@ -159,5 +159,22 @@ export const togglePin = async (req: AuthRequest, res: Response): Promise<void> 
     if (!canAccessBranch(req, notice.branchId)) { sendError(res, "Not found", 404); return; }
     const updated = await prisma.notice.update({ where: { id }, data: { isPinned: !notice.isPinned } });
     sendSuccess(res, updated, `Notice ${updated.isPinned ? "pinned" : "unpinned"}`);
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Toggle whether a notice appears on the public (no-auth) notice board
+ * at GET /public/notices - see Notice.isPublic's doc comment in
+ * schema.prisma. Defaults to false on every notice; an admin opts in
+ * per-notice via this toggle (same UX shape as togglePin above).
+ */
+export const togglePublicVisibility = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const notice = await prisma.notice.findUnique({ where: { id } });
+    if (!notice) { sendError(res, "Not found", 404); return; }
+    if (!canAccessBranch(req, notice.branchId)) { sendError(res, "Not found", 404); return; }
+    const updated = await prisma.notice.update({ where: { id }, data: { isPublic: !notice.isPublic } });
+    sendSuccess(res, updated, `Notice ${updated.isPublic ? "made public" : "made private"}`);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };

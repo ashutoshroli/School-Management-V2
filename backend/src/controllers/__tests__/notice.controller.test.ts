@@ -3,7 +3,7 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    notice: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
+    notice: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     staff: { findMany: jest.fn() },
     student: { findMany: jest.fn() },
     studentParent: { findMany: jest.fn() },
@@ -12,7 +12,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { createNotice, getNoticeById, getNotices } from "../notice.controller";
+import { createNotice, getNoticeById, getNotices, togglePublicVisibility } from "../notice.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -151,5 +151,45 @@ describe("notice.controller - getNotices (search + date-range filters)", () => {
     const whereArg = (prisma.notice.findMany as jest.Mock).mock.calls[0][0].where;
     expect(whereArg.OR).toBeUndefined();
     expect(whereArg.createdAt).toBeUndefined();
+  });
+});
+
+// New Features (Public Portal Phase 4): togglePublicVisibility opts a
+// notice into the public (no-auth) notice board.
+describe("notice.controller - togglePublicVisibility", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the notice does not exist", async () => {
+    (prisma.notice.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "notice-1" } });
+    const res = makeMockRes();
+
+    await togglePublicVisibility(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a notice belonging to a DIFFERENT branch", async () => {
+    (prisma.notice.findUnique as jest.Mock).mockResolvedValue({ id: "notice-1", branchId: "branch-OTHER", isPublic: false });
+    const req = makeReq({ params: { id: "notice-1" } });
+    const res = makeMockRes();
+
+    await togglePublicVisibility(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("toggles isPublic from false to true", async () => {
+    (prisma.notice.findUnique as jest.Mock).mockResolvedValue({ id: "notice-1", branchId: "branch-1", isPublic: false });
+    (prisma.notice.update as jest.Mock).mockResolvedValue({ id: "notice-1", isPublic: true });
+    const req = makeReq({ params: { id: "notice-1" } });
+    const res = makeMockRes();
+
+    await togglePublicVisibility(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.notice.update).toHaveBeenCalledWith({ where: { id: "notice-1" }, data: { isPublic: true } });
   });
 });

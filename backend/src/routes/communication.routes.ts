@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { createNotice, getNotices, getNoticeById, deleteNotice, togglePin } from "../controllers/notice.controller";
+import { createNotice, getNotices, getNoticeById, deleteNotice, togglePin, togglePublicVisibility } from "../controllers/notice.controller";
 import { sendMessage, getConversation, getInbox } from "../controllers/message.controller";
 import { createTemplate, getTemplates, generateCertificate, bulkGenerateCertificates, getGeneratedCertificates, verifyCertificate } from "../controllers/certificate.controller";
 import { getMyNotifications } from "../controllers/notification.controller";
@@ -33,6 +33,7 @@ router.get("/notices", getNotices);
 router.get("/notices/:id", getNoticeById);
 router.delete("/notices/:id", authorize(...ADMIN), deleteNotice);
 router.patch("/notices/:id/pin", authorize(...ADMIN), togglePin);
+router.patch("/notices/:id/public", authorize(...ADMIN), togglePublicVisibility);
 
 // === MESSAGES (Parent-Teacher) ===
 router.post("/messages", sendMessage);

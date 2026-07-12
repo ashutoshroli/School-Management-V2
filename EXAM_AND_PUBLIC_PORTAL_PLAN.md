@@ -223,46 +223,85 @@ blocking the save).
 
 ---
 
-## Phase 4: Public Landing Page + Result/Fee Status Portals
+## Phase 4: Public Landing Page + Result/Fee Status Portals ✅ COMPLETED
 
+**Status:** ✅ **DONE**
+
+### What was actually done:
 **Backend (public, rate-limited, following the `verifyCertificate`/
-`admission` pattern exactly):**
-- `GET /public/notices` - notices explicitly flagged public
-  (`Notice.isPublic Boolean @default(false)`, new field, admin opts in
-  per-notice) - a school announcement board visible to anyone, not just
-  logged-in users.
-- `JobVacancy` model (new): title, department, description, qualifications,
-  branchId, isActive, postedAt, closingDate. `GET /public/jobs` (public
-  list) + `POST /jobs/:id/apply` (public, applicant name/email/phone/resume
-  upload -> new `JobApplication` model) + staff-only CRUD/review, mirroring
-  `AdmissionInquiry`'s "public submit, staff reviews" shape exactly.
+`admission` pattern exactly - new `middleware/rateLimiter.ts`
+centralizes the limiter shape that admission.routes.ts previously
+declared inline, plus a stricter `publicLookupLimiter`):**
+- `Notice.isPublic Boolean @default(false)` (new field) - admin opts in
+  per-notice via `PATCH /communication/notices/:id/public`
+  (`togglePublicVisibility`). `GET /public/notices` returns only
+  `isPublic: true`, non-expired notices - a school announcement board
+  visible to anyone.
+- New `JobVacancy`/`JobApplication` models + `JobApplicationStatus` enum.
+  `GET /public/jobs` (public list, active+not-yet-closed only) +
+  `POST /public/jobs/:id/apply` (public submit) mirror
+  `AdmissionInquiry`'s "public submit, staff reviews" shape exactly;
+  staff-only CRUD/review lives under `/hr/jobs` (`createJobVacancy`/
+  `getJobVacancies`/`updateJobVacancy`/`deleteJobVacancy`/
+  `getJobApplications`/`updateJobApplicationStatus`). Vacancy delete is
+  blocked once any application exists (close it instead, same "block
+  delete, don't cascade real data" convention as everywhere else).
 - `POST /public/results/lookup` `{admissionNo, dateOfBirth}` - verifies
-  both match one active student, then returns ONLY their **published**
-  exam results (never unpublished ones) - same minimal-disclosure
-  principle as `verifyCertificate`.
-- `POST /public/fees/lookup` `{admissionNo, dateOfBirth}` - returns
-  outstanding dues summary (no full ledger) + a "Pay Now" hand-off into
-  the existing Razorpay payment flow (`config/razorpay.ts` already
-  configured) scoped to that one student - reusing the existing payment
-  creation logic, not rebuilding it.
-- Both lookups rate-limited harder than admission (5/hour/IP) since
-  DOB+admissionNo guessing is a real enumeration risk against real
-  students' academic/financial data - lockout messaging is generic
-  ("no matching record") either way, never confirming which field was wrong.
+  both match one ACTIVE student via a shared `findStudentByAdmissionAndDob`
+  helper (calendar-day DOB comparison, immune to time-of-day mismatches),
+  then returns ONLY **published** exam results, grouped by exam with a
+  computed percentage - never an unpublished exam's marks.
+- `POST /public/fees/lookup` `{admissionNo, dateOfBirth}` - returns an
+  outstanding-dues SUMMARY (category, pending amount, status - no full
+  ledger/payment history) using the exact same pending-amount formula as
+  `getStudentPendingFees`.
+- `POST /public/fees/pay` + `POST /public/fees/verify` - a public,
+  no-`req.user` counterpart to `createRazorpayOrder`/`verifyRazorpayPayment`
+  (payment.controller.ts): re-verifies admissionNo+dateOfBirth (never
+  trusts a bare `feeAssignmentId` from an anonymous caller), reuses
+  `getValidatedFeeAssignment`/`recordFeePayment` from
+  `feePayment.service.ts` so the public and authenticated payment flows
+  can never drift apart.
+- Every lookup/payment endpoint uses the new `publicLookupLimiter`
+  (5/hour/IP - stricter than admission's 10/hour since DOB+admissionNo
+  guessing is a real enumeration risk against academic/financial data);
+  jobs/notices use the more generous `publicSubmitLimiter` (10/hour/IP).
+  Failure messaging is always generic ("no matching record found"),
+  never confirming which of admissionNo/dateOfBirth was wrong.
 
 **Frontend:**
-- New public landing page at `/` (replacing the current bare redirect) -
-  hero, About/branches section, quick links: Notices, Admission Inquiry
-  (existing form, now linked from here), Careers/Jobs, Check Result, Pay
-  Fees, Login.
-- `/results` - admissionNo + DOB form -> published results table.
-- `/pay-fees` - admissionNo + DOB form -> dues summary + Razorpay checkout.
-- `/careers` - public job list + apply form.
-- `/notices` (public) - public notice board.
+- `/` rebuilt from a bare redirect into an actual public landing page
+  (still redirects an already-logged-in visitor straight to
+  `/dashboard`, unchanged) - hero + quick-link cards to Admission
+  Inquiry, Check Result, Pay Fees, Careers, Notices, and Login.
+- `/results` - admissionNo + DOB form → published results table
+  (per-exam subject breakdown + percentage).
+- `/pay-fees` - admissionNo + DOB form → dues summary with a "Pay Now"
+  button per outstanding fee, wired to a new `payPublicFeeWithRazorpay`
+  helper (`lib/razorpay.ts`) mirroring the existing authenticated
+  `payFeeWithRazorpay` but hitting the public endpoints.
+- `/careers` - public job list + an apply-modal form.
+- `/notices` - public notice board.
+- `/dashboard/careers` (new, admin-only, linked from the sidebar) -
+  post/close/delete vacancies, view + triage applications
+  (NEW→SHORTLISTED/REJECTED→HIRED).
+- `/dashboard/notices` - existing page gained a "Public" toggle (globe
+  icon) per notice, plus a checkbox on the create form.
 
-**Tests:** lookup rate-limiting, DOB-mismatch rejection, unpublished-result
-exclusion, job application submission, cross-branch isolation on all new
-public endpoints.
+**Tests:** 63 new tests - `publicPortal.controller.test.ts` (new, 25:
+generic-failure DOB/admissionNo mismatch, published-only results,
+pending-amount computation, Razorpay order/verify happy+failure paths,
+public-notice filtering), `jobVacancy.controller.test.ts` (new, 17:
+public list/apply, closing-date rejection, staff CRUD, cross-branch
+guards, delete-blocked-by-applications guard), `notice.controller.test.ts`
+(+3, `togglePublicVisibility`).
+
+### Verification performed:
+- Backend: `npx prisma generate` (schema valid) / `npx tsc --noEmit` /
+  `npm test` (**74 suites / 916 tests**, up from 878) / `npm run build` -
+  all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, all 64 routes
+  build including 5 new public pages + 1 new admin page
 
 ---
 

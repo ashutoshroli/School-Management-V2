@@ -16,6 +16,7 @@ import parentRoutes from "./parent.routes";
 import admissionRoutes from "./admission.routes";
 import templateRoutes from "./template.routes";
 import demoDataRoutes from "./demoData.routes";
+import publicRoutes from "./public.routes";
 
 const router = Router();
 
@@ -47,6 +48,7 @@ router.use("/parent", parentRoutes);
 router.use("/admission", admissionRoutes);
 router.use("/templates", templateRoutes);
 router.use("/demo-data", demoDataRoutes);
+router.use("/public", publicRoutes);
 
 // router.use("/attendance", attendanceRoutes); // Phase 4
 // router.use("/exams", examRoutes);            // Phase 4

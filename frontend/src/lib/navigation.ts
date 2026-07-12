@@ -198,6 +198,12 @@ export const navigation: NavItem[] = [
     roles: ADMIN_ROLES,
   },
   {
+    label: "Careers / Jobs",
+    href: "/dashboard/careers",
+    icon: "Briefcase",
+    roles: ADMIN_ROLES,
+  },
+  {
     label: "Notices",
     href: "/dashboard/notices",
     icon: "Bell",

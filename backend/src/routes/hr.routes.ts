@@ -4,12 +4,14 @@ import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCal
 import { getLeaveTypes, getLeaveTypeById, applyLeave, getLeaveApplications, updateLeaveStatus, bulkUpdateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType } from "../controllers/leave.controller";
 import { upsertSalaryStructure, bulkAssignSalaryStructure, assignSalaryStructureToStaff, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
 import { getHolidays, createHoliday, deleteHoliday } from "../controllers/holiday.controller";
+import { createJobVacancy, getJobVacancies, updateJobVacancy, deleteJobVacancy, getJobApplications, updateJobApplicationStatus } from "../controllers/jobVacancy.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { markStaffAttendanceSchema, bulkMarkStaffAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
 import { applyLeaveSchema, updateLeaveStatusSchema, bulkUpdateLeaveStatusSchema, createLeaveTypeSchema, updateLeaveTypeSchema } from "../validators/leave.validator";
 import { upsertSalaryStructureSchema, bulkAssignSalaryStructureSchema, assignSalaryStructureToStaffSchema, runPayrollSchema } from "../validators/payroll.validator";
 import { createHolidaySchema } from "../validators/holiday.validator";
+import { createJobVacancySchema, updateJobVacancySchema, updateJobApplicationStatusSchema } from "../validators/jobVacancy.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -53,5 +55,14 @@ router.patch("/payroll/payslip/:id/approve", authenticate, authorize(...ADMIN), 
 router.patch("/payroll/payslip/:id/paid", authenticate, authorize(...ADMIN), markPaid);
 router.get("/payroll/payslip/:staffId/:month/:year", authenticate, getStaffPayslip);
 router.get("/payroll/payslip/:staffId/:month/:year/pdf", authenticate, getPayslipPdf);
+
+// ===== JOB VACANCIES / RECRUITMENT (staff-only management; public
+// listing + applying lives at /public/jobs, see publicPortal.routes.ts) =====
+router.post("/jobs", authenticate, authorize(...ADMIN), validate(createJobVacancySchema), createJobVacancy);
+router.get("/jobs", authenticate, authorize(...ADMIN), getJobVacancies);
+router.put("/jobs/:id", authenticate, authorize(...ADMIN), validate(updateJobVacancySchema), updateJobVacancy);
+router.delete("/jobs/:id", authenticate, authorize(...ADMIN), deleteJobVacancy);
+router.get("/jobs/:id/applications", authenticate, authorize(...ADMIN), getJobApplications);
+router.patch("/jobs/applications/:id/status", authenticate, authorize(...ADMIN), validate(updateJobApplicationStatusSchema), updateJobApplicationStatus);
 
 export default router;

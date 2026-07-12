@@ -101,3 +101,64 @@ export const payFeeWithRazorpay = async (params: RazorpayPayParams): Promise<Raz
     rzp.open();
   });
 };
+
+export interface PublicRazorpayPayParams {
+  admissionNo: string;
+  dateOfBirth: string; // "YYYY-MM-DD"
+  feeAssignmentId: string;
+  studentName: string;
+}
+
+/**
+ * Public-portal counterpart to payFeeWithRazorpay above - same 3-step
+ * flow (create order -> open checkout -> server-verify), but hits the
+ * public /public/fees/pay and /public/fees/verify endpoints (no auth
+ * token, re-verified server-side against admissionNo+dateOfBirth
+ * instead of an authenticated req.user) for the "check my dues, then
+ * pay" public landing-page flow.
+ */
+export const payPublicFeeWithRazorpay = async (params: PublicRazorpayPayParams): Promise<RazorpayPayResult> => {
+  const { admissionNo, dateOfBirth, feeAssignmentId, studentName } = params;
+
+  await loadRazorpayScript();
+
+  const orderRes = await api.post("/public/fees/pay", { admissionNo, dateOfBirth, feeAssignmentId });
+  const { orderId, amount, currency, keyId } = orderRes.data.data;
+
+  if (!keyId) {
+    throw new Error("Online payments are not configured on the server yet.");
+  }
+
+  return new Promise((resolve, reject) => {
+    const rzp = new window.Razorpay({
+      key: keyId,
+      amount,
+      currency,
+      order_id: orderId,
+      name: "School Fee Payment",
+      description: "Fee payment",
+      prefill: { name: studentName },
+      theme: { color: "#4f46e5" },
+      handler: async (response: any) => {
+        try {
+          const verifyRes = await api.post("/public/fees/verify", {
+            admissionNo,
+            dateOfBirth,
+            feeAssignmentId,
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          });
+          resolve(verifyRes.data.data);
+        } catch (err) {
+          reject(err);
+        }
+      },
+      modal: {
+        ondismiss: () => reject(new Error("Payment cancelled")),
+      },
+    });
+
+    rzp.open();
+  });
+};

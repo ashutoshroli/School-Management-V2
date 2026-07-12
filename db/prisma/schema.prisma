@@ -72,6 +72,7 @@ model Branch {
   inventoryItems  InventoryItem[]
   devices         AttendanceDevice[]
   admissionInquiries AdmissionInquiry[]
+  jobVacancies    JobVacancy[]
 }
 
 
@@ -1537,6 +1538,14 @@ model Notice {
   targetClass String?      // specific classId, null = all
   attachmentUrl String?
   isPinned    Boolean      @default(false)
+  // Admin opts a notice into the PUBLIC (no-auth) notice board at
+  // GET /admission/notices - defaults to false so every existing
+  // notice (and every new one by default) stays staff/parent/student-
+  // portal-only unless explicitly marked for the public site. Kept as
+  // a plain boolean flag on the existing model rather than a separate
+  // "PublicNotice" table, since a public notice is just a regular
+  // notice with wider visibility, not a different kind of content.
+  isPublic    Boolean      @default(false)
   expiryDate  DateTime?
   publishedBy String       // userId
   createdAt   DateTime     @default(now())
@@ -1751,4 +1760,63 @@ enum AdmissionInquiryStatus {
   CONTACTED
   ADMITTED
   REJECTED
+}
+
+// ============================================
+// SECTION 24: PUBLIC LANDING PAGE - CAREERS + RESULT/FEE LOOKUP
+// ============================================
+
+// Staff-posted job openings shown on the public "Careers" page.
+// Mirrors AdmissionInquiry's "public submit, staff reviews" shape
+// exactly - JobVacancy itself is staff-managed (create/edit/close),
+// JobApplication is the public write surface (anonymous applicants
+// apply, staff review).
+model JobVacancy {
+  id             String    @id @default(cuid())
+  branchId       String
+  title          String
+  department     String?
+  description    String
+  qualifications String?
+  isActive       Boolean   @default(true)
+  postedAt       DateTime  @default(now())
+  closingDate    DateTime?
+  postedBy       String    // userId
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  branch       Branch            @relation(fields: [branchId], references: [id])
+  applications JobApplication[]
+
+  @@index([branchId, isActive])
+}
+
+// A public (no-auth) applicant's submission against one JobVacancy.
+// Deliberately does NOT create a Staff/User record - same "just a
+// lead for staff follow-up" principle as AdmissionInquiry; a real hire
+// still goes through the existing (authenticated) createStaff flow.
+model JobApplication {
+  id            String                @id @default(cuid())
+  jobVacancyId  String
+  applicantName String
+  email         String
+  phone         String
+  resumeUrl     String?
+  coverNote     String?
+  status        JobApplicationStatus  @default(NEW)
+  reviewedBy    String?
+  reviewNotes   String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  jobVacancy JobVacancy @relation(fields: [jobVacancyId], references: [id])
+
+  @@index([jobVacancyId, status])
+}
+
+enum JobApplicationStatus {
+  NEW
+  SHORTLISTED
+  REJECTED
+  HIRED
 }
