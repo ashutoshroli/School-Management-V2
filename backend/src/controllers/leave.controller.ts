@@ -167,6 +167,9 @@ export const getLeaveApplications = async (req: AuthRequest, res: Response): Pro
   try {
     const staffId = req.query.staffId as string;
     const status = req.query.status as string;
+    const leaveTypeId = req.query.leaveTypeId as string;
+    const fromDate = req.query.fromDate as string;
+    const toDate = req.query.toDate as string;
     const branchId = resolveBranchId(req);
 
     if (staffId && !(await canAccessStaffRecord(req, staffId))) {
@@ -177,7 +180,14 @@ export const getLeaveApplications = async (req: AuthRequest, res: Response): Pro
     const where: any = {};
     if (staffId) where.staffId = staffId;
     if (status) where.status = status;
+    if (leaveTypeId) where.leaveTypeId = leaveTypeId;
     if (branchId && !staffId) where.staff = { branchId };
+    // Date range: any application overlapping [fromDate, toDate] - not
+    // just applications whose own fromDate falls inside the range, so
+    // a multi-day leave that merely started earlier still shows up
+    // when browsing "leave in June" even if it began in late May.
+    if (fromDate) where.toDate = { gte: new Date(fromDate) };
+    if (toDate) where.fromDate = { ...(where.fromDate || {}), lte: new Date(toDate) };
 
     const applications = await prisma.leaveApplication.findMany({
       where,

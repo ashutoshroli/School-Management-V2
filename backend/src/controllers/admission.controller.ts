@@ -113,10 +113,20 @@ export const getAdmissionInquiries = async (req: AuthRequest, res: Response): Pr
     const skip = (page - 1) * limit;
     const branchId = resolveBranchId(req);
     const status = req.query.status as string | undefined;
+    const classAppliedFor = req.query.classAppliedFor as string | undefined;
+    const fromDate = req.query.fromDate as string | undefined;
+    const toDate = req.query.toDate as string | undefined;
 
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (status) where.status = status;
+    // classAppliedFor is free text on the inquiry (not a real classId
+    // FK - see the New Student conversion shortcut's doc comment
+    // elsewhere in this codebase), so this is a partial/case-insensitive
+    // match rather than an exact filter.
+    if (classAppliedFor) where.classAppliedFor = { contains: classAppliedFor, mode: "insensitive" };
+    if (fromDate) where.createdAt = { ...(where.createdAt || {}), gte: new Date(fromDate) };
+    if (toDate) where.createdAt = { ...(where.createdAt || {}), lte: new Date(toDate) };
 
     const [inquiries, total] = await Promise.all([
       prisma.admissionInquiry.findMany({

@@ -54,7 +54,12 @@ export const getItemById = async (req: AuthRequest, res: Response): Promise<void
 export const getItems = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);
-    const items = await prisma.inventoryItem.findMany({ where: { branchId }, orderBy: { name: "asc" }, include: { _count: { select: { purchases: true, issues: true } } } });
+    const category = req.query.category as string | undefined;
+
+    const where: any = { branchId };
+    if (category) where.category = category;
+
+    const items = await prisma.inventoryItem.findMany({ where, orderBy: { name: "asc" }, include: { _count: { select: { purchases: true, issues: true } } } });
     sendSuccess(res, items, "Items fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };

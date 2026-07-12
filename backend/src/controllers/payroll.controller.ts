@@ -387,9 +387,17 @@ export const getPayslips = async (req: AuthRequest, res: Response): Promise<void
     const month = parseInt(req.query.month as string);
     const year = parseInt(req.query.year as string);
     const branchId = resolveBranchId(req);
+    const department = req.query.department as string | undefined;
+    const designation = req.query.designation as string | undefined;
+    const search = req.query.search as string | undefined;
+
+    const staffWhere: any = { branchId };
+    if (department) staffWhere.department = department;
+    if (designation) staffWhere.designation = designation;
+    if (search) staffWhere.user = { name: { contains: search, mode: "insensitive" } };
 
     const payslips = await prisma.payslip.findMany({
-      where: { month, year, staff: { branchId } },
+      where: { month, year, staff: staffWhere },
       include: { staff: { include: { user: { select: { name: true } } } } },
       orderBy: { staff: { user: { name: "asc" } } },
     });

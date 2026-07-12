@@ -434,9 +434,13 @@ export const getSubjectTeachers = async (req: AuthRequest, res: Response): Promi
   try {
     const branchId = resolveBranchId(req);
     const classId = req.query.classId as string;
+    const staffId = req.query.staffId as string | undefined;
+    const subjectId = req.query.subjectId as string | undefined;
 
     const where: any = {};
     if (classId) where.classId = classId;
+    if (staffId) where.staffId = staffId;
+    if (subjectId) where.subjectId = subjectId;
     if (branchId) where.subject = { branchId };
 
     const assignments = await prisma.subjectTeacher.findMany({

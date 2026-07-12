@@ -158,10 +158,19 @@ export const generateCertificate = async (req: AuthRequest, res: Response): Prom
 export const getGeneratedCertificates = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const studentId = req.query.studentId as string;
+    const classId = req.query.classId as string | undefined;
+    const type = req.query.type as string | undefined;
+    const fromDate = req.query.fromDate as string | undefined;
+    const toDate = req.query.toDate as string | undefined;
+
     const where: any = {};
     if (studentId) where.studentId = studentId;
+    if (classId) where.student = { ...(where.student || {}), classId };
+    if (type) where.template = { type };
+    if (fromDate) where.createdAt = { ...(where.createdAt || {}), gte: new Date(fromDate) };
+    if (toDate) where.createdAt = { ...(where.createdAt || {}), lte: new Date(toDate) };
     if (req.user!.role !== "SUPER_ADMIN") {
-      where.student = { branchId: req.user!.branchId };
+      where.student = { ...(where.student || {}), branchId: req.user!.branchId };
     }
 
     const certs = await prisma.generatedCertificate.findMany({

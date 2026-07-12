@@ -25,6 +25,7 @@ export default function StaffPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+  const [designationFilter, setDesignationFilter] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [showModal, setShowModal] = useState(false);
@@ -46,6 +47,7 @@ export default function StaffPage() {
       const params: any = { page, limit: 25 };
       if (search) params.search = search;
       if (typeFilter) params.type = typeFilter;
+      if (designationFilter) params.designation = designationFilter;
       const res = await api.get("/staff", { params });
       setStaff(res.data.data || []);
       setTotalPages(res.data.pagination?.totalPages || 1);
@@ -57,7 +59,7 @@ export default function StaffPage() {
     }
   };
 
-  useEffect(() => { fetchStaff(); }, [page, search, typeFilter]);
+  useEffect(() => { fetchStaff(); }, [page, search, typeFilter, designationFilter]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,6 +164,12 @@ export default function StaffPage() {
             <option value="TEACHING">Teaching</option>
             <option value="NON_TEACHING">Non-Teaching</option>
           </select>
+          <input
+            className="input-field w-auto"
+            placeholder="Filter by designation..."
+            value={designationFilter}
+            onChange={(e) => { setDesignationFilter(e.target.value); setPage(1); }}
+          />
         </div>
       </div>
 

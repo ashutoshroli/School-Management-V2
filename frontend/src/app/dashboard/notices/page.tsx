@@ -14,12 +14,23 @@ export default function NoticesPage() {
   // always scopes creation to the logged-in user's own branch.
   const [form, setForm] = useState({ title: "", body: "", type: "ALL", expiryDate: "" });
 
+  // Search + date-range filter - previously impossible on the backend
+  // (getNotices only supported a `type` filter).
+  const [search, setSearch] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+
   const fetch = async () => {
     setLoading(true);
-    try { const res = await api.get("/communication/notices"); setNotices(res.data.data || []); }
+    try {
+      const res = await api.get("/communication/notices", {
+        params: { search: search || undefined, fromDate: fromDate || undefined, toDate: toDate || undefined },
+      });
+      setNotices(res.data.data || []);
+    }
     catch {} finally { setLoading(false); }
   };
-  useEffect(() => { fetch(); }, []);
+  useEffect(() => { fetch(); }, [search, fromDate, toDate]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +66,12 @@ export default function NoticesPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Bell className="h-6 w-6 text-primary-600" /> Notices</h1>
         <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> New Notice</button>
+      </div>
+
+      <div className="card mb-4 flex flex-wrap gap-3">
+        <input className="input-field flex-1 min-w-[200px]" placeholder="Search title/content..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        <input type="date" className="input-field w-auto" value={fromDate} onChange={(e) => setFromDate(e.target.value)} title="From date" />
+        <input type="date" className="input-field w-auto" value={toDate} onChange={(e) => setToDate(e.target.value)} title="To date" />
       </div>
 
       {loading ? <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div> : (

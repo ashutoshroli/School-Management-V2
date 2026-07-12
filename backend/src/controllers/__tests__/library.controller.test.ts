@@ -3,12 +3,13 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    libraryBook: { create: jest.fn(), findUnique: jest.fn() },
+    libraryBook: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+    libraryIssue: { findMany: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { addBook, getBookById } from "../library.controller";
+import { addBook, getBookById, getBooks, getIssuedBooks } from "../library.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -109,5 +110,85 @@ describe("library.controller - getBookById", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const payload = (res.json as jest.Mock).mock.calls[0][0].data;
     expect(payload.issues).toHaveLength(1);
+  });
+});
+
+// Backend UX Gap Phase 3: getBooks previously had no category filter
+// at all.
+describe("library.controller - getBooks (category filter)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.libraryBook.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.libraryBook.count as jest.Mock).mockResolvedValue(0);
+  });
+
+  it("filters by category when provided", async () => {
+    const req = makeReq({ query: { category: "Fiction" } });
+    const res = makeMockRes();
+
+    await getBooks(req, res);
+
+    const whereArg = (prisma.libraryBook.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.category).toBe("Fiction");
+  });
+
+  it("omits the category filter when not provided", async () => {
+    const req = makeReq({ query: {} });
+    const res = makeMockRes();
+
+    await getBooks(req, res);
+
+    const whereArg = (prisma.libraryBook.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.category).toBeUndefined();
+  });
+});
+
+// Backend UX Gap Phase 3: getIssuedBooks previously had no
+// classId/studentId filter or "overdue only" toggle.
+describe("library.controller - getIssuedBooks (classId/studentId/overdueOnly filters)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.libraryIssue.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("filters by classId (via the student relation) when provided", async () => {
+    const req = makeReq({ query: { classId: "class-1" } });
+    const res = makeMockRes();
+
+    await getIssuedBooks(req, res);
+
+    const whereArg = (prisma.libraryIssue.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.student).toEqual({ classId: "class-1" });
+  });
+
+  it("filters by studentId when provided", async () => {
+    const req = makeReq({ query: { studentId: "student-1" } });
+    const res = makeMockRes();
+
+    await getIssuedBooks(req, res);
+
+    const whereArg = (prisma.libraryIssue.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.studentId).toBe("student-1");
+  });
+
+  it("filters to overdue-only (dueDate in the past) when overdueOnly=true", async () => {
+    const req = makeReq({ query: { overdueOnly: "true" } });
+    const res = makeMockRes();
+
+    await getIssuedBooks(req, res);
+
+    const whereArg = (prisma.libraryIssue.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.dueDate.lt).toBeInstanceOf(Date);
+  });
+
+  it("defaults to status=ISSUED with no dueDate filter when overdueOnly is not set", async () => {
+    const req = makeReq({ query: {} });
+    const res = makeMockRes();
+
+    await getIssuedBooks(req, res);
+
+    const whereArg = (prisma.libraryIssue.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.status).toBe("ISSUED");
+    expect(whereArg.dueDate).toBeUndefined();
   });
 });

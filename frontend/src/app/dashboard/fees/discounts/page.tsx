@@ -22,15 +22,29 @@ export default function FeeDiscountsPage() {
   const [discounts, setDiscounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState("");
+  const [classFilter, setClassFilter] = useState("");
+  const [sectionFilter, setSectionFilter] = useState("");
+  const [classes, setClasses] = useState<any[]>([]);
   const [includeInactive, setIncludeInactive] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get("/classes").then((res) => setClasses(res.data.data || [])).catch(() => {});
+  }, []);
+
+  const sectionsForSelectedClass = classes.find((c) => c.id === classFilter)?.sections || [];
 
   const fetchDiscounts = async () => {
     setLoading(true);
     try {
       const res = await api.get("/fees/discounts", {
-        params: { type: typeFilter || undefined, includeInactive: includeInactive ? "true" : undefined },
+        params: {
+          type: typeFilter || undefined,
+          classId: classFilter || undefined,
+          sectionId: sectionFilter || undefined,
+          includeInactive: includeInactive ? "true" : undefined,
+        },
       });
       setDiscounts(res.data.data || []);
     } catch {
@@ -39,7 +53,7 @@ export default function FeeDiscountsPage() {
       setLoading(false);
     }
   };
-  useEffect(() => { fetchDiscounts(); }, [typeFilter, includeInactive]);
+  useEffect(() => { fetchDiscounts(); }, [typeFilter, classFilter, sectionFilter, includeInactive]);
 
   const toggle = async (id: string) => {
     setTogglingId(id);
@@ -110,6 +124,14 @@ export default function FeeDiscountsPage() {
             ))}
           </select>
         </div>
+        <select className="input-field w-auto" value={classFilter} onChange={(e) => { setClassFilter(e.target.value); setSectionFilter(""); }}>
+          <option value="">All Classes</option>
+          {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select className="input-field w-auto" value={sectionFilter} onChange={(e) => setSectionFilter(e.target.value)} disabled={!classFilter}>
+          <option value="">All Sections</option>
+          {sectionsForSelectedClass.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
         <label className="flex items-center gap-2 text-sm text-gray-600">
           <input type="checkbox" checked={includeInactive} onChange={(e) => setIncludeInactive(e.target.checked)} />
           Include inactive/removed discounts

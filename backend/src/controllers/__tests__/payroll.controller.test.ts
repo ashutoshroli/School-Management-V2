@@ -5,12 +5,12 @@ jest.mock("../../config/database", () => ({
   default: {
     staff: { findUnique: jest.fn(), findMany: jest.fn() },
     salaryStructure: { findUnique: jest.fn(), findMany: jest.fn(), createMany: jest.fn(), updateMany: jest.fn() },
-    payslip: { findUnique: jest.fn() },
+    payslip: { findUnique: jest.fn(), findMany: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { getSalaryStructure, getStaffPayslip, bulkAssignSalaryStructure, assignSalaryStructureToStaff } from "../payroll.controller";
+import { getSalaryStructure, getStaffPayslip, bulkAssignSalaryStructure, assignSalaryStructureToStaff, getPayslips } from "../payroll.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -329,5 +329,54 @@ describe("payroll.controller - assignSalaryStructureToStaff", () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ data: { created: 0, updated: 2, skipped: 0, total: 2 } })
     );
+  });
+});
+
+// Backend UX Gap Phase 3: getPayslips previously had no
+// department/designation/staff-name search - only month/year/branch.
+describe("payroll.controller - getPayslips (department/designation/search filters)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.payslip.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  const req = (query: any) =>
+    ({
+      body: {},
+      params: {},
+      query: { month: "3", year: "2024", ...query },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    } as any);
+
+  it("filters by department when provided", async () => {
+    const res = makeMockRes();
+    await getPayslips(req({ department: "Science" }), res);
+
+    const whereArg = (prisma.payslip.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.staff.department).toBe("Science");
+  });
+
+  it("filters by designation when provided", async () => {
+    const res = makeMockRes();
+    await getPayslips(req({ designation: "PGT" }), res);
+
+    const whereArg = (prisma.payslip.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.staff.designation).toBe("PGT");
+  });
+
+  it("filters by staff name search when provided", async () => {
+    const res = makeMockRes();
+    await getPayslips(req({ search: "Jane" }), res);
+
+    const whereArg = (prisma.payslip.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.staff.user).toEqual({ name: { contains: "Jane", mode: "insensitive" } });
+  });
+
+  it("still scopes to the caller's branch when no extra filters are given", async () => {
+    const res = makeMockRes();
+    await getPayslips(req({}), res);
+
+    const whereArg = (prisma.payslip.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.staff).toEqual({ branchId: "branch-1" });
   });
 });

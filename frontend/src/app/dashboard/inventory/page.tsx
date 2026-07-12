@@ -13,6 +13,7 @@ export default function InventoryPage() {
   const [modalType, setModalType] = useState<"item" | "purchase" | "issue">("item");
   const [form, setForm] = useState<any>({ name: "", category: "", unit: "pcs", minStock: "5" });
   const [dismissedAlert, setDismissedAlert] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState("");
 
   // View Details - drills into one item's purchase/issue history via
   // the new getItemById endpoint (the list view only shows counts).
@@ -37,7 +38,7 @@ export default function InventoryPage() {
     setLoading(true);
     try {
       const [itemsRes, lowStockRes] = await Promise.all([
-        api.get("/facilities/inventory/items"),
+        api.get("/facilities/inventory/items", { params: { category: categoryFilter || undefined } }),
         api.get("/facilities/inventory/low-stock"),
       ]);
       setItems(itemsRes.data.data || []);
@@ -45,7 +46,7 @@ export default function InventoryPage() {
     }
     catch {} finally { setLoading(false); }
   };
-  useEffect(() => { fetch(); }, []);
+  useEffect(() => { fetch(); }, [categoryFilter]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,6 +85,10 @@ export default function InventoryPage() {
           <button onClick={() => openModal("purchase")} className="btn-secondary text-sm">Purchase</button>
           <button onClick={() => openModal("issue")} className="btn-secondary text-sm">Issue</button>
         </div>
+      </div>
+
+      <div className="card mb-4">
+        <input className="input-field w-auto" placeholder="Filter by category..." value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} />
       </div>
 
       {!loading && lowStock.length > 0 && !dismissedAlert && (

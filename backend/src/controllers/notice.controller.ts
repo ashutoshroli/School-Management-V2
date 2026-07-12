@@ -118,9 +118,20 @@ export const getNotices = async (req: AuthRequest, res: Response): Promise<void>
   try {
     const branchId = resolveBranchId(req);
     const type = req.query.type as string;
+    const search = req.query.search as string | undefined;
+    const fromDate = req.query.fromDate as string | undefined;
+    const toDate = req.query.toDate as string | undefined;
 
     const where: any = { branchId };
     if (type) where.type = type;
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: "insensitive" } },
+        { body: { contains: search, mode: "insensitive" } },
+      ];
+    }
+    if (fromDate) where.createdAt = { ...(where.createdAt || {}), gte: new Date(fromDate) };
+    if (toDate) where.createdAt = { ...(where.createdAt || {}), lte: new Date(toDate) };
 
     const notices = await prisma.notice.findMany({
       where, orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],

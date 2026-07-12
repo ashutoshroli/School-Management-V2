@@ -188,6 +188,7 @@ export const getStaffList = async (req: AuthRequest, res: Response): Promise<voi
     const branchId = resolveBranchId(req);
     const type = req.query.type as string; // TEACHING | NON_TEACHING
     const department = req.query.department as string;
+    const designation = req.query.designation as string;
     const search = req.query.search as string;
     const isActive = req.query.isActive !== "false";
 
@@ -195,6 +196,7 @@ export const getStaffList = async (req: AuthRequest, res: Response): Promise<voi
     if (branchId) where.branchId = branchId;
     if (type) where.type = type;
     if (department) where.department = department;
+    if (designation) where.designation = designation;
 
     if (search) {
       where.OR = [

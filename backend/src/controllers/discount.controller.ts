@@ -40,8 +40,14 @@ export const getAllDiscounts = async (req: AuthRequest, res: Response): Promise<
 
     const includeInactive = req.query.includeInactive === "true";
     const type = req.query.type as string | undefined;
+    const classId = req.query.classId as string | undefined;
+    const sectionId = req.query.sectionId as string | undefined;
 
-    const where: any = { student: { branchId } };
+    const studentFilter: any = { branchId };
+    if (classId) studentFilter.classId = classId;
+    if (sectionId) studentFilter.sectionId = sectionId;
+
+    const where: any = { student: studentFilter };
     if (!includeInactive) where.isActive = true;
     if (type) where.type = type;
 
