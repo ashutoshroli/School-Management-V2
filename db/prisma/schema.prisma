@@ -1949,8 +1949,6 @@ model DisciplineIncident {
 
   student Student @relation(fields: [studentId], references: [id])
 
-  student Student @relation(fields: [studentId], references: [id])
-
   @@index([branchId, studentId])
   @@index([branchId, incidentDate])
 }
