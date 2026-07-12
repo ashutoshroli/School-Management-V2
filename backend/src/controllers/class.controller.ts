@@ -72,7 +72,7 @@ export const getClasses = async (req: AuthRequest, res: Response): Promise<void>
         where: { branchId },
         orderBy: { numericOrder: "asc" },
         include: {
-          sections: { orderBy: { name: "asc" } },
+          sections: { orderBy: { name: "asc" }, include: { room: { select: { id: true, roomNo: true, name: true } } } },
           _count: { select: { students: true } },
         },
       })
@@ -124,7 +124,7 @@ export const deleteClass = async (req: AuthRequest, res: Response): Promise<void
 
 export const createSection = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { classId, name, capacity, classTeacherId } = req.body;
+    const { classId, name, capacity, classTeacherId, roomId } = req.body;
     // BUG FIX + SECURITY: same as createClass above - no branch-picker
     // in the "Add Section" form (branchId always ""), and this
     // endpoint had no canAccessBranch check at all.
@@ -147,8 +147,20 @@ export const createSection = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    // SECURITY: a Branch Admin could otherwise link their section to a
+    // classroom (SchoolRoom) belonging to a different branch entirely,
+    // by supplying that branch's real roomId - same IDOR class as
+    // every other cross-entity FK in this codebase.
+    if (roomId) {
+      const room = await prisma.schoolRoom.findUnique({ where: { id: roomId }, include: { floor: { include: { building: true } } } });
+      if (!room || room.floor.building.branchId !== branchId) {
+        sendError(res, "Room not found in this branch", 404);
+        return;
+      }
+    }
+
     const section = await prisma.section.create({
-      data: { branchId, classId, name, capacity: capacity || 40, classTeacherId },
+      data: { branchId, classId, name, capacity: capacity || 40, classTeacherId, roomId },
     });
     // The cached class list (getClasses) embeds each class's sections,
     // so any section change must invalidate it too, not just the
@@ -176,6 +188,7 @@ export const getSections = async (req: AuthRequest, res: Response): Promise<void
       include: {
         class: { select: { name: true } },
         classTeacher: { select: { user: { select: { name: true } } } },
+        room: { select: { id: true, roomNo: true, name: true } },
         _count: { select: { students: true } },
       },
     });
@@ -189,11 +202,26 @@ export const getSections = async (req: AuthRequest, res: Response): Promise<void
 export const updateSection = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { name, capacity, classTeacherId } = req.body;
+    const { name, capacity, classTeacherId, roomId } = req.body;
+
+    if (roomId) {
+      const existingSection = await prisma.section.findUnique({ where: { id } });
+      if (!existingSection) { sendError(res, "Section not found", 404); return; }
+      const room = await prisma.schoolRoom.findUnique({ where: { id: roomId }, include: { floor: { include: { building: true } } } });
+      if (!room || room.floor.building.branchId !== existingSection.branchId) {
+        sendError(res, "Room not found in this branch", 404);
+        return;
+      }
+    }
 
     const updated = await prisma.section.update({
       where: { id },
-      data: { ...(name && { name }), ...(capacity && { capacity }), ...(classTeacherId !== undefined && { classTeacherId }) },
+      data: {
+        ...(name && { name }),
+        ...(capacity && { capacity }),
+        ...(classTeacherId !== undefined && { classTeacherId }),
+        ...(roomId !== undefined && { roomId: roomId || null }),
+      },
     });
     await invalidateClassesCache(updated.branchId);
 

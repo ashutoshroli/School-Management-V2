@@ -10,6 +10,8 @@ interface Section {
   id: string;
   name: string;
   capacity: number;
+  roomId?: string | null;
+  room?: { id: string; roomNo: string; name?: string | null } | null;
   _count?: { students: number };
 }
 
@@ -31,9 +33,25 @@ export default function ClassesPage() {
   // backend always scopes creation to the logged-in user's own branch
   // (see resolveEffectiveBranchId in backend/src/utils/branchScope.ts).
   const [classForm, setClassForm] = useState({ name: "", numericOrder: 0 });
-  const [sectionForm, setSectionForm] = useState({ name: "", capacity: 40, classId: "" });
+  const [sectionForm, setSectionForm] = useState({ name: "", capacity: 40, classId: "", roomId: "" });
 
   const [error, setError] = useState<string | null>(null);
+
+  // Classrooms available for the "assign a physical room to this
+  // section" picker - only CLASSROOM-type rooms from School Buildings
+  // (see /dashboard/buildings) make sense here.
+  const [classroomOptions, setClassroomOptions] = useState<any[]>([]);
+  useEffect(() => {
+    api.get("/facilities/school-buildings").then((res) => {
+      const buildings = res.data.data || [];
+      const rooms = buildings.flatMap((b: any) =>
+        (b.floors || []).flatMap((f: any) =>
+          (f.rooms || []).filter((r: any) => r.type === "CLASSROOM").map((r: any) => ({ ...r, buildingName: b.name }))
+        )
+      );
+      setClassroomOptions(rooms);
+    }).catch(() => {});
+  }, []);
 
   const fetchClasses = async () => {
     try {
@@ -66,9 +84,9 @@ export default function ClassesPage() {
   const handleCreateSection = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post("/classes/sections", { ...sectionForm, classId: selectedClassId });
+      await api.post("/classes/sections", { ...sectionForm, classId: selectedClassId, roomId: sectionForm.roomId || undefined });
       setShowSectionModal(false);
-      setSectionForm({ name: "", capacity: 40, classId: "" });
+      setSectionForm({ name: "", capacity: 40, classId: "", roomId: "" });
       fetchClasses();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed");
@@ -118,18 +136,18 @@ export default function ClassesPage() {
 
   const [showEditSectionModal, setShowEditSectionModal] = useState(false);
   const [editingSectionId, setEditingSectionId] = useState("");
-  const [editSectionForm, setEditSectionForm] = useState({ name: "", capacity: 40 });
+  const [editSectionForm, setEditSectionForm] = useState({ name: "", capacity: 40, roomId: "" });
 
   const openEditSection = (sec: Section) => {
     setEditingSectionId(sec.id);
-    setEditSectionForm({ name: sec.name, capacity: sec.capacity });
+    setEditSectionForm({ name: sec.name, capacity: sec.capacity, roomId: (sec as any).roomId || "" });
     setShowEditSectionModal(true);
   };
 
   const handleUpdateSection = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.put(`/classes/sections/${editingSectionId}`, editSectionForm);
+      await api.put(`/classes/sections/${editingSectionId}`, { ...editSectionForm, roomId: editSectionForm.roomId || "" });
       setShowEditSectionModal(false);
       fetchClasses();
     } catch (err: any) {
@@ -183,7 +201,10 @@ export default function ClassesPage() {
               <div className="space-y-2">
                 {cls.sections.map((sec) => (
                   <div key={sec.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg">
-                    <span className="text-sm font-medium">Section {sec.name}</span>
+                    <span className="text-sm font-medium">
+                      Section {sec.name}
+                      {sec.room && <span className="text-xs text-gray-400 ml-1.5">({sec.room.name || sec.room.roomNo})</span>}
+                    </span>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-gray-500">{sec._count?.students || 0}/{sec.capacity}</span>
                       <button onClick={() => openEditSection(sec)} className="text-gray-400 hover:text-gray-600">
@@ -231,6 +252,16 @@ export default function ClassesPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Capacity</label>
             <input type="number" className="input-field" value={sectionForm.capacity} onChange={(e) => setSectionForm({ ...sectionForm, capacity: parseInt(e.target.value) })} />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Classroom (optional)</label>
+            <select className="input-field" value={sectionForm.roomId} onChange={(e) => setSectionForm({ ...sectionForm, roomId: e.target.value })}>
+              <option value="">Not assigned yet</option>
+              {classroomOptions.map((r) => (
+                <option key={r.id} value={r.id}>{r.buildingName} - {r.name || r.roomNo}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">Manage classrooms under School Buildings.</p>
+          </div>
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowSectionModal(false)} className="btn-secondary">Cancel</button>
             <button type="submit" className="btn-primary">Create Section</button>
@@ -266,6 +297,15 @@ export default function ClassesPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Capacity</label>
             <input type="number" className="input-field" value={editSectionForm.capacity} onChange={(e) => setEditSectionForm({ ...editSectionForm, capacity: parseInt(e.target.value) || 40 })} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Classroom</label>
+            <select className="input-field" value={editSectionForm.roomId} onChange={(e) => setEditSectionForm({ ...editSectionForm, roomId: e.target.value })}>
+              <option value="">Not assigned</option>
+              {classroomOptions.map((r) => (
+                <option key={r.id} value={r.id}>{r.buildingName} - {r.name || r.roomNo}</option>
+              ))}
+            </select>
           </div>
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowEditSectionModal(false)} className="btn-secondary">Cancel</button>

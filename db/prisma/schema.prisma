@@ -65,6 +65,7 @@ model Branch {
   routes          TransportRoute[]
   vehicles        Vehicle[]
   hostelBuildings HostelBuilding[]
+  schoolBuildings SchoolBuilding[]
   libraryBooks    LibraryBook[]
   inventoryItems  InventoryItem[]
   devices         AttendanceDevice[]
@@ -199,6 +200,7 @@ model Staff {
   classTeacher    Section[]         @relation("ClassTeacher")
   subjectTeachers SubjectTeacher[]
   timetableSlots  TimetableSlot[]
+  assignedRooms   SchoolRoom[]      @relation("RoomAssignedStaff")
 }
 
 
@@ -356,6 +358,12 @@ model Section {
   branch       Branch    @relation(fields: [branchId], references: [id])
   class        Class     @relation(fields: [classId], references: [id])
   classTeacher Staff?    @relation("ClassTeacher", fields: [classTeacherId], references: [id])
+  // Optional physical classroom this section meets in (see SECTION 26:
+  // SCHOOL BUILDING/ROOMS below) - lets the room's "occupied seats"
+  // figure be derived from this section's live student headcount
+  // instead of needing separate manual seat-tracking.
+  roomId       String?
+  room         SchoolRoom? @relation(fields: [roomId], references: [id])
   students     Student[]
   attendances  StudentAttendance[]
   timetable    Timetable?
@@ -1284,6 +1292,88 @@ model HostelAllocation {
 
   student Student    @relation(fields: [studentId], references: [id])
   room    HostelRoom @relation(fields: [roomId], references: [id])
+}
+
+
+// ============================================
+// SECTION 18B: SCHOOL BUILDING (general-purpose, non-hostel)
+// ============================================
+// Mirrors the Hostel Building -> Floor -> Room hierarchy above, but for
+// the school's own academic/admin spaces (classrooms, labs, offices,
+// etc) rather than boarding. Kept as a fully separate model tree
+// (rather than reusing HostelBuilding/HostelRoom) because the two
+// concepts have different room-type vocabularies, no bed/monthlyFee
+// concept here, and a classroom's "occupancy" is derived from its
+// linked Section's live student count rather than a manual counter.
+
+model SchoolBuilding {
+  id          String   @id @default(cuid())
+  branchId    String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  branch Branch        @relation(fields: [branchId], references: [id])
+  floors SchoolFloor[]
+}
+
+model SchoolFloor {
+  id         String @id @default(cuid())
+  buildingId String
+  floorNo    Int
+  name       String? // e.g. "Ground Floor", "First Floor"
+
+  building SchoolBuilding @relation(fields: [buildingId], references: [id])
+  rooms    SchoolRoom[]
+}
+
+model SchoolRoom {
+  id        String        @id @default(cuid())
+  floorId   String
+  roomNo    String
+  name      String?       // e.g. "Physics Lab", "Principal's Office"
+  type      SchoolRoomType
+  // Free-text seat/desk count for non-classroom room types (a lab
+  // bench count, an office's chair count, etc); for a CLASSROOM room
+  // linked to a Section, the section's live student headcount is the
+  // real "occupied" figure and this is only the room's physical ceiling.
+  capacity  Int           @default(0)
+  // Wayfinding note for staff/visitors, e.g. "Left wing, 2nd door from
+  // main gate" - deliberately free text since "direction from gate"
+  // isn't a structured measurement anywhere else in this schema.
+  directionFromGate String?
+  // Only meaningful for CHAMBER/OFFICE-type rooms (e.g. "Principal's
+  // Chamber" assigned to one staff member) - null for classrooms/labs/
+  // shared spaces.
+  assignedStaffId String?
+  // Only meaningful for department-shared rooms (e.g. a "Science
+  // Department" staff room) - free text since Department itself isn't
+  // a modeled entity anywhere else in this schema (Staff.department is
+  // also just a free-text field).
+  department      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  floor         SchoolFloor @relation(fields: [floorId], references: [id])
+  assignedStaff Staff?      @relation("RoomAssignedStaff", fields: [assignedStaffId], references: [id])
+  sections      Section[]
+}
+
+enum SchoolRoomType {
+  CLASSROOM
+  LAB
+  OFFICE
+  CHAMBER
+  STAFF_ROOM
+  LIBRARY
+  AUDITORIUM
+  SPORTS_ROOM
+  TOILET
+  STORE
+  CANTEEN
+  MEDICAL_ROOM
+  OTHER
 }
 
 

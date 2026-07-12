@@ -4,16 +4,17 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     class: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn() },
-    section: { findUnique: jest.fn(), create: jest.fn() },
+    section: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
     subject: { findUnique: jest.fn(), create: jest.fn() },
     staff: { findUnique: jest.fn() },
     subjectTeacher: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn(), delete: jest.fn() },
     classSubject: { findMany: jest.fn(), createMany: jest.fn() },
+    schoolRoom: { findUnique: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createClass, createSection, createSubject, getSubjectById, bulkAssignSubjectToClass, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
+import { createClass, createSection, updateSection, createSubject, getSubjectById, bulkAssignSubjectToClass, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -115,6 +116,72 @@ describe("class.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect((prisma.section.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+    });
+
+    it("links the section to a classroom room in the same branch", async () => {
+      (prisma.section.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue({ id: "room-1", floor: { building: { branchId: "branch-1" } } });
+      (prisma.section.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "sec-1", ...data }));
+
+      const req = makeReq({ body: { branchId: "", classId: "class-1", name: "A", roomId: "room-1" } });
+      const res = makeMockRes();
+
+      await createSection(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect((prisma.section.create as jest.Mock).mock.calls[0][0].data.roomId).toBe("room-1");
+    });
+
+    it("SECURITY: rejects linking a section to a room in a DIFFERENT branch", async () => {
+      (prisma.section.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue({ id: "room-1", floor: { building: { branchId: "branch-OTHER" } } });
+
+      const req = makeReq({ body: { branchId: "", classId: "class-1", name: "A", roomId: "room-1" } });
+      const res = makeMockRes();
+
+      await createSection(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.section.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateSection - roomId", () => {
+    beforeEach(() => {
+      (prisma.section.findUnique as jest.Mock).mockResolvedValue({ id: "sec-1", branchId: "branch-1" });
+      (prisma.section.update as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: "sec-1", branchId: "branch-1", ...data }));
+    });
+
+    it("links a section to a room in the same branch", async () => {
+      (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue({ id: "room-1", floor: { building: { branchId: "branch-1" } } });
+      const req = makeReq({ params: { id: "sec-1" }, body: { roomId: "room-1" } });
+      const res = makeMockRes();
+
+      await updateSection(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect((prisma.section.update as jest.Mock).mock.calls[0][0].data.roomId).toBe("room-1");
+    });
+
+    it("SECURITY: rejects linking to a room in a DIFFERENT branch", async () => {
+      (prisma.schoolRoom.findUnique as jest.Mock).mockResolvedValue({ id: "room-1", floor: { building: { branchId: "branch-OTHER" } } });
+      const req = makeReq({ params: { id: "sec-1" }, body: { roomId: "room-1" } });
+      const res = makeMockRes();
+
+      await updateSection(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.section.update).not.toHaveBeenCalled();
+    });
+
+    it("clears the room link when roomId is explicitly set to an empty string", async () => {
+      const req = makeReq({ params: { id: "sec-1" }, body: { roomId: "" } });
+      const res = makeMockRes();
+
+      await updateSection(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect((prisma.section.update as jest.Mock).mock.calls[0][0].data.roomId).toBeNull();
     });
   });
 
