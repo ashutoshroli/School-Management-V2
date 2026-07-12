@@ -298,3 +298,29 @@ export const changePassword = async (req: AuthRequest, res: Response): Promise<v
     sendError(res, "Failed to change password", 500);
   }
 };
+
+
+
+// ===== PASSWORD RESET =====
+import { initiatePasswordReset, resetPassword } from "../services/passwordReset.service";
+
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+    await initiatePasswordReset(email);
+    sendSuccess(res, null, "If that email exists in our system, a reset link has been sent.");
+  } catch (error) {
+    sendError(res, "Failed to process password reset request", 500);
+  }
+};
+
+export const resetPasswordHandler = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, newPassword } = req.body;
+    const result = await resetPassword(token, newPassword);
+    if (!result.success) { sendError(res, result.message, 400); return; }
+    sendSuccess(res, null, result.message);
+  } catch (error) {
+    sendError(res, "Failed to reset password", 500);
+  }
+};

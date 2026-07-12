@@ -8,16 +8,18 @@ import swaggerUi from "swagger-ui-express";
 import passport from "./config/passport";
 import routes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
+import { requestId } from "./middleware/requestId";
 import { config } from "./config";
 import { initSentry, setupSentryErrorHandler } from "./config/sentry";
 import { swaggerSpec, isDocsEnabled } from "./docs/swagger";
 
 const app = express();
 
-// Error tracking (Phase 1) - must be initialized before any other
-// middleware/routes are registered so Sentry's auto-instrumentation can
-// see the full request lifecycle. No-ops if SENTRY_DSN isn't set.
+// Error tracking
 initSentry(app);
+
+// Request ID tracking (for log correlation + debugging)
+app.use(requestId);
 
 // Security middleware
 app.use(helmet());
