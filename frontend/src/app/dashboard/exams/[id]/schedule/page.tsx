@@ -88,6 +88,27 @@ export default function ExamSchedulePage() {
   const load = async () => {
     setLoading(true);
     setError(null);
+    // BUG FIX: Next.js App Router reuses this same page component
+    // instance when navigating between two different exams' schedule
+    // pages (only the `[id]` param changes, no remount) - without
+    // resetting everything below, a failed lookup for the NEW examId
+    // left the PREVIOUS exam's `exam`/`rows`/`subjects`/etc state
+    // untouched, so the timetable table kept showing the old exam's
+    // data at the same time as a fresh "Exam not found" error banner.
+    // Any open seat-plan/attendance sub-panels are also closed since
+    // they're keyed by an examScheduleId that no longer applies here.
+    setExam(null);
+    setRows([]);
+    setSubjects([]);
+    setRooms([]);
+    setSections([]);
+    setPapersByScheduleId({});
+    setSeatPlanModalFor(null);
+    setViewingSeatPlanFor(null);
+    setSeatPlanView(null);
+    setMarkingAttendanceFor(null);
+    setAttendanceRooms([]);
+    setAttendanceEdits({});
     try {
       const examsRes = await api.get("/academics/exams");
       const found = (examsRes.data.data || []).find((e: any) => e.id === examId);
