@@ -5,7 +5,7 @@ jest.mock("../../config/database", () => ({
   default: {
     staff: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
-    student: { findMany: jest.fn() },
+    student: { findMany: jest.fn(), findUnique: jest.fn() },
     certificateTemplate: { findFirst: jest.fn() },
   },
 }));
@@ -18,7 +18,7 @@ jest.mock("../../config/database", () => ({
 // before - template-rendering itself is covered separately by
 // templateRenderer.service.test.ts.
 jest.mock("../../services/templateRenderer.service", () => ({
-  renderTemplateToPdf: jest.fn().mockResolvedValue(null),
+  renderTemplateToPdf: jest.fn(),
 }));
 
 // startPdfResponse normally pipes a real PDFKit document to an HTTP
@@ -56,9 +56,11 @@ jest.mock("../../services/pdf.service", () => {
   return { ...actual, startPdfResponse: jest.fn(() => makeFakeDoc()) };
 });
 
+import { ParentRelation } from "@prisma/client";
 import prisma from "../../config/database";
 import { startPdfResponse } from "../../services/pdf.service";
-import { getStaffIdCardPdf, getClassIdCardsBatchPdf } from "../document.controller";
+import { renderTemplateToPdf } from "../../services/templateRenderer.service";
+import { getStaffIdCardPdf, getClassIdCardsBatchPdf, getStudentIdCardPdf } from "../document.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -98,6 +100,7 @@ describe("document.controller - ID card access control", () => {
 
     beforeEach(() => {
       (prisma.certificateTemplate.findFirst as jest.Mock).mockResolvedValue(null);
+      (renderTemplateToPdf as jest.Mock).mockResolvedValue(null);
     });
 
     it("returns 404 for a staff member in a different branch when caller is not that staff member", async () => {
@@ -167,7 +170,115 @@ describe("document.controller - ID card access control", () => {
     });
   });
 
+  // Backend UX Gap Phase 5 (BACKEND_UX_GAP_PLAN.md): fatherName/
+  // motherName/dateOfBirth/photoUrl were documented on the Templates
+  // page's ID Card placeholder guide but never actually included in
+  // the render data passed to an uploaded .docx template - they'd
+  // always come out blank in a real template. This locks in the fix.
+  describe("getStudentIdCardPdf - template render data (fatherName/motherName/dateOfBirth/photoUrl)", () => {
+    const makeStudent = (overrides: Partial<any> = {}) => ({
+      id: "student-1",
+      branchId: "branch-1",
+      admissionNo: "ADM-0001",
+      bloodGroup: "O+",
+      cardId: null,
+      address: "123 Main St",
+      dateOfBirth: new Date("2015-06-15"),
+      user: { name: "Ravi Kumar", avatar: null },
+      class: { name: "Class 5" },
+      section: { name: "A" },
+      branch: { name: "ABC School", address: null, city: null, state: null, pincode: null, phone: null },
+      parents: [
+        { parent: { relation: ParentRelation.FATHER, user: { name: "Suresh Kumar" } } },
+        { parent: { relation: ParentRelation.MOTHER, user: { name: "Sunita Kumar" } } },
+      ],
+      documents: [],
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      (prisma.certificateTemplate.findFirst as jest.Mock).mockResolvedValue({ templateUrl: "/uploads/templates/id-card.docx" });
+    });
+
+    it("includes fatherName/motherName/dateOfBirth in the template render data", async () => {
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(makeStudent());
+      (renderTemplateToPdf as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+
+      const req = makeReq({ params: { id: "student-1" } });
+      const res = makeMockRes();
+
+      await getStudentIdCardPdf(req, res);
+
+      const renderData = (renderTemplateToPdf as jest.Mock).mock.calls[0][1];
+      expect(renderData.fatherName).toBe("Suresh Kumar");
+      expect(renderData.motherName).toBe("Sunita Kumar");
+      expect(renderData.dateOfBirth).toBeTruthy();
+    });
+
+    it("prefers a StudentDocument photo over the user's OAuth avatar for photoUrl", async () => {
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(
+        makeStudent({ documents: [{ fileUrl: "/uploads/students/photo.jpg" }], user: { name: "Ravi Kumar", avatar: "/google-avatar.jpg" } })
+      );
+      (renderTemplateToPdf as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+
+      const req = makeReq({ params: { id: "student-1" } });
+      const res = makeMockRes();
+
+      await getStudentIdCardPdf(req, res);
+
+      const renderData = (renderTemplateToPdf as jest.Mock).mock.calls[0][1];
+      expect(renderData.photoUrl).toBe("/uploads/students/photo.jpg");
+    });
+
+    it("falls back to the user's OAuth avatar for photoUrl when no StudentDocument photo exists", async () => {
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(
+        makeStudent({ documents: [], user: { name: "Ravi Kumar", avatar: "/google-avatar.jpg" } })
+      );
+      (renderTemplateToPdf as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+
+      const req = makeReq({ params: { id: "student-1" } });
+      const res = makeMockRes();
+
+      await getStudentIdCardPdf(req, res);
+
+      const renderData = (renderTemplateToPdf as jest.Mock).mock.calls[0][1];
+      expect(renderData.photoUrl).toBe("/google-avatar.jpg");
+    });
+
+    it("returns an empty string for photoUrl when neither a document nor an avatar exists", async () => {
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(makeStudent({ documents: [], user: { name: "Ravi Kumar", avatar: null } }));
+      (renderTemplateToPdf as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+
+      const req = makeReq({ params: { id: "student-1" } });
+      const res = makeMockRes();
+
+      await getStudentIdCardPdf(req, res);
+
+      const renderData = (renderTemplateToPdf as jest.Mock).mock.calls[0][1];
+      expect(renderData.photoUrl).toBe("");
+    });
+
+    it("resolves \"-\" for fatherName/motherName when no matching parent record exists", async () => {
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(makeStudent({ parents: [] }));
+      (renderTemplateToPdf as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+
+      const req = makeReq({ params: { id: "student-1" } });
+      const res = makeMockRes();
+
+      await getStudentIdCardPdf(req, res);
+
+      const renderData = (renderTemplateToPdf as jest.Mock).mock.calls[0][1];
+      expect(renderData.fatherName).toBe("-");
+      expect(renderData.motherName).toBe("-");
+    });
+  });
+
   describe("getClassIdCardsBatchPdf", () => {
+    beforeEach(() => {
+      (renderTemplateToPdf as jest.Mock).mockResolvedValue(null);
+    });
+
     it("returns 400 when classId query param is missing", async () => {
       const req = makeReq({ query: {} });
       const res = makeMockRes();

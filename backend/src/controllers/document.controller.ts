@@ -1,4 +1,5 @@
 import { Response } from "express";
+import { ParentRelation } from "@prisma/client";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendError } from "../utils/response";
@@ -7,6 +8,7 @@ import { canAccessStudentRecord } from "../utils/studentAccess";
 import { startPdfResponse, sendPdfBuffer, drawHeader, drawFooter, drawKeyValueRow, drawQrCode, formatMoney, formatDate } from "../services/pdf.service";
 import { renderTemplateToPdf, TemplateData } from "../services/templateRenderer.service";
 import { getActiveDocumentTemplate } from "../services/documentTemplateLookup.service";
+import { getParentName } from "./certificate.controller";
 
 /**
  * GET /api/fees/payments/:id/receipt
@@ -236,10 +238,15 @@ export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Prom
     const student = await prisma.student.findUnique({
       where: { id },
       include: {
-        user: { select: { name: true } },
+        user: { select: { name: true, avatar: true } },
         class: { select: { name: true } },
         section: { select: { name: true } },
         branch: { select: { name: true, address: true, city: true, state: true, pincode: true, phone: true } },
+        parents: { include: { parent: { select: { relation: true, user: { select: { name: true } } } } } },
+        // Only the most recent "photo"-typed upload matters for the
+        // card - a re-uploaded photo should replace the old one on the
+        // card, not add a second row to pick from.
+        documents: { where: { type: "photo" }, orderBy: { createdAt: "desc" }, take: 1 },
       },
     });
 
@@ -258,11 +265,23 @@ export const getStudentIdCardPdf = async (req: AuthRequest, res: Response): Prom
     const fromTemplate = await renderTemplateToPdf(template?.templateUrl, {
       studentName: student.user.name,
       admissionNo: student.admissionNo,
+      // Documented on the Templates page's ID Card placeholder guide,
+      // but previously never actually included here - they'd always
+      // come out blank in a real uploaded template (see
+      // BACKEND_UX_GAP_PLAN.md Phase 5).
+      fatherName: getParentName(student.parents, ParentRelation.FATHER),
+      motherName: getParentName(student.parents, ParentRelation.MOTHER),
+      dateOfBirth: formatDate(student.dateOfBirth),
       className: student.class?.name || "-",
       sectionName: student.section?.name || "-",
       bloodGroup: student.bloodGroup || "-",
       cardId: student.cardId || "-",
       address: student.address || "-",
+      // A dedicated StudentDocument (type="photo") is the intended
+      // source; user.avatar (Google OAuth profile picture) is only a
+      // fallback for students who signed in that way but never
+      // uploaded a proper ID-card photo.
+      photoUrl: student.documents[0]?.fileUrl || student.user.avatar || "",
       branchName: student.branch.name,
       branchAddress: [student.branch.address, student.branch.city, student.branch.state, student.branch.pincode].filter(Boolean).join(", "),
       branchPhone: student.branch.phone || "",
