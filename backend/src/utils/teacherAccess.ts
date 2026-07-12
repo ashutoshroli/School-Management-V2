@@ -52,6 +52,39 @@ export const canTeacherAccessSection = async (
 };
 
 /**
+ * Exam question paper upload access: a TEACHER may only upload a paper
+ * for a subject+class they actually teach. Unlike
+ * `canTeacherAccessSection` above (attendance access, which explicitly
+ * excludes a subject's school-wide DEFAULT teacher), this DOES count a
+ * `SubjectTeacher` row with `classId: null` as sufficient - the
+ * school-wide default teacher for a subject genuinely IS "the teacher
+ * who teaches this subject", which is exactly what matters for "who
+ * may set this subject's exam paper for this class" (as opposed to
+ * "who is responsible for this class's daily roll call").
+ *
+ * Every other role (ADMIN roles, exam coordinators, etc) is
+ * unrestricted here, same convention as `canTeacherAccessSection`.
+ */
+export const canTeacherTeachSubjectForClass = async (
+  req: AuthRequest,
+  subjectId: string,
+  classId: string
+): Promise<boolean> => {
+  if (req.user?.role !== UserRole.TEACHER) return true;
+
+  const userId = req.user.userId;
+  if (!userId) return false;
+
+  const staff = await prisma.staff.findUnique({ where: { userId }, select: { id: true } });
+  if (!staff) return false;
+
+  const assignmentCount = await prisma.subjectTeacher.count({
+    where: { staffId: staff.id, subjectId, OR: [{ classId }, { classId: null }] },
+  });
+  return assignmentCount > 0;
+};
+
+/**
  * Every section a TEACHER is actually assigned to (as homeroom/class
  * teacher, or via a class-specific SubjectTeacher row) - for a
  * teacher's own "which classes can I act on" section-picker, so the

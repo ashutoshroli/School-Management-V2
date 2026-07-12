@@ -272,6 +272,8 @@ model Student {
   promotions      Promotion[]
   discounts       StudentDiscount[]
   certificates    GeneratedCertificate[]
+  examSeatAllocations ExamSeatAllocation[]
+  examAttendances     ExamAttendance[]
 }
 
 
@@ -369,6 +371,7 @@ model Section {
   students     Student[]
   attendances  StudentAttendance[]
   timetable    Timetable?
+  examQuestionPapers ExamQuestionPaper[]
 
   @@unique([classId, name])
 }
@@ -387,6 +390,7 @@ model Subject {
   subjectTeachers SubjectTeacher[]
   marks           Mark[]
   homeworks       Homework[]
+  examSchedules   ExamSchedule[]
 
   @@unique([branchId, code])
 }
@@ -931,6 +935,7 @@ model Exam {
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
   class        Class        @relation(fields: [classId], references: [id])
   marks        Mark[]
+  schedules    ExamSchedule[]
 }
 
 enum ExamType {
@@ -990,6 +995,110 @@ enum PromotionStatus {
   PROMOTED
   DETAINED
   TC_ISSUED
+}
+
+// ============================================
+// SECTION 12B: EXAM TIMETABLE + QUESTION PAPERS
+// ============================================
+
+// Per-subject exam schedule ("date sheet") - previously Exam only had
+// ONE startDate/endDate for the whole exam with no per-subject
+// date/time/room/duration at all. One row per subject sitting within
+// an exam; maxMarks lives here (rather than only surfacing later when
+// marks are entered) so the date sheet itself can show "Maths - 24 Mar,
+// 10:00-13:00, 80 marks" up front.
+model ExamSchedule {
+  id              String   @id @default(cuid())
+  examId          String
+  subjectId       String
+  examDate        DateTime
+  startTime       String   // "10:00"
+  endTime         String   // "13:00"
+  durationMinutes Int
+  roomId          String?  // optional: which room this paper is held in
+  maxMarks        Decimal  @db.Decimal(5, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  exam           Exam                @relation(fields: [examId], references: [id])
+  subject        Subject             @relation(fields: [subjectId], references: [id])
+  room           SchoolRoom?         @relation(fields: [roomId], references: [id])
+  questionPapers ExamQuestionPaper[]
+  seatAllocations ExamSeatAllocation[]
+  examAttendances ExamAttendance[]
+
+  // One schedule entry per subject per exam - a subject can't be
+  // examined twice within the same Exam.
+  @@unique([examId, subjectId])
+}
+
+// Question paper uploaded by a teacher for one subject's exam sitting
+// (PDF or DOCX). sectionId is optional - most classes use one shared
+// paper (sectionId: null), but a class with multiple sections can have
+// a different paper per section if needed (e.g. staggered timing).
+// Upload access is teacher-scoped (see canTeacherUploadQuestionPaper in
+// utils/teacherAccess.ts) - a TEACHER may only upload for a subject
+// they actually teach (school-wide default OR class-specific
+// SubjectTeacher assignment); ADMIN roles are unrestricted.
+model ExamQuestionPaper {
+  id             String   @id @default(cuid())
+  examScheduleId String
+  sectionId      String?
+  fileUrl        String
+  fileName       String
+  uploadedBy     String   // staff userId
+  createdAt      DateTime @default(now())
+
+  examSchedule ExamSchedule @relation(fields: [examScheduleId], references: [id])
+  section      Section?     @relation(fields: [sectionId], references: [id])
+}
+
+// Room-wise seat allocation for one exam sitting (Phase 2) - one row
+// per seated student. Declared here (rather than deferred to Phase 2's
+// migration) so the FK from ExamSchedule above is complete in this
+// migration; the generator endpoints themselves land in Phase 2.
+model ExamSeatAllocation {
+  id             String  @id @default(cuid())
+  examScheduleId String
+  roomId         String
+  studentId      String
+  seatNo         Int
+  createdAt      DateTime @default(now())
+
+  examSchedule ExamSchedule @relation(fields: [examScheduleId], references: [id])
+  room         SchoolRoom   @relation(fields: [roomId], references: [id])
+  student      Student      @relation(fields: [studentId], references: [id])
+
+  @@unique([examScheduleId, studentId])
+  @@unique([examScheduleId, roomId, seatNo])
+}
+
+// Per-sitting exam attendance (Phase 3) - deliberately separate from
+// StudentAttendance (daily roll call); a student can be present for
+// daily attendance but absent for one specific paper, or vice versa.
+// Declared here alongside its sibling exam models for the same
+// single-migration reason as ExamSeatAllocation above.
+model ExamAttendance {
+  id             String              @id @default(cuid())
+  examScheduleId String
+  studentId      String
+  status         ExamAttendanceStatus
+  markedBy       String?             // staff userId
+  remarks        String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  examSchedule ExamSchedule @relation(fields: [examScheduleId], references: [id])
+  student      Student      @relation(fields: [studentId], references: [id])
+
+  @@unique([examScheduleId, studentId])
+}
+
+enum ExamAttendanceStatus {
+  PRESENT
+  ABSENT
+  UNFAIR_MEANS
+  LATE
 }
 
 // ============================================
@@ -1394,6 +1503,8 @@ model SchoolRoom {
   floor         SchoolFloor @relation(fields: [floorId], references: [id])
   assignedStaff Staff?      @relation("RoomAssignedStaff", fields: [assignedStaffId], references: [id])
   sections      Section[]
+  examSchedules ExamSchedule[]
+  examSeatAllocations ExamSeatAllocation[]
 }
 
 enum SchoolRoomType {

@@ -4,15 +4,19 @@ import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAt
 import { getPeriodConfigs, upsertPeriodConfigs } from "../controllers/periodConfig.controller";
 import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } from "../controllers/timetable.controller";
 import { createExam, getExams, getExamById, updateExam, deleteExam, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
+import { bulkSetExamSchedule, getExamSchedule, updateExamScheduleEntry, deleteExamScheduleEntry } from "../controllers/examSchedule.controller";
+import { uploadExamQuestionPaper, getExamQuestionPapers, deleteExamQuestionPaper } from "../controllers/examQuestionPaper.controller";
 import { getGradeBands, createGradeBand, updateGradeBand, deleteGradeBand } from "../controllers/gradeSystem.controller";
 import { getReportCardPdf } from "../controllers/document.controller";
 import { createHomework, getHomeworks, getHomeworkById, updateHomework, deleteHomework, submitHomework, getSubmissions } from "../controllers/homework.controller";
 import { bulkPromote } from "../controllers/promotion.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
+import { uploadExamPaper, handleUploadErrors } from "../middleware/upload";
 import { markStudentAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
 import { getOrCreateTimetableSchema, upsertSlotSchema } from "../validators/timetable.validator";
 import { createExamSchema, updateExamSchema, enterMarksSchema } from "../validators/exam.validator";
+import { bulkSetExamScheduleSchema, updateExamScheduleEntrySchema } from "../validators/examSchedule.validator";
 import { createGradeBandSchema, updateGradeBandSchema } from "../validators/gradeSystem.validator";
 import { createHomeworkSchema, updateHomeworkSchema, submitHomeworkSchema } from "../validators/homework.validator";
 import { bulkPromoteSchema } from "../validators/promotion.validator";
@@ -51,6 +55,17 @@ router.post("/exams/marks", authenticate, authorize(...TEACHERS), validate(enter
 router.get("/exams/:examId/results", authenticate, getExamResults);
 router.get("/exams/:examId/report-card/:studentId", authenticate, getReportCardPdf);
 router.patch("/exams/:id/publish", authenticate, authorize(...ADMIN), togglePublish);
+
+// Exam Timetable ("date sheet") - per-subject date/time/room/maxMarks.
+router.put("/exams/schedule", authenticate, authorize(...ADMIN), validate(bulkSetExamScheduleSchema), bulkSetExamSchedule);
+router.get("/exams/:examId/schedule", authenticate, getExamSchedule);
+router.put("/exams/schedule/:id", authenticate, authorize(...ADMIN), validate(updateExamScheduleEntrySchema), updateExamScheduleEntry);
+router.delete("/exams/schedule/:id", authenticate, authorize(...ADMIN), deleteExamScheduleEntry);
+
+// Exam Question Papers (PDF/DOCX, teacher-scoped to their own subject/class)
+router.post("/exams/question-papers", authenticate, authorize(...TEACHERS), handleUploadErrors(uploadExamPaper), uploadExamQuestionPaper);
+router.get("/exams/question-papers", authenticate, authorize(...TEACHERS), getExamQuestionPapers);
+router.delete("/exams/question-papers/:id", authenticate, authorize(...TEACHERS), deleteExamQuestionPaper);
 
 // Grade System (grading scale bands, e.g. CBSE A1/A2/B1...) - system-wide,
 // not branch-scoped (see gradeSystem.controller.ts's doc comment), so any
