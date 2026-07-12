@@ -7,6 +7,7 @@ import { createExam, getExams, getExamById, updateExam, deleteExam, enterMarks, 
 import { bulkSetExamSchedule, getExamSchedule, updateExamScheduleEntry, deleteExamScheduleEntry } from "../controllers/examSchedule.controller";
 import { uploadExamQuestionPaper, getExamQuestionPapers, deleteExamQuestionPaper } from "../controllers/examQuestionPaper.controller";
 import { generateSeatPlan, getSeatPlan, clearSeatPlan, getStudentSeatSlipPdf } from "../controllers/examSeatPlan.controller";
+import { markExamAttendance, getExamAttendance, getExamAttendanceSummary } from "../controllers/examAttendance.controller";
 import { getGradeBands, createGradeBand, updateGradeBand, deleteGradeBand } from "../controllers/gradeSystem.controller";
 import { getReportCardPdf } from "../controllers/document.controller";
 import { createHomework, getHomeworks, getHomeworkById, updateHomework, deleteHomework, submitHomework, getSubmissions } from "../controllers/homework.controller";
@@ -19,6 +20,7 @@ import { getOrCreateTimetableSchema, upsertSlotSchema } from "../validators/time
 import { createExamSchema, updateExamSchema, enterMarksSchema } from "../validators/exam.validator";
 import { bulkSetExamScheduleSchema, updateExamScheduleEntrySchema } from "../validators/examSchedule.validator";
 import { generateSeatPlanSchema } from "../validators/examSeatPlan.validator";
+import { markExamAttendanceSchema } from "../validators/examAttendance.validator";
 import { createGradeBandSchema, updateGradeBandSchema } from "../validators/gradeSystem.validator";
 import { createHomeworkSchema, updateHomeworkSchema, submitHomeworkSchema } from "../validators/homework.validator";
 import { bulkPromoteSchema } from "../validators/promotion.validator";
@@ -74,6 +76,11 @@ router.post("/exams/schedule/:examScheduleId/seat-plan", authenticate, authorize
 router.get("/exams/schedule/:examScheduleId/seat-plan", authenticate, getSeatPlan);
 router.delete("/exams/schedule/:examScheduleId/seat-plan", authenticate, authorize(...ADMIN), clearSeatPlan);
 router.get("/exams/schedule/:examScheduleId/seat-plan/student/:studentId/slip", authenticate, getStudentSeatSlipPdf);
+
+// Exam Attendance (per-sitting, separate from daily StudentAttendance)
+router.post("/exams/schedule/:examScheduleId/attendance", authenticate, authorize(...TEACHERS), validate(markExamAttendanceSchema), markExamAttendance);
+router.get("/exams/schedule/:examScheduleId/attendance", authenticate, authorize(...TEACHERS), getExamAttendance);
+router.get("/exams/:examId/attendance-summary", authenticate, authorize(...TEACHERS), getExamAttendanceSummary);
 
 // Grade System (grading scale bands, e.g. CBSE A1/A2/B1...) - system-wide,
 // not branch-scoped (see gradeSystem.controller.ts's doc comment), so any

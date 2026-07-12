@@ -172,7 +172,13 @@ const lookupGrade = (pct: number, bands: { minMarks: any; maxMarks: any; grade: 
 };
 
 /**
- * Enter/update marks (bulk for a subject+exam)
+ * Enter/update marks (bulk for a subject+exam). Cross-checks against
+ * ExamAttendance for this subject's sitting (if a schedule entry and
+ * any attendance records exist) and returns a non-blocking `warnings`
+ * list for any student marked ABSENT/UNFAIR_MEANS for the exam but
+ * still given marks here - a real edge case (e.g. a supplementary/
+ * makeup exam) that shouldn't be silently invisible to whoever entered
+ * the marks, but also shouldn't outright block a legitimate override.
  */
 export const enterMarks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -184,7 +190,20 @@ export const enterMarks = async (req: AuthRequest, res: Response): Promise<void>
     // students for a single class).
     const gradeBands = await prisma.gradeSystem.findMany({ orderBy: { minMarks: "asc" } });
 
+    // Best-effort lookup of this subject's exam attendance (if a
+    // per-subject schedule + attendance records exist for it) - never
+    // blocks marks entry if there's no schedule/attendance data at all
+    // (e.g. an older exam created before Phase 1's exam-schedule
+    // feature, or a subject whose attendance was never taken).
+    const schedule = await prisma.examSchedule.findUnique({ where: { examId_subjectId: { examId, subjectId } } });
+    const attendanceByStudent = new Map<string, string>();
+    if (schedule) {
+      const attendances = await prisma.examAttendance.findMany({ where: { examScheduleId: schedule.id } });
+      for (const a of attendances) attendanceByStudent.set(a.studentId, a.status);
+    }
+
     let saved = 0;
+    const warnings: { studentId: string; examAttendanceStatus: string }[] = [];
     for (const m of marks) {
       const pct = (m.obtainedMarks / m.maxMarks) * 100;
       const grade = lookupGrade(pct, gradeBands);
@@ -195,8 +214,13 @@ export const enterMarks = async (req: AuthRequest, res: Response): Promise<void>
         create: { examId, studentId: m.studentId, subjectId, maxMarks: m.maxMarks, obtainedMarks: m.obtainedMarks, grade },
       });
       saved++;
+
+      const attendanceStatus = attendanceByStudent.get(m.studentId);
+      if (attendanceStatus === "ABSENT" || attendanceStatus === "UNFAIR_MEANS") {
+        warnings.push({ studentId: m.studentId, examAttendanceStatus: attendanceStatus });
+      }
     }
-    sendSuccess(res, { saved }, `${saved} marks saved`);
+    sendSuccess(res, { saved, warnings }, `${saved} marks saved${warnings.length > 0 ? ` (${warnings.length} warning(s) - see 'warnings')` : ""}`);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 
