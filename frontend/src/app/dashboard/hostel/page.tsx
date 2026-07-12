@@ -26,6 +26,18 @@ export default function HostelPage() {
   const [roomForm, setRoomForm] = useState({ roomNo: "", type: "DOUBLE", capacity: "2", monthlyFee: "" });
   const [addingRoom, setAddingRoom] = useState(false);
 
+  // Bulk Add Floors - set up N floors on a building in one call, same
+  // layout as the School Buildings page's bulk floor editor.
+  const [bulkFloorBuilding, setBulkFloorBuilding] = useState<any>(null);
+  const [bulkFloorForm, setBulkFloorForm] = useState({ count: "1", startingFloorNo: "0" });
+  const [addingBulkFloors, setAddingBulkFloors] = useState(false);
+
+  // Bulk Add Rooms - a whole list of rooms on one floor in one call,
+  // same repeatable-row-editor layout as School Buildings.
+  const [bulkRoomFloor, setBulkRoomFloor] = useState<{ buildingName: string; floor: any } | null>(null);
+  const [bulkRoomRows, setBulkRoomRows] = useState<any[]>([{ roomNo: "", type: "DOUBLE", capacity: "2", monthlyFee: "" }]);
+  const [addingBulkRooms, setAddingBulkRooms] = useState(false);
+
   // Manage Room (allocate/deallocate students in a specific room)
   const [manageRoom, setManageRoom] = useState<any>(null);
   const [studentSearch, setStudentSearch] = useState("");
@@ -122,6 +134,59 @@ export default function HostelPage() {
       alert(err.response?.data?.message || "Failed to add room");
     } finally {
       setAddingRoom(false);
+    }
+  };
+
+  const handleBulkAddFloors = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkFloorBuilding) return;
+    setAddingBulkFloors(true);
+    try {
+      await api.post("/facilities/hostel/floors/bulk", {
+        buildingId: bulkFloorBuilding.id,
+        count: parseInt(bulkFloorForm.count, 10),
+        startingFloorNo: parseInt(bulkFloorForm.startingFloorNo, 10) || 0,
+      });
+      setBulkFloorBuilding(null);
+      setBulkFloorForm({ count: "1", startingFloorNo: "0" });
+      fetchBuildings();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to add floors");
+    } finally {
+      setAddingBulkFloors(false);
+    }
+  };
+
+  const openBulkAddRooms = (buildingName: string, floor: any) => {
+    setBulkRoomFloor({ buildingName, floor });
+    setBulkRoomRows([{ roomNo: "", type: "DOUBLE", capacity: "2", monthlyFee: "" }]);
+  };
+
+  const addBulkRoomRow = () => setBulkRoomRows([...bulkRoomRows, { roomNo: "", type: "DOUBLE", capacity: "2", monthlyFee: "" }]);
+  const removeBulkRoomRow = (i: number) => setBulkRoomRows(bulkRoomRows.filter((_, idx) => idx !== i));
+  const updateBulkRoomRow = (i: number, field: string, value: string) =>
+    setBulkRoomRows(bulkRoomRows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+
+  const handleBulkAddRooms = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkRoomFloor) return;
+    const rows = bulkRoomRows.filter((r) => r.roomNo);
+    if (rows.length === 0) {
+      alert("Add at least one room with a room number");
+      return;
+    }
+    setAddingBulkRooms(true);
+    try {
+      await api.post("/facilities/hostel/rooms/bulk", {
+        floorId: bulkRoomFloor.floor.id,
+        rooms: rows.map((r) => ({ roomNo: r.roomNo, type: r.type, capacity: parseInt(r.capacity, 10) || 1, monthlyFee: parseFloat(r.monthlyFee) || 0 })),
+      });
+      setBulkRoomFloor(null);
+      fetchBuildings();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to add rooms");
+    } finally {
+      setAddingBulkRooms(false);
     }
   };
 
@@ -299,6 +364,13 @@ export default function HostelPage() {
                   >
                     <Layers className="h-3.5 w-3.5" /> Add Floor
                   </button>
+                  <button
+                    onClick={() => setBulkFloorBuilding(b)}
+                    title="Add Multiple Floors at once"
+                    className="text-xs font-medium text-primary-600 hover:text-primary-700 border border-primary-200 hover:bg-primary-50 rounded-lg px-2.5 py-1 flex items-center gap-1"
+                  >
+                    <Layers className="h-3.5 w-3.5" /> Add Multiple Floors
+                  </button>
                   <button onClick={() => deleteBuilding(b.id, b.name)} title="Delete Building" className="text-red-400 hover:text-red-600">
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -309,12 +381,20 @@ export default function HostelPage() {
                 <div key={f.id} className="mb-3">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-sm font-medium text-gray-600">Floor {f.floorNo}</p>
-                    <button
-                      onClick={() => setRoomFloor({ buildingName: b.name, floor: f })}
-                      className="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1"
-                    >
-                      <DoorOpen className="h-3.5 w-3.5" /> Add Room
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setRoomFloor({ buildingName: b.name, floor: f })}
+                        className="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                      >
+                        <DoorOpen className="h-3.5 w-3.5" /> Add Room
+                      </button>
+                      <button
+                        onClick={() => openBulkAddRooms(b.name, f)}
+                        className="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                      >
+                        <DoorOpen className="h-3.5 w-3.5" /> Add Multiple Rooms
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
                     {f.rooms?.map((r: any) => (
@@ -401,6 +481,54 @@ export default function HostelPage() {
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setRoomFloor(null)} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={addingRoom} className="btn-primary disabled:opacity-50">{addingRoom ? "Adding..." : "Add Room"}</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Add Multiple Floors */}
+      <Modal isOpen={!!bulkFloorBuilding} onClose={() => setBulkFloorBuilding(null)} title={`Add Multiple Floors - ${bulkFloorBuilding?.name || ""}`}>
+        <form onSubmit={handleBulkAddFloors} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">How many floors? *</label>
+            <input type="number" min={1} max={50} className="input-field" value={bulkFloorForm.count} onChange={(e) => setBulkFloorForm({ ...bulkFloorForm, count: e.target.value })} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Starting Floor Number</label>
+            <input type="number" className="input-field" value={bulkFloorForm.startingFloorNo} onChange={(e) => setBulkFloorForm({ ...bulkFloorForm, startingFloorNo: e.target.value })} placeholder="e.g. 0 for Ground Floor" />
+          </div>
+          <p className="text-xs text-gray-400">This will create floors {bulkFloorForm.startingFloorNo || 0} to {(parseInt(bulkFloorForm.startingFloorNo || "0", 10) + Math.max(parseInt(bulkFloorForm.count || "1", 10), 1) - 1)}.</p>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setBulkFloorBuilding(null)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={addingBulkFloors} className="btn-primary disabled:opacity-50">{addingBulkFloors ? "Adding..." : "Add Floors"}</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Add Multiple Rooms */}
+      <Modal
+        isOpen={!!bulkRoomFloor}
+        onClose={() => setBulkRoomFloor(null)}
+        title={`Add Multiple Rooms - ${bulkRoomFloor?.buildingName || ""}, Floor ${bulkRoomFloor?.floor?.floorNo ?? ""}`}
+        size="lg"
+      >
+        <form onSubmit={handleBulkAddRooms} className="space-y-4">
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {bulkRoomRows.map((r, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                <input className="input-field col-span-3" placeholder="Room No *" value={r.roomNo} onChange={(e) => updateBulkRoomRow(i, "roomNo", e.target.value)} />
+                <select className="input-field col-span-3" value={r.type} onChange={(e) => updateBulkRoomRow(i, "type", e.target.value)}>
+                  {ROOM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input type="number" min={1} className="input-field col-span-2" placeholder="Capacity" value={r.capacity} onChange={(e) => updateBulkRoomRow(i, "capacity", e.target.value)} />
+                <input type="number" min={0} className="input-field col-span-3" placeholder="Monthly Fee" value={r.monthlyFee} onChange={(e) => updateBulkRoomRow(i, "monthlyFee", e.target.value)} />
+                <button type="button" onClick={() => removeBulkRoomRow(i)} className="col-span-1 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={addBulkRoomRow} className="btn-secondary flex items-center gap-2 text-sm"><Plus className="h-4 w-4" /> Add Row</button>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setBulkRoomFloor(null)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={addingBulkRooms} className="btn-primary disabled:opacity-50">{addingBulkRooms ? "Adding..." : `Add ${bulkRoomRows.filter((r) => r.roomNo).length} Room(s)`}</button>
           </div>
         </form>
       </Modal>

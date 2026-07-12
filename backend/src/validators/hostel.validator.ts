@@ -45,3 +45,27 @@ export const bulkAllocateRoomSchema = z.object({
     reassignExisting: z.boolean().optional(),
   }),
 });
+
+export const bulkAddFloorsSchema = z.object({
+  body: z.object({
+    buildingId: z.string().min(1, "buildingId is required"),
+    count: z.number().int().min(1, "count must be at least 1").max(50, "count cannot exceed 50 at once"),
+    startingFloorNo: z.number().int().optional(),
+  }),
+});
+
+const bulkHostelRoomEntrySchema = z.object({
+  roomNo: z.string().min(1, "roomNo is required"),
+  type: z.enum(["SINGLE", "DOUBLE", "DORMITORY"]),
+  capacity: z.number().int().min(1, "capacity must be a positive integer"),
+  monthlyFee: z.union([z.number(), z.string()]).transform((v) => Number(v)).refine((v) => Number.isFinite(v) && v >= 0, {
+    message: "monthlyFee must be a non-negative number",
+  }),
+});
+
+export const bulkAddRoomsSchema = z.object({
+  body: z.object({
+    floorId: z.string().min(1, "floorId is required"),
+    rooms: z.array(bulkHostelRoomEntrySchema).min(1, "rooms must be a non-empty array"),
+  }),
+});

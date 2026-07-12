@@ -100,3 +100,59 @@ describe("admission.controller - getAdmissionInquiries (classAppliedFor + date-r
     expect(whereArg.createdAt).toEqual({ gte: new Date("2025-01-01"), lte: new Date("2025-01-31") });
   });
 });
+
+
+// BUG FIX: the public admission form lets a visitor pick ANY active
+// branch, but resolveBranchId(req) for a SUPER_ADMIN always resolves to
+// their own current session branch (never "all branches") - an inquiry
+// submitted for a different branch was silently invisible to that
+// admin session. getAdmissionInquiries now shows inquiries across every
+// branch for a SUPER_ADMIN by default (no branch filter unless they
+// explicitly pass one), while a BRANCH_ADMIN stays locked to their own
+// branch exactly as before.
+describe("admission.controller - getAdmissionInquiries (branch visibility fix)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.admissionInquiry.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.admissionInquiry.count as jest.Mock).mockResolvedValue(0);
+  });
+
+  it("BUG FIX: a SUPER_ADMIN with no explicit branchId sees inquiries across EVERY branch (no branch filter applied)", async () => {
+    const req = makeReq({
+      query: {},
+      user: { userId: "super-1", email: "s@test.com", role: UserRole.SUPER_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await getAdmissionInquiries(req, res);
+
+    const whereArg = (prisma.admissionInquiry.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.branchId).toBeUndefined();
+  });
+
+  it("a SUPER_ADMIN can still narrow to one branch by explicitly passing branchId", async () => {
+    const req = makeReq({
+      query: { branchId: "branch-2" },
+      user: { userId: "super-1", email: "s@test.com", role: UserRole.SUPER_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await getAdmissionInquiries(req, res);
+
+    const whereArg = (prisma.admissionInquiry.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.branchId).toBe("branch-2");
+  });
+
+  it("SECURITY: a BRANCH_ADMIN stays locked to their own branch regardless of any query param they send", async () => {
+    const req = makeReq({
+      query: { branchId: "branch-OTHER" },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await getAdmissionInquiries(req, res);
+
+    const whereArg = (prisma.admissionInquiry.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.branchId).toBe("branch-1");
+  });
+});

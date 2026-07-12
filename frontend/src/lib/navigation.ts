@@ -82,6 +82,15 @@ export const navigation: NavItem[] = [
     icon: "ClipboardCheck",
     roles: [...ADMIN_ROLES, "TEACHER"],
   },
+  // Staff Attendance already had its own working page/feature
+  // (self check-in, monthly report, CSV export) but was never linked
+  // from the sidebar - only reachable via a direct URL.
+  {
+    label: "Staff Attendance",
+    href: "/dashboard/staff/attendance",
+    icon: "UserCheck2",
+    roles: STAFF_ROLES,
+  },
   // The parent-portal ("My ...") pages below are deliberately separate
   // routes rather than role-branching inside the existing admin pages -
   // the admin pages (attendance/fees/exams/homework) manage ALL
@@ -135,6 +144,16 @@ export const navigation: NavItem[] = [
     label: "Exams",
     href: "/dashboard/exams",
     icon: "FileText",
+    roles: [...ADMIN_ROLES, "TEACHER"],
+  },
+  // Exam Attendance (per-sitting, room-wise) already existed as a
+  // panel inside each exam's Timetable page but had no direct sidebar
+  // entry point of its own - links into the same Exams list, where
+  // "Timetable" -> the per-subject "Exam Attendance" button is reached.
+  {
+    label: "Exam Attendance",
+    href: "/dashboard/exams",
+    icon: "ClipboardCheck",
     roles: [...ADMIN_ROLES, "TEACHER"],
   },
   {

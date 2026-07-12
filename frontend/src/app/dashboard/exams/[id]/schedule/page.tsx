@@ -110,8 +110,13 @@ export default function ExamSchedulePage() {
     setAttendanceRooms([]);
     setAttendanceEdits({});
     try {
-      const examsRes = await api.get("/academics/exams");
-      const found = (examsRes.data.data || []).find((e: any) => e.id === examId);
+      // BUG FIX: this used to fetch the ENTIRE (unscoped) exam list and
+      // find this exam client-side - fragile (any transient mismatch
+      // between the list and this specific id showed as a false "Exam
+      // not found") and slow. getExamById is branch-scoped and fetches
+      // exactly this one exam directly.
+      const examRes = await api.get(`/academics/exams/${examId}`);
+      const found = examRes.data.data;
       if (!found) { setError("Exam not found"); return; }
       setExam(found);
 

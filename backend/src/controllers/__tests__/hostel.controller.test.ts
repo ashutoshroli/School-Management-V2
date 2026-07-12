@@ -4,8 +4,8 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     hostelBuilding: { create: jest.fn(), findUnique: jest.fn() },
-    hostelFloor: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
-    hostelRoom: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+    hostelFloor: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), createMany: jest.fn() },
+    hostelRoom: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), createMany: jest.fn() },
     hostelAllocation: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(), upsert: jest.fn() },
     student: { findUnique: jest.fn(), findMany: jest.fn() },
     $transaction: jest.fn(),
@@ -13,7 +13,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { createBuilding, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom } from "../hostel.controller";
+import { createBuilding, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, bulkAddFloors, bulkAddRooms } from "../hostel.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -466,5 +466,113 @@ describe("hostel.controller - deallocateRoom (SECURITY: branch-access fix)", () 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(prisma.hostelAllocation.update).toHaveBeenCalledWith({ where: { id: "alloc-1" }, data: { endDate: expect.any(Date) } });
     expect(prisma.hostelRoom.update).toHaveBeenCalledWith({ where: { id: "room-1" }, data: { occupied: { decrement: 1 } } });
+  });
+});
+
+
+// UX addition: bulk floor/room creation for hostel buildings, matching
+// the same convenience already shipped for School Buildings
+// (bulkAddSchoolFloors/bulkAddSchoolRooms).
+describe("hostel.controller - bulkAddFloors", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.hostelBuilding.findUnique as jest.Mock).mockResolvedValue({ id: "building-1", branchId: "branch-1" });
+    (prisma.hostelFloor.createMany as jest.Mock).mockResolvedValue({ count: 3 });
+    (prisma.hostelFloor.findMany as jest.Mock).mockResolvedValue([
+      { id: "f1", floorNo: 0 }, { id: "f2", floorNo: 1 }, { id: "f3", floorNo: 2 },
+    ]);
+  });
+
+  it("returns 404 when the building does not exist", async () => {
+    (prisma.hostelBuilding.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ body: { buildingId: "building-1", count: 3 } });
+    const res = makeMockRes();
+
+    await bulkAddFloors(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a building belonging to a DIFFERENT branch", async () => {
+    (prisma.hostelBuilding.findUnique as jest.Mock).mockResolvedValue({ id: "building-1", branchId: "branch-OTHER" });
+    const req = makeReq({ body: { buildingId: "building-1", count: 3 } });
+    const res = makeMockRes();
+
+    await bulkAddFloors(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.hostelFloor.createMany).not.toHaveBeenCalled();
+  });
+
+  it("creates N sequential floors starting from 0 by default", async () => {
+    const req = makeReq({ body: { buildingId: "building-1", count: 3 } });
+    const res = makeMockRes();
+
+    await bulkAddFloors(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const data = (prisma.hostelFloor.createMany as jest.Mock).mock.calls[0][0].data;
+    expect(data).toEqual([
+      { buildingId: "building-1", floorNo: 0 },
+      { buildingId: "building-1", floorNo: 1 },
+      { buildingId: "building-1", floorNo: 2 },
+    ]);
+  });
+
+  it("honors a custom startingFloorNo", async () => {
+    const req = makeReq({ body: { buildingId: "building-1", count: 2, startingFloorNo: 5 } });
+    const res = makeMockRes();
+
+    await bulkAddFloors(req, res);
+
+    const data = (prisma.hostelFloor.createMany as jest.Mock).mock.calls[0][0].data;
+    expect(data.map((f: any) => f.floorNo)).toEqual([5, 6]);
+  });
+});
+
+describe("hostel.controller - bulkAddRooms", () => {
+  const FLOOR = { id: "floor-1", building: { id: "building-1", branchId: "branch-1" } };
+  const ROOMS_INPUT = [
+    { roomNo: "101", type: "DOUBLE", capacity: 2, monthlyFee: 5000 },
+    { roomNo: "102", type: "DORMITORY", capacity: 6, monthlyFee: 3000 },
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.hostelFloor.findUnique as jest.Mock).mockResolvedValue(FLOOR);
+    (prisma.hostelRoom.createMany as jest.Mock).mockResolvedValue({ count: 2 });
+    (prisma.hostelRoom.findMany as jest.Mock).mockResolvedValue([{ id: "r1", roomNo: "101" }, { id: "r2", roomNo: "102" }]);
+  });
+
+  it("returns 404 when the floor does not exist", async () => {
+    (prisma.hostelFloor.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ body: { floorId: "floor-1", rooms: ROOMS_INPUT } });
+    const res = makeMockRes();
+
+    await bulkAddRooms(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a floor belonging to a DIFFERENT branch", async () => {
+    (prisma.hostelFloor.findUnique as jest.Mock).mockResolvedValue({ id: "floor-1", building: { branchId: "branch-OTHER" } });
+    const req = makeReq({ body: { floorId: "floor-1", rooms: ROOMS_INPUT } });
+    const res = makeMockRes();
+
+    await bulkAddRooms(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.hostelRoom.createMany).not.toHaveBeenCalled();
+  });
+
+  it("creates every room in the list in one call", async () => {
+    const req = makeReq({ body: { floorId: "floor-1", rooms: ROOMS_INPUT } });
+    const res = makeMockRes();
+
+    await bulkAddRooms(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(prisma.hostelRoom.createMany).toHaveBeenCalledTimes(1);
+    expect((prisma.hostelRoom.createMany as jest.Mock).mock.calls[0][0].data).toHaveLength(2);
   });
 });

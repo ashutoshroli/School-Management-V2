@@ -277,6 +277,66 @@ export const bulkAllocateRoom = async (req: AuthRequest, res: Response): Promise
   }
 };
 
+/**
+ * Creates N sequential floors on one hostel building in a single call,
+ * same "set up a whole building at once" convenience as
+ * bulkAddSchoolFloors (schoolBuilding.controller.ts) - auto-numbered
+ * from an optional `startingFloorNo` (default 0). HostelFloor has no
+ * `name` field (unlike SchoolFloor), so there's no name-prefix option
+ * here - just sequential floor numbers.
+ */
+export const bulkAddFloors = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { buildingId, count, startingFloorNo } = req.body;
+
+    const building = await prisma.hostelBuilding.findUnique({ where: { id: buildingId } });
+    if (!building) { sendError(res, "Building not found", 404); return; }
+    if (!canAccessBranch(req, building.branchId)) { sendError(res, "Building not found", 404); return; }
+
+    const start = startingFloorNo ?? 0;
+    const floors = Array.from({ length: count }, (_, i) => ({ buildingId, floorNo: start + i }));
+
+    await prisma.hostelFloor.createMany({ data: floors });
+
+    const created = await prisma.hostelFloor.findMany({
+      where: { buildingId, floorNo: { in: floors.map((f) => f.floorNo) } },
+      orderBy: { floorNo: "asc" },
+    });
+    sendSuccess(res, created, `${created.length} floor(s) added`, 201);
+  } catch (error) { sendError(res, "Failed to add floors", 500, (error as Error).message); }
+};
+
+/**
+ * Creates a whole list of rooms on one hostel floor in a single call,
+ * same convenience as bulkAddSchoolRooms - one INSERT instead of one
+ * addRoom call per room.
+ */
+export const bulkAddRooms = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { floorId, rooms } = req.body;
+
+    const floor = await prisma.hostelFloor.findUnique({ where: { id: floorId }, include: { building: true } });
+    if (!floor) { sendError(res, "Floor not found", 404); return; }
+    if (!canAccessBranch(req, floor.building.branchId)) { sendError(res, "Floor not found", 404); return; }
+
+    await prisma.hostelRoom.createMany({
+      data: rooms.map((r: any) => ({
+        floorId,
+        roomNo: r.roomNo,
+        type: r.type,
+        capacity: r.capacity,
+        monthlyFee: r.monthlyFee,
+      })),
+    });
+
+    const created = await prisma.hostelRoom.findMany({
+      where: { floorId, roomNo: { in: rooms.map((r: any) => r.roomNo) } },
+      orderBy: { roomNo: "asc" },
+    });
+    sendSuccess(res, created, `${created.length} room(s) added`, 201);
+  } catch (error) { sendError(res, "Failed to add rooms", 500, (error as Error).message); }
+};
+
 export const deallocateRoom = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;

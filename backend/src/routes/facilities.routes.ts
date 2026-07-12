@@ -3,7 +3,7 @@ import { UserRole } from "@prisma/client";
 import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, getIssuedBooks, deleteBook } from "../controllers/library.controller";
 import { addItem, getItems, getItemById, purchaseStock, issueStock, getLowStockAlerts, deleteItem } from "../controllers/inventory.controller";
 import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, getVehicleById, addVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute } from "../controllers/transport.controller";
-import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding } from "../controllers/hostel.controller";
+import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding, bulkAddFloors, bulkAddRooms } from "../controllers/hostel.controller";
 import { createSchoolBuilding, getSchoolBuildings, addSchoolFloor, addSchoolRoom, updateSchoolRoom, deleteSchoolRoom, deleteSchoolBuilding, getSchoolOccupancySummary, bulkAddSchoolFloors, bulkAddSchoolRooms, addRoomCabin, getRoomCabins, updateRoomCabin, deleteRoomCabin } from "../controllers/schoolBuilding.controller";
 import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
@@ -11,7 +11,7 @@ import { validate } from "../middleware/validate";
 import { addBookSchema, issueBookSchema, bulkIssueBookSchema } from "../validators/library.validator";
 import { addItemSchema, purchaseStockSchema, issueStockSchema } from "../validators/inventory.validator";
 import { createRouteSchema, addStopSchema, allocateStudentSchema, addVehicleSchema, assignVehicleToRouteSchema } from "../validators/transport.validator";
-import { createBuildingSchema, addFloorSchema, addRoomSchema, allocateRoomSchema, bulkAllocateRoomSchema } from "../validators/hostel.validator";
+import { createBuildingSchema, addFloorSchema, addRoomSchema, allocateRoomSchema, bulkAllocateRoomSchema, bulkAddFloorsSchema, bulkAddRoomsSchema } from "../validators/hostel.validator";
 import { createSchoolBuildingSchema, addSchoolFloorSchema, addSchoolRoomSchema, updateSchoolRoomSchema, bulkAddSchoolFloorsSchema, bulkAddSchoolRoomsSchema, addRoomCabinSchema, updateRoomCabinSchema } from "../validators/schoolBuilding.validator";
 import { createDeviceSchema, updateDeviceSchema } from "../validators/attendanceDevice.validator";
 
@@ -63,6 +63,8 @@ router.post("/hostel/allocate/bulk", authorize(...ADMIN, UserRole.WARDEN), valid
 router.patch("/hostel/deallocate/:id", authorize(...ADMIN, UserRole.WARDEN), deallocateRoom);
 router.get("/hostel/occupancy", getOccupancy);
 router.delete("/hostel/buildings/:id", authorize(...ADMIN, UserRole.WARDEN), deleteBuilding);
+router.post("/hostel/floors/bulk", authorize(...ADMIN, UserRole.WARDEN), validate(bulkAddFloorsSchema), bulkAddFloors);
+router.post("/hostel/rooms/bulk", authorize(...ADMIN, UserRole.WARDEN), validate(bulkAddRoomsSchema), bulkAddRooms);
 
 // === SCHOOL BUILDINGS (general-purpose: classrooms/labs/offices/etc) ===
 router.post("/school-buildings", authorize(...ADMIN), branchAccess, validate(createSchoolBuildingSchema), createSchoolBuilding);

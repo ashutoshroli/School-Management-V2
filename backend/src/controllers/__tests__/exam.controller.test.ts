@@ -5,7 +5,7 @@ jest.mock("../../config/database", () => ({
   default: {
     gradeSystem: { findMany: jest.fn() },
     mark: { upsert: jest.fn(), groupBy: jest.fn() },
-    exam: { findUnique: jest.fn() },
+    exam: { findUnique: jest.fn(), findMany: jest.fn() },
     subject: { findMany: jest.fn() },
     examSchedule: { findUnique: jest.fn() },
     examAttendance: { findMany: jest.fn() },
@@ -13,7 +13,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { enterMarks, getExamById } from "../exam.controller";
+import { enterMarks, getExamById, getExams } from "../exam.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -243,5 +243,72 @@ describe("exam.controller - getExamById", () => {
     expect(prisma.subject.findMany).not.toHaveBeenCalled();
     const payload = (res.json as jest.Mock).mock.calls[0][0].data;
     expect(payload.marksSummary).toEqual([]);
+  });
+});
+
+
+// SECURITY BUG FIX: getExams previously had NO branch scoping at all -
+// any authenticated user could list every exam across every branch by
+// calling it with no filters. It now scopes through the Exam->Class
+// relation for non-Super-Admin roles, and defaults a Super Admin (with
+// no explicit classId) to their own current session branch.
+describe("exam.controller - getExams (branch scoping)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.exam.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("SECURITY: scopes a TEACHER's unfiltered request to their own branch's classes", async () => {
+    const req = makeReq({ query: {} });
+    const res = makeMockRes();
+
+    await getExams(req, res);
+
+    expect((prisma.exam.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ class: { branchId: "branch-1" } });
+  });
+
+  it("SECURITY: scopes a BRANCH_ADMIN's unfiltered request to their own branch's classes", async () => {
+    const req = makeReq({ query: {}, user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" } });
+    const res = makeMockRes();
+
+    await getExams(req, res);
+
+    expect((prisma.exam.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ class: { branchId: "branch-1" } });
+  });
+
+  it("does not apply a branch filter when an explicit classId is given (a class is already branch-specific)", async () => {
+    const req = makeReq({ query: { classId: "class-1" } });
+    const res = makeMockRes();
+
+    await getExams(req, res);
+
+    expect((prisma.exam.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ classId: "class-1" });
+  });
+
+  it("defaults a SUPER_ADMIN's unfiltered request to their own current session branch", async () => {
+    const req = makeReq({ query: {}, user: { userId: "super-1", email: "s@test.com", role: UserRole.SUPER_ADMIN, branchId: "branch-1" } });
+    const res = makeMockRes();
+
+    await getExams(req, res);
+
+    expect((prisma.exam.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ class: { branchId: "branch-1" } });
+  });
+
+  it("applies no branch filter for a SUPER_ADMIN with no session branchId at all (e.g. zero branches exist)", async () => {
+    const req = makeReq({ query: {}, user: { userId: "super-1", email: "s@test.com", role: UserRole.SUPER_ADMIN, branchId: undefined } });
+    const res = makeMockRes();
+
+    await getExams(req, res);
+
+    expect((prisma.exam.findMany as jest.Mock).mock.calls[0][0].where).toEqual({});
+  });
+
+  it("still applies an academicYearId filter alongside the branch scoping", async () => {
+    const req = makeReq({ query: { academicYearId: "ay-1" } });
+    const res = makeMockRes();
+
+    await getExams(req, res);
+
+    expect((prisma.exam.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ class: { branchId: "branch-1" }, academicYearId: "ay-1" });
   });
 });
