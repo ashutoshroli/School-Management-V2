@@ -6,6 +6,7 @@ import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } fro
 import { createExam, getExams, getExamById, updateExam, deleteExam, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
 import { bulkSetExamSchedule, getExamSchedule, updateExamScheduleEntry, deleteExamScheduleEntry } from "../controllers/examSchedule.controller";
 import { uploadExamQuestionPaper, getExamQuestionPapers, deleteExamQuestionPaper } from "../controllers/examQuestionPaper.controller";
+import { generateSeatPlan, getSeatPlan, clearSeatPlan, getStudentSeatSlipPdf } from "../controllers/examSeatPlan.controller";
 import { getGradeBands, createGradeBand, updateGradeBand, deleteGradeBand } from "../controllers/gradeSystem.controller";
 import { getReportCardPdf } from "../controllers/document.controller";
 import { createHomework, getHomeworks, getHomeworkById, updateHomework, deleteHomework, submitHomework, getSubmissions } from "../controllers/homework.controller";
@@ -17,6 +18,7 @@ import { markStudentAttendanceSchema, cardTapSchema } from "../validators/attend
 import { getOrCreateTimetableSchema, upsertSlotSchema } from "../validators/timetable.validator";
 import { createExamSchema, updateExamSchema, enterMarksSchema } from "../validators/exam.validator";
 import { bulkSetExamScheduleSchema, updateExamScheduleEntrySchema } from "../validators/examSchedule.validator";
+import { generateSeatPlanSchema } from "../validators/examSeatPlan.validator";
 import { createGradeBandSchema, updateGradeBandSchema } from "../validators/gradeSystem.validator";
 import { createHomeworkSchema, updateHomeworkSchema, submitHomeworkSchema } from "../validators/homework.validator";
 import { bulkPromoteSchema } from "../validators/promotion.validator";
@@ -66,6 +68,12 @@ router.delete("/exams/schedule/:id", authenticate, authorize(...ADMIN), deleteEx
 router.post("/exams/question-papers", authenticate, authorize(...TEACHERS), handleUploadErrors(uploadExamPaper), uploadExamQuestionPaper);
 router.get("/exams/question-papers", authenticate, authorize(...TEACHERS), getExamQuestionPapers);
 router.delete("/exams/question-papers/:id", authenticate, authorize(...TEACHERS), deleteExamQuestionPaper);
+
+// Exam Seat Plan (room-wise seating for one exam subject sitting)
+router.post("/exams/schedule/:examScheduleId/seat-plan", authenticate, authorize(...ADMIN), validate(generateSeatPlanSchema), generateSeatPlan);
+router.get("/exams/schedule/:examScheduleId/seat-plan", authenticate, getSeatPlan);
+router.delete("/exams/schedule/:examScheduleId/seat-plan", authenticate, authorize(...ADMIN), clearSeatPlan);
+router.get("/exams/schedule/:examScheduleId/seat-plan/student/:studentId/slip", authenticate, getStudentSeatSlipPdf);
 
 // Grade System (grading scale bands, e.g. CBSE A1/A2/B1...) - system-wide,
 // not branch-scoped (see gradeSystem.controller.ts's doc comment), so any

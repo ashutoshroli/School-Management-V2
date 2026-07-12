@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CalendarClock, Save, Plus, Trash2, Upload, FileText, Loader2 } from "lucide-react";
+import { ArrowLeft, CalendarClock, Save, Plus, Trash2, Upload, FileText, Loader2, Armchair, X, Users } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
 
 interface ScheduleRow {
@@ -51,6 +52,23 @@ export default function ExamSchedulePage() {
   const [papersByScheduleId, setPapersByScheduleId] = useState<Record<string, any[]>>({});
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
 
+  // Seat Plan generator/viewer - per scheduled subject sitting.
+  const [sections, setSections] = useState<any[]>([]);
+  const [seatPlanModalFor, setSeatPlanModalFor] = useState<string | null>(null);
+  const [seatPlanForm, setSeatPlanForm] = useState({
+    roomIds: [] as string[],
+    arrangement: "ROLL_NO_ORDER" as "ROLL_NO_ORDER" | "ALTERNATE_GENDER",
+    sectionIds: [] as string[],
+    gender: "",
+    rollNoFrom: "",
+    rollNoTo: "",
+  });
+  const [generatingSeatPlan, setGeneratingSeatPlan] = useState(false);
+  const [seatPlanError, setSeatPlanError] = useState("");
+  const [viewingSeatPlanFor, setViewingSeatPlanFor] = useState<string | null>(null);
+  const [seatPlanView, setSeatPlanView] = useState<any>(null);
+  const [loadingSeatPlanView, setLoadingSeatPlanView] = useState(false);
+
   const flattenRooms = (buildings: any[]) =>
     buildings.flatMap((b: any) =>
       (b.floors || []).flatMap((f: any) =>
@@ -67,13 +85,15 @@ export default function ExamSchedulePage() {
       if (!found) { setError("Exam not found"); return; }
       setExam(found);
 
-      const [subjectsRes, scheduleRes, roomsRes] = await Promise.all([
+      const [subjectsRes, scheduleRes, roomsRes, sectionsRes] = await Promise.all([
         api.get(`/classes/${found.classId}/subjects`),
         api.get(`/academics/exams/${examId}/schedule`),
         api.get("/facilities/school-buildings").catch(() => ({ data: { data: [] } })),
+        api.get("/classes/sections", { params: { classId: found.classId } }).catch(() => ({ data: { data: [] } })),
       ]);
       setSubjects((subjectsRes.data.data || []).map((cs: any) => cs.subject));
       setRooms(flattenRooms(roomsRes.data.data || []));
+      setSections(sectionsRes.data.data || []);
 
       const schedule = scheduleRes.data.data || [];
       if (schedule.length > 0) {
@@ -184,6 +204,92 @@ export default function ExamSchedulePage() {
 
   const subjectName = (id: string) => subjects.find((s) => s.id === id)?.name || "-";
 
+  const openSeatPlanModal = (examScheduleId: string) => {
+    setSeatPlanForm({ roomIds: [], arrangement: "ROLL_NO_ORDER", sectionIds: [], gender: "", rollNoFrom: "", rollNoTo: "" });
+    setSeatPlanError("");
+    setSeatPlanModalFor(examScheduleId);
+  };
+
+  const toggleSeatPlanRoom = (roomId: string) => {
+    setSeatPlanForm((f) => ({
+      ...f,
+      roomIds: f.roomIds.includes(roomId) ? f.roomIds.filter((id) => id !== roomId) : [...f.roomIds, roomId],
+    }));
+  };
+
+  const toggleSeatPlanSection = (sectionId: string) => {
+    setSeatPlanForm((f) => ({
+      ...f,
+      sectionIds: f.sectionIds.includes(sectionId) ? f.sectionIds.filter((id) => id !== sectionId) : [...f.sectionIds, sectionId],
+    }));
+  };
+
+  const handleGenerateSeatPlan = async () => {
+    if (!seatPlanModalFor) return;
+    setSeatPlanError("");
+    if (seatPlanForm.roomIds.length === 0) {
+      setSeatPlanError("Select at least one room");
+      return;
+    }
+    setGeneratingSeatPlan(true);
+    try {
+      await api.post(`/academics/exams/schedule/${seatPlanModalFor}/seat-plan`, {
+        roomIds: seatPlanForm.roomIds,
+        arrangement: seatPlanForm.arrangement,
+        ...(seatPlanForm.sectionIds.length > 0 && { sectionIds: seatPlanForm.sectionIds }),
+        ...(seatPlanForm.gender && { gender: seatPlanForm.gender }),
+        ...(seatPlanForm.rollNoFrom && { rollNoFrom: seatPlanForm.rollNoFrom }),
+        ...(seatPlanForm.rollNoTo && { rollNoTo: seatPlanForm.rollNoTo }),
+      });
+      setSeatPlanModalFor(null);
+      viewSeatPlan(seatPlanModalFor);
+    } catch (err: any) {
+      setSeatPlanError(err.response?.data?.message || "Failed to generate seat plan");
+    } finally {
+      setGeneratingSeatPlan(false);
+    }
+  };
+
+  const viewSeatPlan = async (examScheduleId: string) => {
+    setViewingSeatPlanFor(examScheduleId);
+    setLoadingSeatPlanView(true);
+    try {
+      const res = await api.get(`/academics/exams/schedule/${examScheduleId}/seat-plan`);
+      setSeatPlanView(res.data.data);
+    } catch {
+      setSeatPlanView({ totalSeated: 0, rooms: [] });
+    } finally {
+      setLoadingSeatPlanView(false);
+    }
+  };
+
+  const handleClearSeatPlan = async (examScheduleId: string) => {
+    if (!confirm("Clear the entire seat plan for this subject? This cannot be undone.")) return;
+    try {
+      await api.delete(`/academics/exams/schedule/${examScheduleId}/seat-plan`);
+      viewSeatPlan(examScheduleId);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to clear seat plan");
+    }
+  };
+
+  const downloadSeatSlip = async (examScheduleId: string, studentId: string, studentName: string) => {
+    try {
+      const res = await api.get(`/academics/exams/schedule/${examScheduleId}/seat-plan/student/${studentId}/slip`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(`Failed to download seat slip for ${studentName}`);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center gap-4 mb-6">
@@ -280,21 +386,31 @@ export default function ExamSchedulePage() {
                         <span className="font-medium">{subjectName(r.subjectId)}</span>
                         <span className="text-xs text-gray-500 ml-2">{r.examDate ? formatDate(r.examDate) : ""} {r.startTime}-{r.endTime}</span>
                       </div>
-                      <label className="btn-secondary flex items-center gap-2 text-xs cursor-pointer disabled:opacity-60">
-                        {uploadingFor === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                        Upload Paper
-                        <input
-                          type="file"
-                          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                          className="hidden"
-                          disabled={uploadingFor === r.id}
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file && r.id) handleUploadPaper(r.id, file);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
+                      <div className="flex items-center gap-2">
+                        {isAdmin && (
+                          <button onClick={() => openSeatPlanModal(r.id!)} className="btn-secondary flex items-center gap-2 text-xs">
+                            <Armchair className="h-3.5 w-3.5" /> Seat Plan
+                          </button>
+                        )}
+                        <button onClick={() => viewSeatPlan(r.id!)} className="btn-secondary flex items-center gap-2 text-xs">
+                          <Users className="h-3.5 w-3.5" /> View Seating
+                        </button>
+                        <label className="btn-secondary flex items-center gap-2 text-xs cursor-pointer disabled:opacity-60">
+                          {uploadingFor === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                          Upload Paper
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            className="hidden"
+                            disabled={uploadingFor === r.id}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file && r.id) handleUploadPaper(r.id, file);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
+                      </div>
                     </div>
                     {(papersByScheduleId[r.id!] || []).length > 0 ? (
                       <ul className="space-y-1">
@@ -308,6 +424,53 @@ export default function ExamSchedulePage() {
                     ) : (
                       <p className="text-xs text-gray-400">No paper uploaded yet.</p>
                     )}
+
+                    {viewingSeatPlanFor === r.id && (
+                      <div className="mt-3 pt-3 border-t">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-sm font-semibold flex items-center gap-2"><Armchair className="h-4 w-4 text-teal-600" /> Seat Plan</h4>
+                          <div className="flex items-center gap-2">
+                            {isAdmin && seatPlanView?.totalSeated > 0 && (
+                              <button onClick={() => handleClearSeatPlan(r.id!)} className="text-xs text-red-500 hover:text-red-700">Clear Plan</button>
+                            )}
+                            <button onClick={() => setViewingSeatPlanFor(null)} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+                          </div>
+                        </div>
+                        {loadingSeatPlanView ? (
+                          <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-primary-600" /></div>
+                        ) : seatPlanView?.totalSeated > 0 ? (
+                          <div className="space-y-3">
+                            {seatPlanView.rooms.map((room: any) => (
+                              <div key={room.roomId} className="border rounded-lg p-2">
+                                <div className="text-xs font-medium mb-1">
+                                  Room {room.roomNo}{room.roomName ? ` (${room.roomName})` : ""} - {room.seats.length} seated
+                                  <span className="text-gray-400 ml-2">({room.maleCount} boys / {room.femaleCount} girls{room.otherCount ? ` / ${room.otherCount} other` : ""})</span>
+                                </div>
+                                <table className="w-full text-xs">
+                                  <thead><tr className="text-gray-500"><th className="text-left py-1">Seat</th><th className="text-left py-1">Name</th><th className="text-left py-1">Roll No</th><th className="text-left py-1">Section</th><th className="text-left py-1">Gender</th><th className="text-right py-1">Slip</th></tr></thead>
+                                  <tbody>
+                                    {room.seats.map((seat: any) => (
+                                      <tr key={seat.studentId} className="border-t">
+                                        <td className="py-1">{seat.seatNo}</td>
+                                        <td className="py-1">{seat.studentName}</td>
+                                        <td className="py-1">{seat.rollNo || "-"}</td>
+                                        <td className="py-1">{seat.sectionName || "-"}</td>
+                                        <td className="py-1">{seat.gender}</td>
+                                        <td className="py-1 text-right">
+                                          <button onClick={() => downloadSeatSlip(r.id!, seat.studentId, seat.studentName)} className="text-primary-600 hover:underline">Slip</button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400">No seat plan generated yet for this subject.</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -315,6 +478,78 @@ export default function ExamSchedulePage() {
           </div>
         </>
       ) : null}
+
+      <Modal isOpen={!!seatPlanModalFor} onClose={() => setSeatPlanModalFor(null)} title="Generate Seat Plan" size="md">
+        <div className="space-y-4">
+          {seatPlanError && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{seatPlanError}</div>}
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-3 py-2">
+            Regenerating replaces any existing seat plan for this subject.
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Rooms *</label>
+            <div className="border rounded-lg max-h-40 overflow-y-auto p-2 space-y-1">
+              {rooms.length === 0 ? (
+                <p className="text-xs text-gray-400">No rooms found - add rooms under School Buildings first.</p>
+              ) : (
+                rooms.map((rm) => (
+                  <label key={rm.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={seatPlanForm.roomIds.includes(rm.id)} onChange={() => toggleSeatPlanRoom(rm.id)} />
+                    {rm.label}
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Arrangement</label>
+            <select className="input-field" value={seatPlanForm.arrangement} onChange={(e) => setSeatPlanForm({ ...seatPlanForm, arrangement: e.target.value as any })}>
+              <option value="ROLL_NO_ORDER">Roll No Order</option>
+              <option value="ALTERNATE_GENDER">Alternate Boy/Girl</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Sections (optional - default: all)</label>
+            <div className="flex flex-wrap gap-2">
+              {sections.map((s) => (
+                <label key={s.id} className="flex items-center gap-1 text-sm bg-gray-50 rounded px-2 py-1">
+                  <input type="checkbox" checked={seatPlanForm.sectionIds.includes(s.id)} onChange={() => toggleSeatPlanSection(s.id)} />
+                  {s.name}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-sm font-medium mb-1">Gender</label>
+              <select className="input-field" value={seatPlanForm.gender} onChange={(e) => setSeatPlanForm({ ...seatPlanForm, gender: e.target.value })}>
+                <option value="">All</option>
+                <option value="MALE">Boys only</option>
+                <option value="FEMALE">Girls only</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Roll No From</label>
+              <input className="input-field" value={seatPlanForm.rollNoFrom} onChange={(e) => setSeatPlanForm({ ...seatPlanForm, rollNoFrom: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Roll No To</label>
+              <input className="input-field" value={seatPlanForm.rollNoTo} onChange={(e) => setSeatPlanForm({ ...seatPlanForm, rollNoTo: e.target.value })} />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            <button type="button" onClick={() => setSeatPlanModalFor(null)} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={handleGenerateSeatPlan} disabled={generatingSeatPlan} className="btn-primary flex items-center gap-2 disabled:opacity-60">
+              {generatingSeatPlan && <Loader2 className="h-4 w-4 animate-spin" />} {generatingSeatPlan ? "Generating..." : "Generate Seat Plan"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

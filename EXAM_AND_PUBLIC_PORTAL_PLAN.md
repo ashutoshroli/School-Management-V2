@@ -112,27 +112,56 @@ cross-branch guards).
 
 ---
 
-## Phase 2: Exam Seat Plan Generator
+## Phase 2: Exam Seat Plan Generator ✅ COMPLETED
 
-- New `ExamSeatAllocation` model: `examScheduleId`, `roomId`, `seatNo`,
-  `studentId` - one row per seated student per exam sitting.
-- `generateSeatPlan(examScheduleId, { roomIds[], arrangement })`:
-  pulls every active student in the exam's class (optionally filtered by
-  **section, gender, roll-no range** per the request), sorts by roll no,
-  and fills the selected rooms' seats in order - with an `arrangement`
-  option for **alternate boy/girl seating** (common anti-cheating
-  convention) vs. plain roll-no-order, respecting each room's `capacity`.
-  Rejects up front if selected rooms' total capacity < student count.
-- `getSeatPlan(examScheduleId)` - room-wise breakdown for printing (roll
-  no, name, seat no, room, gender count per room).
-- `getStudentSeatSlip(examScheduleId, studentId)` - single-student PDF
-  slip (room/seat/date/time), matching the existing PDFKit convention
-  used by ID cards/certificates.
-- Regeneration is destructive-with-confirmation (delete + recreate) since
-  seat plans are typically finalized once, close to the exam date.
+**Status:** ✅ **DONE**
 
-**Tests:** capacity-shortfall rejection, alternate-gender arrangement
-correctness, roll-no-order fallback, cross-branch room guard.
+### What was actually done:
+(`ExamSeatAllocation` model itself was already declared in Phase 1's
+migration so `ExamSchedule`'s relations would be complete in one pass -
+this phase adds the actual generator/viewer endpoints.)
+
+- `generateSeatPlan` (`POST /academics/exams/schedule/:examScheduleId/seat-plan`,
+  admin) - pulls every active student in the exam's class, optionally
+  narrowed by **sectionIds, gender, rollNoFrom/rollNoTo** (roll no is a
+  free-text field; the range filter only applies to numeric-looking
+  values, non-numeric roll numbers are simply excluded from a range
+  filter rather than crashing it), then fills the given rooms (in the
+  caller's own room order) either in plain roll-no order or via an
+  `ALTERNATE_GENDER` arrangement (interleaves boys/girls sorted
+  separately by roll no - a common anti-cheating seating convention).
+  Rejects up front if the selected rooms' total capacity is less than
+  the matched student count, or if a room doesn't belong to the exam's
+  branch. Regeneration is destructive (delete + recreate) since a seat
+  plan is normally finalized once, close to the exam date.
+- `getSeatPlan` (`GET .../seat-plan`) - room-wise breakdown (roll no,
+  name, seat no, section, gender per seat) plus a male/female/other
+  count per room, for printing or a quick sanity-check of an
+  alternate-gender arrangement.
+- `clearSeatPlan` (`DELETE .../seat-plan`, admin) - wipes the plan
+  entirely (e.g. before regenerating with different filters).
+- `getStudentSeatSlipPdf` (`GET .../seat-plan/student/:studentId/slip`) -
+  single-student printable PDF slip (room/floor/building/seat/date/time),
+  built with the same PDFKit helper convention as fee receipts/ID cards.
+
+**Frontend:** the exam schedule page (`/dashboard/exams/[id]/schedule`)
+gained, per scheduled subject: a "Seat Plan" button (admin) opening a
+modal to pick rooms/arrangement/section/gender/roll-no-range filters,
+and a "View Seating" button (any role) showing the room-wise seat table
+inline with a per-student "Slip" download link (authenticated blob
+download, matching the CSV-export pattern from the staff attendance
+report).
+
+**Tests:** 18 new tests in `examSeatPlan.controller.test.ts` - capacity-
+shortfall rejection, ALTERNATE_GENDER interleaving correctness,
+roll-no-range filtering, cross-branch room guard, destructive-
+regeneration behavior, and the seat-slip PDF's access control.
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**71 suites / 859 tests**, up
+  from 841) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, `exams/[id]/schedule`
+  page grew 6.23kB->8.38kB
 
 ---
 
