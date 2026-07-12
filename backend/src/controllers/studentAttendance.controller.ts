@@ -5,6 +5,7 @@ import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { canAccessBranch } from "../utils/branchScope";
 import { canAccessStudentRecord } from "../utils/studentAccess";
+import { canTeacherAccessSection, getOwnAssignedSectionIds } from "../utils/teacherAccess";
 import { authenticateDevice, extractDeviceApiKey } from "../utils/deviceAuth";
 import { notifyParentsOfStudent } from "../services/notification.service";
 import { toAttendanceDateOnly } from "../utils/attendanceDate";
@@ -60,6 +61,14 @@ export const markStudentAttendance = async (req: AuthRequest, res: Response): Pr
     if (!section) { sendError(res, "Section not found", 404); return; }
     if (!canAccessBranch(req, section.branchId)) {
       sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
+    // SECURITY: a TEACHER (unlike ADMIN roles) must actually be
+    // assigned to this section - either as its class teacher or via a
+    // class-specific SubjectTeacher row - to mark its attendance. See
+    // teacherAccess.ts's doc comment for exactly what counts.
+    if (!(await canTeacherAccessSection(req, sectionId))) {
+      sendError(res, "You are not assigned to this class", 403);
       return;
     }
 
@@ -188,12 +197,49 @@ const notifyCardTap = (studentId: string, type: "entry" | "exit", time: Date): v
 };
 
 /**
+ * A teacher's own "which classes can I act on" section list - for the
+ * attendance page's section-picker, so a TEACHER is never even shown a
+ * section `canTeacherAccessSection` would go on to reject. Any staff
+ * role can call this (it just returns an empty list for a non-teacher
+ * staff role, since `getOwnAssignedSectionIds` looks at the SAME
+ * class-teacher/SubjectTeacher assignments regardless of role) -
+ * ADMIN roles have their own unrestricted `/classes` listing for a
+ * full picker and don't need this narrower one.
+ */
+export const getMyAssignedSections = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const sectionIds = await getOwnAssignedSectionIds(req);
+    if (sectionIds.length === 0) { sendSuccess(res, [], "Assigned sections fetched"); return; }
+
+    const sections = await prisma.section.findMany({
+      where: { id: { in: sectionIds } },
+      include: { class: { select: { id: true, name: true } } },
+      orderBy: [{ class: { numericOrder: "asc" } }, { name: "asc" }],
+    });
+    sendSuccess(res, sections, "Assigned sections fetched");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
  * Get attendance for a class/section on a date
  */
 export const getClassAttendance = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { sectionId, date } = req.query;
     if (!sectionId || !date) { sendError(res, "sectionId and date required", 400); return; }
+
+    // SECURITY: this endpoint previously had NO access check at all
+    // beyond `authenticate`/`authorize(...TEACHERS)` at the route level
+    // - any teacher/admin in ANY branch could view any section's
+    // attendance by ID (IDOR), and even within one branch a teacher
+    // could view a class they don't teach. Both are fixed here.
+    const section = await prisma.section.findUnique({ where: { id: sectionId as string }, select: { branchId: true } });
+    if (!section) { sendError(res, "Section not found", 404); return; }
+    if (!canAccessBranch(req, section.branchId)) { sendError(res, "Section not found", 404); return; }
+    if (!(await canTeacherAccessSection(req, sectionId as string))) {
+      sendError(res, "You are not assigned to this class", 403);
+      return;
+    }
 
     const students = await prisma.student.findMany({
       where: { sectionId: sectionId as string, isActive: true },

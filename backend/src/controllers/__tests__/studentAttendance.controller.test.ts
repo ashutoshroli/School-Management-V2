@@ -3,7 +3,9 @@ jest.mock("../../config/database", () => ({
   default: {
     attendanceDevice: { findUnique: jest.fn() },
     student: { findUnique: jest.fn(), findMany: jest.fn() },
-    section: { findUnique: jest.fn() },
+    section: { findUnique: jest.fn(), findMany: jest.fn() },
+    staff: { findUnique: jest.fn() },
+    subjectTeacher: { count: jest.fn(), findMany: jest.fn() },
     studentAttendance: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), upsert: jest.fn() },
     $transaction: jest.fn(),
   },
@@ -15,7 +17,7 @@ jest.mock("../../services/notification.service", () => ({
 
 import prisma from "../../config/database";
 import { notifyParentsOfStudent } from "../../services/notification.service";
-import { studentCardTap, markStudentAttendance } from "../studentAttendance.controller";
+import { studentCardTap, markStudentAttendance, getClassAttendance, getMyAssignedSections } from "../studentAttendance.controller";
 import { AuthRequest } from "../../types";
 import { UserRole } from "@prisma/client";
 
@@ -180,8 +182,15 @@ describe("studentAttendance.controller - markStudentAttendance", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    (prisma.section.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-1" });
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-1", classId: "class-1", classTeacherId: "staff-1" });
     (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([]);
+    // Default: the requesting TEACHER (userId "teacher-1") IS the
+    // section's class teacher (classTeacherId "staff-1" above) - so
+    // canTeacherAccessSection passes by default for every existing
+    // test in this describe block; the dedicated access-control tests
+    // below override this to exercise the rejection paths.
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.subjectTeacher.count as jest.Mock).mockResolvedValue(0);
     // Mirror the real $transaction(array-of-promises) call shape used
     // by markStudentAttendance - resolve every create/update call it
     // was given.
@@ -326,5 +335,168 @@ describe("studentAttendance.controller - markStudentAttendance", () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: { created: 0, updated: 2 } }));
     expect(prisma.studentAttendance.update).toHaveBeenCalledTimes(2);
     expect(prisma.studentAttendance.create).not.toHaveBeenCalled();
+  });
+
+  // SECURITY (New Features Phase 3): previously ANY teacher in the
+  // branch could mark ANY section's attendance - only canAccessBranch
+  // was checked, never whether THIS teacher is actually assigned to
+  // THIS section. These lock in the fix.
+  describe("teacher class-scope access control", () => {
+    it("SECURITY: rejects a TEACHER who is neither the class teacher nor a subject teacher for this section's class", async () => {
+      (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-2" }); // not staff-1 (the classTeacherId)
+      (prisma.subjectTeacher.count as jest.Mock).mockResolvedValue(0); // no SubjectTeacher row either
+      const req = makeAttendanceReq();
+      const res = makeMockRes();
+
+      await markStudentAttendance(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("allows a TEACHER who is the section's class teacher", async () => {
+      (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" }); // matches classTeacherId
+      const req = makeAttendanceReq();
+      const res = makeMockRes();
+
+      await markStudentAttendance(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it("allows a TEACHER with a class-specific SubjectTeacher assignment (not the class teacher)", async () => {
+      (prisma.section.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-1", classId: "class-1", classTeacherId: "staff-OTHER" });
+      (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-2" });
+      (prisma.subjectTeacher.count as jest.Mock).mockResolvedValue(1); // has a SubjectTeacher row for this class
+      const req = makeAttendanceReq();
+      const res = makeMockRes();
+
+      await markStudentAttendance(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it("never restricts a BRANCH_ADMIN by class assignment (branch-level access only)", async () => {
+      const req = makeAttendanceReq({
+        user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1", organizationId: "org-1" },
+      });
+      const res = makeMockRes();
+
+      await markStudentAttendance(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.staff.findUnique).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("studentAttendance.controller - getClassAttendance", () => {
+  const makeAttendanceReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
+    ({
+      body: {},
+      params: {},
+      query: { sectionId: "section-1", date: "2024-03-15" },
+      user: { userId: "teacher-1", email: "t@test.com", role: UserRole.TEACHER, branchId: "branch-1", organizationId: "org-1" },
+      ...overrides,
+    } as any);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-1", classId: "class-1", classTeacherId: "staff-1" });
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.subjectTeacher.count as jest.Mock).mockResolvedValue(0);
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.studentAttendance.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("returns 400 when sectionId or date is missing", async () => {
+    const req = makeAttendanceReq({ query: { date: "2024-03-15" } });
+    const res = makeMockRes();
+
+    await getClassAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("returns 404 when the section does not exist", async () => {
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await getClassAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a section in a DIFFERENT branch (this endpoint previously had no branch check at all)", async () => {
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-OTHER", classId: "class-1", classTeacherId: "staff-1" });
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await getClassAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.student.findMany).not.toHaveBeenCalled();
+  });
+
+  it("SECURITY: rejects a TEACHER not assigned to this section's class", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-2" });
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await getClassAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(prisma.student.findMany).not.toHaveBeenCalled();
+  });
+
+  it("allows the section's class teacher to view attendance", async () => {
+    const req = makeAttendanceReq();
+    const res = makeMockRes();
+
+    await getClassAttendance(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+describe("studentAttendance.controller - getMyAssignedSections", () => {
+  const makeReq2 = (): AuthRequest =>
+    ({ body: {}, params: {}, query: {}, user: { userId: "teacher-1", email: "t@test.com", role: UserRole.TEACHER, branchId: "branch-1" } } as any);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns an empty list with no extra query when the user has no linked staff record", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq2();
+    const res = makeMockRes();
+
+    await getMyAssignedSections(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.section.findMany).not.toHaveBeenCalled();
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload).toEqual([]);
+  });
+
+  it("combines class-teacher sections with subject-teacher-assigned classes' sections, de-duplicated", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.subjectTeacher.findMany as jest.Mock).mockResolvedValue([{ classId: "class-1" }]);
+    // Every section.findMany call (classTeacher lookup, subject-assigned-
+    // class lookup, and the final full-detail fetch in
+    // getMyAssignedSections) resolves to something containing "sec-1" -
+    // the point of this test is just that the endpoint succeeds end to
+    // end when both sources contribute overlapping sections.
+    (prisma.section.findMany as jest.Mock).mockResolvedValue([{ id: "sec-1" }]);
+    const req = makeReq2();
+    const res = makeMockRes();
+
+    await getMyAssignedSections(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload).toEqual([{ id: "sec-1" }]);
   });
 });

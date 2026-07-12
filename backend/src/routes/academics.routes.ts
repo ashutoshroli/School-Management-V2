@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory } from "../controllers/studentAttendance.controller";
+import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory, getMyAssignedSections } from "../controllers/studentAttendance.controller";
 import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } from "../controllers/timetable.controller";
 import { createExam, getExams, getExamById, updateExam, deleteExam, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
 import { getGradeBands, createGradeBand, updateGradeBand, deleteGradeBand } from "../controllers/gradeSystem.controller";
@@ -24,6 +24,7 @@ const TEACHERS = [...ADMIN, UserRole.TEACHER];
 router.post("/attendance/mark", authenticate, authorize(...TEACHERS), validate(markStudentAttendanceSchema), markStudentAttendance);
 router.post("/attendance/card-tap", validate(cardTapSchema), studentCardTap); // Device auth via API key
 router.get("/attendance/class", authenticate, authorize(...TEACHERS), getClassAttendance);
+router.get("/attendance/my-sections", authenticate, authorize(UserRole.TEACHER), getMyAssignedSections);
 // Access control (branch staff OR the student/parent themselves) is
 // enforced inside the controller via canAccessBranch/canAccessStudentRecord.
 router.get("/attendance/student/:studentId", authenticate, getStudentAttendanceHistory);

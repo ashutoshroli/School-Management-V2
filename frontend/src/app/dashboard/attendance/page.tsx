@@ -4,16 +4,28 @@ import { useState, useEffect } from "react";
 import { ClipboardCheck } from "lucide-react";
 import api from "@/lib/api";
 import { todayLocalDateInput } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
 const STATUS_COLORS: Record<string, string> = {
   PRESENT: "bg-green-500", ABSENT: "bg-red-500", HALF_DAY: "bg-yellow-400", LATE: "bg-orange-500",
 };
 
 export default function StudentAttendancePage() {
+  const { user } = useAuth();
+  // SECURITY (server-enforced, this is just matching UX): a TEACHER is
+  // only ever offered sections they're actually assigned to (as class
+  // teacher or via a class-specific subject assignment) via the new
+  // getMyAssignedSections endpoint - the backend's
+  // canTeacherAccessSection check would reject anything else anyway,
+  // but showing an unusable section in the dropdown first would just
+  // be confusing. Admin roles keep the full /classes picker unchanged.
+  const isTeacher = user?.role === "TEACHER";
+
   const [classes, setClasses] = useState<any[]>([]);
   const [classId, setClassId] = useState("");
   const [sectionId, setSectionId] = useState("");
   const [sections, setSections] = useState<any[]>([]);
+  const [myAssignedSections, setMyAssignedSections] = useState<any[]>([]);
   // BUG FIX: was `new Date().toISOString().split("T")[0]`, which
   // converts to UTC first and can default the date picker to the wrong
   // calendar day for users outside a UTC+0-ish timezone (see
@@ -24,13 +36,20 @@ export default function StudentAttendancePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => { api.get("/classes").then(r => setClasses(r.data.data || [])); }, []);
+  useEffect(() => {
+    if (isTeacher) {
+      api.get("/academics/attendance/my-sections").then((r) => setMyAssignedSections(r.data.data || []));
+    } else {
+      api.get("/classes").then(r => setClasses(r.data.data || []));
+    }
+  }, [isTeacher]);
 
   useEffect(() => {
+    if (isTeacher) return; // section picker for a teacher is flat (no class step), see below
     const cls = classes.find(c => c.id === classId);
     setSections(cls?.sections || []);
     setSectionId("");
-  }, [classId, classes]);
+  }, [classId, classes, isTeacher]);
 
   const fetchAttendance = async () => {
     if (!sectionId) return;
@@ -80,16 +99,30 @@ export default function StudentAttendancePage() {
       </div>
 
       <div className="card mb-6 flex flex-wrap gap-4">
-        <select className="input-field w-auto" value={classId} onChange={e => setClassId(e.target.value)}>
-          <option value="">Select Class</option>
-          {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select className="input-field w-auto" value={sectionId} onChange={e => setSectionId(e.target.value)}>
-          <option value="">Section</option>
-          {sections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+        {isTeacher ? (
+          <select className="input-field w-auto" value={sectionId} onChange={e => setSectionId(e.target.value)}>
+            <option value="">Select your class/section</option>
+            {myAssignedSections.map((s: any) => <option key={s.id} value={s.id}>{s.class?.name} - {s.name}</option>)}
+          </select>
+        ) : (
+          <>
+            <select className="input-field w-auto" value={classId} onChange={e => setClassId(e.target.value)}>
+              <option value="">Select Class</option>
+              {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <select className="input-field w-auto" value={sectionId} onChange={e => setSectionId(e.target.value)}>
+              <option value="">Section</option>
+              {sections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </>
+        )}
         <input type="date" className="input-field w-auto" value={date} onChange={e => setDate(e.target.value)} />
       </div>
+      {isTeacher && myAssignedSections.length === 0 && (
+        <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-4 py-3">
+          You are not currently assigned as a class teacher or subject teacher for any class - contact an admin to get assigned before you can mark attendance.
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
