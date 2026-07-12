@@ -178,6 +178,7 @@ export default function ExamSchedulePage() {
       }
     } catch (err: any) {
       setError(err.response?.data?.message || "Failed to load exam schedule");
+      setExam(null);
     } finally {
       setLoading(false);
     }
@@ -491,7 +492,7 @@ export default function ExamSchedulePage() {
         <div className="flex justify-center py-12">
           <div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" />
         </div>
-      ) : exam ? (
+      ) : exam && !error ? (
         <>
           {message && (
             <div className={`mb-4 text-sm rounded-lg px-3 py-2 ${message.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
