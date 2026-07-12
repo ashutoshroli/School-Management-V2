@@ -12,14 +12,14 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     user: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
-    staff: { count: jest.fn(), create: jest.fn(), findUnique: jest.fn() },
+    staff: { count: jest.fn(), create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
     branch: { findUnique: jest.fn() },
   },
 }));
 
 import bcrypt from "bcryptjs";
 import prisma from "../../config/database";
-import { createStaff, resetStaffPassword } from "../staff.controller";
+import { createStaff, resetStaffPassword, getStaffList } from "../staff.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -333,5 +333,47 @@ describe("staff.controller - resetStaffPassword", () => {
     expect(logAuditFromRequest).toHaveBeenCalledTimes(1);
     const auditCallArgs = JSON.stringify(logAuditFromRequest.mock.calls[0]);
     expect(auditCallArgs).not.toContain(jsonPayload.data.oneTimePassword);
+  });
+});
+
+// Backend UX Gap Phase 3: getStaffList previously had no `designation`
+// filter at all, even though department/type already existed.
+describe("staff.controller - getStaffList (designation filter)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.staff.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.staff.count as jest.Mock).mockResolvedValue(0);
+  });
+
+  it("filters by designation when provided", async () => {
+    const req = makeReq({ query: { designation: "PGT" } });
+    const res = makeMockRes();
+
+    await getStaffList(req, res);
+
+    expect(prisma.staff.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ designation: "PGT" }) })
+    );
+  });
+
+  it("omits the designation filter when not provided", async () => {
+    const req = makeReq({ query: {} });
+    const res = makeMockRes();
+
+    await getStaffList(req, res);
+
+    const whereArg = (prisma.staff.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.designation).toBeUndefined();
+  });
+
+  it("combines designation with department/type filters", async () => {
+    const req = makeReq({ query: { designation: "PGT", department: "Science", type: "TEACHING" } });
+    const res = makeMockRes();
+
+    await getStaffList(req, res);
+
+    expect(prisma.staff.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ designation: "PGT", department: "Science", type: "TEACHING" }) })
+    );
   });
 });

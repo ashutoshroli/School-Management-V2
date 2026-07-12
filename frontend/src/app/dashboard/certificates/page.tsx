@@ -43,15 +43,37 @@ export default function CertificatesPage() {
   const addCustomFieldRow = () => setCustomFields((prev) => [...prev, { key: "", value: "" }]);
   const removeCustomFieldRow = (index: number) => setCustomFields((prev) => prev.filter((_, i) => i !== index));
 
+  // Filters for the "Generated Certificates" list - type/classId/date
+  // range, previously impossible on the backend (only studentId existed).
+  const [filterType, setFilterType] = useState("");
+  const [filterClassId, setFilterClassId] = useState("");
+  const [filterFromDate, setFilterFromDate] = useState("");
+  const [filterToDate, setFilterToDate] = useState("");
+  const [classes, setClasses] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.get("/classes").then((res) => setClasses(res.data.data || [])).catch(() => {});
+  }, []);
+
   const fetch = async () => {
     setLoading(true);
     try {
-      const [tRes, gRes] = await Promise.all([api.get("/communication/certificates/templates"), api.get("/communication/certificates/generated")]);
+      const [tRes, gRes] = await Promise.all([
+        api.get("/communication/certificates/templates"),
+        api.get("/communication/certificates/generated", {
+          params: {
+            type: filterType || undefined,
+            classId: filterClassId || undefined,
+            fromDate: filterFromDate || undefined,
+            toDate: filterToDate || undefined,
+          },
+        }),
+      ]);
       setTemplates(tRes.data.data || []);
       setGenerated(gRes.data.data || []);
     } catch {} finally { setLoading(false); }
   };
-  useEffect(() => { fetch(); }, []);
+  useEffect(() => { fetch(); }, [filterType, filterClassId, filterFromDate, filterToDate]);
 
   const searchStudents = async () => {
     if (!form.studentSearch.trim()) return;
@@ -106,6 +128,20 @@ export default function CertificatesPage() {
           ))}
           {templates.length === 0 && <p className="text-gray-400 text-sm col-span-4">No templates configured</p>}
         </div>
+      </div>
+
+      {/* Filters for Generated Certificates */}
+      <div className="card mb-6 flex flex-wrap gap-3">
+        <select className="input-field w-auto" value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+          <option value="">All Types</option>
+          {["TRANSFER_CERTIFICATE", "BONAFIDE", "CHARACTER", "ID_CARD", "CUSTOM"].map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+        </select>
+        <select className="input-field w-auto" value={filterClassId} onChange={(e) => setFilterClassId(e.target.value)}>
+          <option value="">All Classes</option>
+          {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <input type="date" className="input-field w-auto" value={filterFromDate} onChange={(e) => setFilterFromDate(e.target.value)} title="From date" />
+        <input type="date" className="input-field w-auto" value={filterToDate} onChange={(e) => setFilterToDate(e.target.value)} title="To date" />
       </div>
 
       {/* Generated */}

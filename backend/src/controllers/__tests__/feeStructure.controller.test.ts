@@ -1,16 +1,23 @@
 import { UserRole } from "@prisma/client";
 
+jest.mock("../../services/cache.service", () => ({
+  cached: jest.fn((_key: string, _ttl: number, loader: () => Promise<any>) => loader()),
+  CacheKeys: { feeStructuresByBranch: jest.fn() },
+  CacheTTL: { FEE_STRUCTURES: 3600 },
+  invalidateFeeStructuresCache: jest.fn(),
+}));
+
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    feeStructure: { findUnique: jest.fn(), create: jest.fn() },
+    feeStructure: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn() },
     feeInstallment: { createMany: jest.fn() },
     feeAssignment: { count: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createFeeStructure, getFeeStructureById } from "../feeStructure.controller";
+import { createFeeStructure, getFeeStructureById, getFeeStructures } from "../feeStructure.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -160,5 +167,35 @@ describe("feeStructure.controller - getFeeStructureById", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     const payload = (res.json as jest.Mock).mock.calls[0][0].data;
     expect(payload.assignedStudentCount).toBe(42);
+  });
+});
+
+// Backend UX Gap Phase 3: getFeeStructures previously had no
+// feeCategoryId filter - only branch/class/year.
+describe("feeStructure.controller - getFeeStructures (feeCategoryId filter)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.feeStructure.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("filters by feeCategoryId when provided", async () => {
+    const req = makeReq({ query: { feeCategoryId: "cat-1" } });
+    const res = makeMockRes();
+
+    await getFeeStructures(req, res);
+
+    const whereArg = (prisma.feeStructure.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.feeCategoryId).toBe("cat-1");
+  });
+
+  it("bypasses the cache when feeCategoryId is set (not just classId)", async () => {
+    const { cached } = require("../../services/cache.service");
+    const req = makeReq({ query: { feeCategoryId: "cat-1" } });
+    const res = makeMockRes();
+
+    await getFeeStructures(req, res);
+
+    expect(cached).not.toHaveBeenCalled();
+    expect(prisma.feeStructure.findMany).toHaveBeenCalledTimes(1);
   });
 });

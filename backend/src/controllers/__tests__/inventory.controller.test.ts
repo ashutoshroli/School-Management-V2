@@ -8,7 +8,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { addItem, getLowStockAlerts, getItemById } from "../inventory.controller";
+import { addItem, getLowStockAlerts, getItemById, getItems } from "../inventory.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -153,5 +153,35 @@ describe("inventory.controller - getItemById", () => {
     const payload = (res.json as jest.Mock).mock.calls[0][0].data;
     expect(payload.purchases).toHaveLength(1);
     expect(payload.issues).toHaveLength(1);
+  });
+});
+
+// Backend UX Gap Phase 3: getItems previously had no filters at all
+// (not even category).
+describe("inventory.controller - getItems (category filter)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.inventoryItem.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("filters by category when provided", async () => {
+    const req = makeReq({ query: { category: "stationery" } });
+    const res = makeMockRes();
+
+    await getItems(req, res);
+
+    const whereArg = (prisma.inventoryItem.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.category).toBe("stationery");
+  });
+
+  it("omits the category filter when not provided", async () => {
+    const req = makeReq({ query: {} });
+    const res = makeMockRes();
+
+    await getItems(req, res);
+
+    const whereArg = (prisma.inventoryItem.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.category).toBeUndefined();
+    expect(whereArg.branchId).toBe("branch-1");
   });
 });

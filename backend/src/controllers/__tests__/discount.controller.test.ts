@@ -122,6 +122,31 @@ describe("discount.controller - getAllDiscounts (branch-wide list)", () => {
       expect.objectContaining({ where: { student: { branchId: "branch-1" }, isActive: true, type: "RTE" } })
     );
   });
+
+  // Backend UX Gap Phase 3: no classId/sectionId filter existed before.
+  it("narrows by classId when provided", async () => {
+    (prisma.studentDiscount.findMany as jest.Mock).mockResolvedValue([]);
+    const req = makeReq({ query: { classId: "class-1" } });
+    const res = makeMockRes();
+
+    await getAllDiscounts(req, res);
+
+    expect(prisma.studentDiscount.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { student: { branchId: "branch-1", classId: "class-1" }, isActive: true } })
+    );
+  });
+
+  it("narrows by sectionId when provided", async () => {
+    (prisma.studentDiscount.findMany as jest.Mock).mockResolvedValue([]);
+    const req = makeReq({ query: { sectionId: "sec-1" } });
+    const res = makeMockRes();
+
+    await getAllDiscounts(req, res);
+
+    expect(prisma.studentDiscount.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { student: { branchId: "branch-1", sectionId: "sec-1" }, isActive: true } })
+    );
+  });
 });
 
 describe("discount.controller - getDiscountById", () => {

@@ -16,6 +16,13 @@ export default function LeavesPage() {
   const [balances, setBalances] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Filters for the "All Applications" tab - leaveTypeId + date range,
+  // previously impossible (only staffId/status existed on the backend).
+  const [filterLeaveTypeId, setFilterLeaveTypeId] = useState("");
+  const [filterFromDate, setFilterFromDate] = useState("");
+  const [filterToDate, setFilterToDate] = useState("");
+  const [allLeaveTypes, setAllLeaveTypes] = useState<any[]>([]);
+
   // Leave Types management (admin-only) - LeaveType has no branchId in
   // the schema, it's a single system-wide list shared by every branch
   // (e.g. CL/SL/EL), so a school wanting to add "Sabbatical Leave" now
@@ -40,13 +47,23 @@ export default function LeavesPage() {
       } else {
         const params: any = {};
         if (tab === "pending") params.status = "PENDING";
+        if (tab === "all") {
+          if (filterLeaveTypeId) params.leaveTypeId = filterLeaveTypeId;
+          if (filterFromDate) params.fromDate = filterFromDate;
+          if (filterToDate) params.toDate = filterToDate;
+        }
         const res = await api.get("/hr/leave/applications", { params });
         setApplications(res.data.data || []);
       }
     } catch {} finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchData(); }, [tab]);
+  useEffect(() => { fetchData(); }, [tab, filterLeaveTypeId, filterFromDate, filterToDate]);
+
+  // Load leave types once for the "All Applications" filter dropdown.
+  useEffect(() => {
+    api.get("/hr/leave/types").then((res) => setAllLeaveTypes(res.data.data || [])).catch(() => {});
+  }, []);
 
   const handleAction = async (id: string, status: "APPROVED" | "REJECTED") => {
     try {
@@ -208,7 +225,20 @@ export default function LeavesPage() {
           ))}
         </div>
       ) : (
-        <div className="card overflow-x-auto">
+        <div>
+          {tab === "all" && (
+            <div className="card mb-4">
+              <div className="flex flex-wrap gap-3">
+                <select className="input-field w-auto" value={filterLeaveTypeId} onChange={(e) => setFilterLeaveTypeId(e.target.value)}>
+                  <option value="">All Leave Types</option>
+                  {allLeaveTypes.map((lt) => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
+                </select>
+                <input type="date" className="input-field w-auto" value={filterFromDate} onChange={(e) => setFilterFromDate(e.target.value)} title="From date" />
+                <input type="date" className="input-field w-auto" value={filterToDate} onChange={(e) => setFilterToDate(e.target.value)} title="To date" />
+              </div>
+            </div>
+          )}
+          <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="border-b bg-gray-50">
               <th className="px-4 py-3 text-left">Staff</th>
@@ -255,6 +285,7 @@ export default function LeavesPage() {
               {applications.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">No applications</td></tr>}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

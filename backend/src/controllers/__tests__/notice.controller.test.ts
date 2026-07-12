@@ -3,7 +3,7 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    notice: { create: jest.fn(), findUnique: jest.fn() },
+    notice: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
     staff: { findMany: jest.fn() },
     student: { findMany: jest.fn() },
     studentParent: { findMany: jest.fn() },
@@ -12,7 +12,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { createNotice, getNoticeById } from "../notice.controller";
+import { createNotice, getNoticeById, getNotices } from "../notice.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -108,5 +108,48 @@ describe("notice.controller - getNoticeById", () => {
     await getNoticeById(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+// Backend UX Gap Phase 3: getNotices previously had no search or
+// date-range filter - only branch + type.
+describe("notice.controller - getNotices (search + date-range filters)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.notice.findMany as jest.Mock).mockResolvedValue([]);
+  });
+
+  it("searches title/body when a search term is provided", async () => {
+    const req = makeReq({ query: { search: "holiday" } });
+    const res = makeMockRes();
+
+    await getNotices(req, res);
+
+    const whereArg = (prisma.notice.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.OR).toEqual([
+      { title: { contains: "holiday", mode: "insensitive" } },
+      { body: { contains: "holiday", mode: "insensitive" } },
+    ]);
+  });
+
+  it("filters by a fromDate/toDate range on createdAt", async () => {
+    const req = makeReq({ query: { fromDate: "2025-01-01", toDate: "2025-01-31" } });
+    const res = makeMockRes();
+
+    await getNotices(req, res);
+
+    const whereArg = (prisma.notice.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.createdAt).toEqual({ gte: new Date("2025-01-01"), lte: new Date("2025-01-31") });
+  });
+
+  it("omits both filters when neither is provided", async () => {
+    const req = makeReq({ query: {} });
+    const res = makeMockRes();
+
+    await getNotices(req, res);
+
+    const whereArg = (prisma.notice.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.OR).toBeUndefined();
+    expect(whereArg.createdAt).toBeUndefined();
   });
 });

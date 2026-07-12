@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Wallet, Play, Check, IndianRupee, Download, Users } from "lucide-react";
+import { Wallet, Play, Check, IndianRupee, Download, Users, Search } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 import { openPdfInNewTab } from "@/lib/pdf";
@@ -14,15 +14,25 @@ export default function PayrollPage() {
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
 
+  // Filters - department/designation/staff-name search, previously
+  // impossible on this page (only month/year existed).
+  const [department, setDepartment] = useState("");
+  const [designation, setDesignation] = useState("");
+  const [search, setSearch] = useState("");
+
   const fetchPayslips = async () => {
     setLoading(true);
     try {
-      const res = await api.get("/hr/payroll/payslips", { params: { month, year } });
+      const params: any = { month, year };
+      if (department) params.department = department;
+      if (designation) params.designation = designation;
+      if (search) params.search = search;
+      const res = await api.get("/hr/payroll/payslips", { params });
       setData(res.data.data);
     } catch {} finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchPayslips(); }, [month, year]);
+  useEffect(() => { fetchPayslips(); }, [month, year, department, designation, search]);
 
   const runPayroll = async () => {
     if (!confirm(`Run payroll for ${month}/${year}? This will generate payslips for all staff with salary structure.`)) return;
@@ -74,6 +84,17 @@ export default function PayrollPage() {
           <button onClick={runPayroll} disabled={running} className="btn-primary flex items-center gap-2">
             <Play className="h-4 w-4" /> {running ? "Running..." : "Run Payroll"}
           </button>
+        </div>
+      </div>
+
+      <div className="card mb-4">
+        <div className="flex flex-wrap gap-4">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input className="input-field pl-10" placeholder="Search by staff name..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <input className="input-field w-auto" placeholder="Filter by department..." value={department} onChange={(e) => setDepartment(e.target.value)} />
+          <input className="input-field w-auto" placeholder="Filter by designation..." value={designation} onChange={(e) => setDesignation(e.target.value)} />
         </div>
       </div>
 

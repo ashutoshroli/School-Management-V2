@@ -42,11 +42,15 @@ export default function FeeStructuresPage() {
     amount: "", frequency: "MONTHLY", dueDay: "10", lateFeeType: "NONE", lateFeeValue: "0",
   });
 
+  // Fee category filter - previously impossible on the backend (only
+  // branch/class/year existed).
+  const [categoryFilter, setCategoryFilter] = useState("");
+
   const fetchData = async () => {
     try {
       setLoading(true);
       const [sRes, cRes, catRes, yRes] = await Promise.all([
-        api.get("/fees/structures"),
+        api.get("/fees/structures", { params: { feeCategoryId: categoryFilter || undefined } }),
         api.get("/classes"),
         api.get("/fees/categories"),
         api.get("/academic-years"),
@@ -58,7 +62,7 @@ export default function FeeStructuresPage() {
     } catch (err) {} finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [categoryFilter]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,6 +159,13 @@ export default function FeeStructuresPage() {
         <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2">
           <Plus className="h-4 w-4" /> Create Structure
         </button>
+      </div>
+
+      <div className="card mb-4">
+        <select className="input-field w-auto" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+          <option value="">All Fee Categories</option>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
       </div>
 
       {loading ? (

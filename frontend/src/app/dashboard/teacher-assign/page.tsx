@@ -171,12 +171,19 @@ function SubjectTeacherTab({
   const [assignments, setAssignments] = useState<SubjectTeacherAssignment[]>([]);
   const [assignmentsLoading, setAssignmentsLoading] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  // Narrow the "Current Assignments" list further by teacher/subject -
+  // previously impossible on the backend (getSubjectTeachers only
+  // supported a classId filter).
+  const [filterStaffId, setFilterStaffId] = useState("");
+  const [filterSubjectId, setFilterSubjectId] = useState("");
 
-  const fetchAssignments = async (forClassId: string) => {
+  const fetchAssignments = async (forClassId: string, staffFilter?: string, subjectFilter?: string) => {
     if (!forClassId) { setAssignments([]); return; }
     setAssignmentsLoading(true);
     try {
-      const res = await api.get("/classes/subject-teachers", { params: { classId: forClassId } });
+      const res = await api.get("/classes/subject-teachers", {
+        params: { classId: forClassId, staffId: staffFilter || undefined, subjectId: subjectFilter || undefined },
+      });
       setAssignments(res.data.data || []);
     } catch {
       setAssignments([]);
@@ -186,10 +193,16 @@ function SubjectTeacherTab({
   };
 
   useEffect(() => {
-    fetchAssignments(classId);
+    fetchAssignments(classId, filterStaffId, filterSubjectId);
     setSubjectId("");
     setStaffId("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
+
+  useEffect(() => {
+    if (classId) fetchAssignments(classId, filterStaffId, filterSubjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStaffId, filterSubjectId]);
 
   const handleAssign = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -199,7 +212,7 @@ function SubjectTeacherTab({
       await api.post("/classes/subject-teachers", { classId, subjectId, staffId });
       setSubjectId("");
       setStaffId("");
-      await fetchAssignments(classId);
+      await fetchAssignments(classId, filterStaffId, filterSubjectId);
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to assign subject teacher");
     } finally {
@@ -212,7 +225,7 @@ function SubjectTeacherTab({
     setRemovingId(id);
     try {
       await api.delete(`/classes/subject-teachers/${id}`);
-      await fetchAssignments(classId);
+      await fetchAssignments(classId, filterStaffId, filterSubjectId);
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to remove assignment");
     } finally {
@@ -253,7 +266,19 @@ function SubjectTeacherTab({
           </form>
 
           <div className="pt-2 border-t">
-            <h4 className="text-sm font-semibold text-gray-600 mb-2">Current Assignments</h4>
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+              <h4 className="text-sm font-semibold text-gray-600">Current Assignments</h4>
+              <div className="flex gap-2">
+                <select className="input-field w-auto text-xs" value={filterSubjectId} onChange={(e) => setFilterSubjectId(e.target.value)}>
+                  <option value="">All Subjects</option>
+                  {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <select className="input-field w-auto text-xs" value={filterStaffId} onChange={(e) => setFilterStaffId(e.target.value)}>
+                  <option value="">All Teachers</option>
+                  {teachers.map((t) => <option key={t.id} value={t.id}>{t.user.name}</option>)}
+                </select>
+              </div>
+            </div>
             {assignmentsLoading ? (
               <div className="flex justify-center py-4">
                 <div className="animate-spin h-5 w-5 border-4 border-primary-600 border-t-transparent rounded-full" />

@@ -3,12 +3,12 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    admissionInquiry: { findUnique: jest.fn() },
+    admissionInquiry: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { getAdmissionInquiryById } from "../admission.controller";
+import { getAdmissionInquiryById, getAdmissionInquiries } from "../admission.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -68,5 +68,35 @@ describe("admission.controller - getAdmissionInquiryById", () => {
     await getAdmissionInquiryById(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+});
+
+// Backend UX Gap Phase 3: getAdmissionInquiries previously had no
+// classAppliedFor filter or date range - only status.
+describe("admission.controller - getAdmissionInquiries (classAppliedFor + date-range filters)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.admissionInquiry.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.admissionInquiry.count as jest.Mock).mockResolvedValue(0);
+  });
+
+  it("filters by classAppliedFor as a case-insensitive partial match (it's free text, not a real classId)", async () => {
+    const req = makeReq({ query: { classAppliedFor: "class 5" } });
+    const res = makeMockRes();
+
+    await getAdmissionInquiries(req, res);
+
+    const whereArg = (prisma.admissionInquiry.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.classAppliedFor).toEqual({ contains: "class 5", mode: "insensitive" });
+  });
+
+  it("filters by a fromDate/toDate range on createdAt", async () => {
+    const req = makeReq({ query: { fromDate: "2025-01-01", toDate: "2025-01-31" } });
+    const res = makeMockRes();
+
+    await getAdmissionInquiries(req, res);
+
+    const whereArg = (prisma.admissionInquiry.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.createdAt).toEqual({ gte: new Date("2025-01-01"), lte: new Date("2025-01-31") });
   });
 });

@@ -25,6 +25,11 @@ export default function AdmissionInquiriesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
+  // classAppliedFor + date-range filter - previously impossible on the
+  // backend (only status existed).
+  const [classAppliedForFilter, setClassAppliedForFilter] = useState("");
+  const [fromDateFilter, setFromDateFilter] = useState("");
+  const [toDateFilter, setToDateFilter] = useState("");
 
   const fetchInquiries = async () => {
     setLoading(true);
@@ -32,6 +37,9 @@ export default function AdmissionInquiriesPage() {
     try {
       const params: any = { page, limit: 20 };
       if (statusFilter) params.status = statusFilter;
+      if (classAppliedForFilter) params.classAppliedFor = classAppliedForFilter;
+      if (fromDateFilter) params.fromDate = fromDateFilter;
+      if (toDateFilter) params.toDate = toDateFilter;
       const res = await api.get("/admission/inquiries", { params });
       setInquiries(res.data.data || []);
       setTotalPages(res.data.pagination?.totalPages || 1);
@@ -45,7 +53,7 @@ export default function AdmissionInquiriesPage() {
   useEffect(() => {
     fetchInquiries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, statusFilter]);
+  }, [page, statusFilter, classAppliedForFilter, fromDateFilter, toDateFilter]);
 
   const updateStatus = async (id: string, status: string) => {
     try {
@@ -199,13 +207,23 @@ export default function AdmissionInquiriesPage() {
           </h1>
           <p className="text-gray-500 mt-1">Submissions from the public admission form</p>
         </div>
-        <select className="input-field w-auto" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
-          <option value="">All statuses</option>
-          <option value="NEW">New</option>
-          <option value="CONTACTED">Contacted</option>
-          <option value="ADMITTED">Admitted</option>
-          <option value="REJECTED">Rejected</option>
-        </select>
+        <div className="flex flex-wrap gap-2">
+          <select className="input-field w-auto" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+            <option value="">All statuses</option>
+            <option value="NEW">New</option>
+            <option value="CONTACTED">Contacted</option>
+            <option value="ADMITTED">Admitted</option>
+            <option value="REJECTED">Rejected</option>
+          </select>
+          <input
+            className="input-field w-auto"
+            placeholder="Class applied for..."
+            value={classAppliedForFilter}
+            onChange={(e) => { setClassAppliedForFilter(e.target.value); setPage(1); }}
+          />
+          <input type="date" className="input-field w-auto" value={fromDateFilter} onChange={(e) => { setFromDateFilter(e.target.value); setPage(1); }} title="From date" />
+          <input type="date" className="input-field w-auto" value={toDateFilter} onChange={(e) => { setToDateFilter(e.target.value); setPage(1); }} title="To date" />
+        </div>
       </div>
 
       {error && <ErrorBanner message={error} onRetry={fetchInquiries} />}

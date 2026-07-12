@@ -85,6 +85,37 @@ describe("leave.controller - getLeaveApplications (IDOR fix)", () => {
     expect(res.status).toHaveBeenCalledWith(200);
     expect(prisma.staff.findUnique).not.toHaveBeenCalled();
   });
+
+  // Backend UX Gap Phase 3: no leaveTypeId filter or date range existed
+  // before - only staffId/status.
+  it("filters by leaveTypeId when provided", async () => {
+    (prisma.leaveApplication.findMany as jest.Mock).mockResolvedValue([]);
+    const req = makeReq({
+      query: { leaveTypeId: "lt-1" },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await getLeaveApplications(req, res);
+
+    const whereArg = (prisma.leaveApplication.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.leaveTypeId).toBe("lt-1");
+  });
+
+  it("filters by a fromDate/toDate range (applications overlapping the range)", async () => {
+    (prisma.leaveApplication.findMany as jest.Mock).mockResolvedValue([]);
+    const req = makeReq({
+      query: { fromDate: "2024-06-01", toDate: "2024-06-30" },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await getLeaveApplications(req, res);
+
+    const whereArg = (prisma.leaveApplication.findMany as jest.Mock).mock.calls[0][0].where;
+    expect(whereArg.toDate).toEqual({ gte: new Date("2024-06-01") });
+    expect(whereArg.fromDate).toEqual({ lte: new Date("2024-06-30") });
+  });
 });
 
 describe("leave.controller - getLeaveBalance (IDOR fix)", () => {

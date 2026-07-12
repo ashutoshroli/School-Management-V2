@@ -60,11 +60,13 @@ export const getBooks = async (req: AuthRequest, res: Response): Promise<void> =
   try {
     const branchId = resolveBranchId(req);
     const search = req.query.search as string;
+    const category = req.query.category as string;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 25;
     const skip = (page - 1) * limit;
 
     const where: any = { branchId };
+    if (category) where.category = category;
     if (search) { where.OR = [{ title: { contains: search, mode: "insensitive" } }, { author: { contains: search, mode: "insensitive" } }, { isbn: { contains: search, mode: "insensitive" } }]; }
 
     const [books, total] = await Promise.all([
@@ -139,9 +141,22 @@ export const getIssuedBooks = async (req: AuthRequest, res: Response): Promise<v
   try {
     const status = req.query.status as string || "ISSUED";
     const branchId = resolveBranchId(req);
+    const classId = req.query.classId as string | undefined;
+    const studentId = req.query.studentId as string | undefined;
+    // "Overdue only" - still-ISSUED copies whose dueDate has already
+    // passed. Only meaningful combined with status=ISSUED (a RETURNED
+    // copy is never "overdue" regardless of how late it came back), so
+    // this is intentionally independent of the `status` param above
+    // rather than trying to redefine what status=OVERDUE would mean.
+    const overdueOnly = req.query.overdueOnly === "true";
+
+    const where: any = { status: status as any, book: { branchId } };
+    if (classId) where.student = { classId };
+    if (studentId) where.studentId = studentId;
+    if (overdueOnly) where.dueDate = { lt: new Date() };
 
     const issues = await prisma.libraryIssue.findMany({
-      where: { status: status as any, book: { branchId } },
+      where,
       include: { book: { select: { title: true, author: true } }, student: { include: { user: { select: { name: true } }, class: { select: { name: true } } } } },
       orderBy: { issueDate: "desc" },
     });

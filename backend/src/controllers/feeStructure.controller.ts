@@ -118,16 +118,18 @@ export const getFeeStructures = async (req: AuthRequest, res: Response): Promise
     const branchId = resolveBranchId(req);
     const classId = req.query.classId as string;
     const academicYearId = req.query.academicYearId as string;
+    const feeCategoryId = req.query.feeCategoryId as string | undefined;
 
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (classId) where.classId = classId;
     if (academicYearId) where.academicYearId = academicYearId;
+    if (feeCategoryId) where.feeCategoryId = feeCategoryId;
 
     // Cached (Phase 4) only for the common "whole branch, whole year"
-    // shape (no classId filter) - that's the query the Fees dashboard
-    // and fee-assignment flows actually hit repeatedly; a classId-
-    // filtered lookup is rarer and not worth a separate cache key
+    // shape (no classId/feeCategoryId filter) - that's the query the
+    // Fees dashboard and fee-assignment flows actually hit repeatedly;
+    // a filtered lookup is rarer and not worth a separate cache key
     // dimension for.
     const loadStructures = () =>
       prisma.feeStructure.findMany({
@@ -151,7 +153,7 @@ export const getFeeStructures = async (req: AuthRequest, res: Response): Promise
       });
 
     const structures =
-      branchId && !classId
+      branchId && !classId && !feeCategoryId
         ? await cached(CacheKeys.feeStructuresByBranch(branchId, academicYearId), CacheTTL.FEE_STRUCTURES, loadStructures)
         : await loadStructures();
 

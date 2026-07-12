@@ -325,6 +325,29 @@ describe("class.controller", () => {
       expect(whereArg.classId).toBe("class-1");
       expect(whereArg.subject).toEqual({ branchId: "branch-1" });
     });
+
+    // Backend UX Gap Phase 3: no staffId/subjectId filter existed before.
+    it("filters by staffId when provided", async () => {
+      (prisma.subjectTeacher.findMany as jest.Mock).mockResolvedValue([]);
+      const req = makeReq({ query: { staffId: "staff-1" } });
+      const res = makeMockRes();
+
+      await getSubjectTeachers(req, res);
+
+      const whereArg = (prisma.subjectTeacher.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(whereArg.staffId).toBe("staff-1");
+    });
+
+    it("filters by subjectId when provided", async () => {
+      (prisma.subjectTeacher.findMany as jest.Mock).mockResolvedValue([]);
+      const req = makeReq({ query: { subjectId: "subj-1" } });
+      const res = makeMockRes();
+
+      await getSubjectTeachers(req, res);
+
+      const whereArg = (prisma.subjectTeacher.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(whereArg.subjectId).toBe("subj-1");
+    });
   });
 
   describe("removeSubjectTeacher", () => {

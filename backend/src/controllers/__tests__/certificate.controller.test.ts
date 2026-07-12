@@ -234,6 +234,41 @@ describe("certificate.controller", () => {
       const call = (prisma.generatedCertificate.findMany as jest.Mock).mock.calls[0][0];
       expect(call.where.student).toBeUndefined();
     });
+
+    // Backend UX Gap Phase 3: no classId, certificate-type, or
+    // date-range filter existed before - only studentId.
+    it("filters by classId while still applying the branch scope", async () => {
+      (prisma.generatedCertificate.findMany as jest.Mock).mockResolvedValue([]);
+      const req = makeReq({ query: { classId: "class-1" } });
+      const res = makeMockRes();
+
+      await getGeneratedCertificates(req, res);
+
+      const whereArg = (prisma.generatedCertificate.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(whereArg.student).toEqual({ classId: "class-1", branchId: "branch-1" });
+    });
+
+    it("filters by certificate type via the template relation", async () => {
+      (prisma.generatedCertificate.findMany as jest.Mock).mockResolvedValue([]);
+      const req = makeReq({ query: { type: "BONAFIDE" } });
+      const res = makeMockRes();
+
+      await getGeneratedCertificates(req, res);
+
+      const whereArg = (prisma.generatedCertificate.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(whereArg.template).toEqual({ type: "BONAFIDE" });
+    });
+
+    it("filters by a fromDate/toDate range on createdAt", async () => {
+      (prisma.generatedCertificate.findMany as jest.Mock).mockResolvedValue([]);
+      const req = makeReq({ query: { fromDate: "2025-01-01", toDate: "2025-12-31" } });
+      const res = makeMockRes();
+
+      await getGeneratedCertificates(req, res);
+
+      const whereArg = (prisma.generatedCertificate.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(whereArg.createdAt).toEqual({ gte: new Date("2025-01-01"), lte: new Date("2025-12-31") });
+    });
   });
 
   describe("verifyCertificate (public endpoint)", () => {

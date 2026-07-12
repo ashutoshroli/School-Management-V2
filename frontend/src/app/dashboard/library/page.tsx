@@ -12,6 +12,7 @@ export default function LibraryPage() {
   const [issued, setIssued] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const [showModal, setShowModal] = useState(false);
   // Note: branchId is deliberately NOT part of this form - the backend
   // always scopes creation to the logged-in user's own branch.
@@ -21,6 +22,9 @@ export default function LibraryPage() {
   // new getBookById endpoint (the list view only shows stock counts).
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // "Overdue only" toggle for the Issued Books tab - previously
+  // impossible on the backend (getIssuedBooks had no such filter).
+  const [overdueOnly, setOverdueOnly] = useState(false);
 
   const openDetail = async (id: string) => {
     setDetail({});
@@ -40,15 +44,15 @@ export default function LibraryPage() {
     setLoading(true);
     try {
       if (tab === "books") {
-        const res = await api.get("/facilities/library/books", { params: { search } });
+        const res = await api.get("/facilities/library/books", { params: { search, category: categoryFilter || undefined } });
         setBooks(res.data.data || []);
       } else {
-        const res = await api.get("/facilities/library/issued");
+        const res = await api.get("/facilities/library/issued", { params: { overdueOnly: overdueOnly ? "true" : undefined } });
         setIssued(res.data.data || []);
       }
     } catch {} finally { setLoading(false); }
   };
-  useEffect(() => { fetch(); }, [tab, search]);
+  useEffect(() => { fetch(); }, [tab, search, categoryFilter, overdueOnly]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +91,18 @@ export default function LibraryPage() {
       </div>
 
       {tab === "books" && (
-        <div className="card mb-4"><div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" /><input className="input-field pl-10" placeholder="Search by title, author, ISBN..." value={search} onChange={e => setSearch(e.target.value)} /></div></div>
+        <div className="card mb-4 flex flex-wrap gap-3">
+          <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" /><input className="input-field pl-10" placeholder="Search by title, author, ISBN..." value={search} onChange={e => setSearch(e.target.value)} /></div>
+          <input className="input-field w-auto" placeholder="Filter by category..." value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} />
+        </div>
+      )}
+      {tab === "issued" && (
+        <div className="card mb-4">
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" checked={overdueOnly} onChange={(e) => setOverdueOnly(e.target.checked)} />
+            Show overdue only
+          </label>
+        </div>
       )}
 
       {loading ? <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div> :

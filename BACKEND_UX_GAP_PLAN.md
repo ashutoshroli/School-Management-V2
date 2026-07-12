@@ -99,26 +99,44 @@ record), and a SECURITY case (record belongs to a different branch).
 
 ---
 
-## Phase 3: List/Search Filter Gaps (class / section / session / category) 🟢
+## Phase 3: List/Search Filter Gaps ✅ COMPLETED (class / section / session / category)
 
 **Priority:** HIGH - this was the user's explicit example ("sabhi search
-wala section ke paas class/section/session ka filter"). Add the missing
-filters to each list endpoint below (all confirmed missing by reading the
-controller code):
+wala section ke paas class/section/session ka filter").
+**Status:** ✅ **DONE**
 
-### Scope:
-- `getStaffList` - add `designation` filter
-- `getPayslips` - add `department`/`designation`/staff-name search
-- `getLeaveApplications` - add `leaveTypeId` filter + date range
-- `getBooks` (library) - add `category` filter
-- `getIssuedBooks` - add `classId`/`studentId` filter + "overdue only" toggle
-- `getItems` (inventory) - add `category` filter (currently has none at all)
-- `getAllDiscounts` - add `classId`/`sectionId` filter
-- `getGeneratedCertificates` - add `classId`, certificate-type, date-range filters
-- `getNotices` - add search + date-range filter
-- `getSubjectTeachers` - add `staffId`/`subjectId` filter
-- `getAdmissionInquiries` - add `classAppliedFor` filter + date range
-- `getFeeStructures` - add `feeCategoryId` filter
+### What was actually done (all 12 filters, each backend + minimal frontend UI):
+- `getStaffList` - `designation` filter (`/dashboard/staff` search bar)
+- `getPayslips` - `department`/`designation`/staff-name `search` (`/dashboard/payroll`)
+- `getLeaveApplications` - `leaveTypeId` filter + `fromDate`/`toDate` range,
+  overlap-aware (`/dashboard/leaves`'s "All Applications" tab)
+- `getBooks` (library) - `category` filter (`/dashboard/library`'s Books Catalog tab)
+- `getIssuedBooks` - `classId`/`studentId` filter + "overdue only" toggle
+  (`/dashboard/library`'s Issued Books tab)
+- `getItems` (inventory) - `category` filter, previously had none at all
+  (`/dashboard/inventory`)
+- `getAllDiscounts` - `classId`/`sectionId` filter, with a dependent
+  section dropdown (`/dashboard/fees/discounts`)
+- `getGeneratedCertificates` - `classId`, certificate-`type`, `fromDate`/
+  `toDate` range (`/dashboard/certificates`)
+- `getNotices` - title/body `search` + `fromDate`/`toDate` range (`/dashboard/notices`)
+- `getSubjectTeachers` - `staffId`/`subjectId` filter
+  (`/dashboard/teacher-assign`'s Subject Teacher tab)
+- `getAdmissionInquiries` - `classAppliedFor` (partial match, it's free
+  text not a real classId) + date range (`/dashboard/admissions`)
+- `getFeeStructures` - `feeCategoryId` filter, also bypasses the
+  branch-level cache (same as an existing `classId` filter already did)
+  when set (`/dashboard/fees/structures`)
+
+**Tests:** 30 new tests across 11 controller test files (each filter's
+presence/absence and combination with existing filters, using the branch's
+existing conventions).
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**65 suites / 685 tests**, up
+  from 654) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, all 12 touched
+  pages build with an expected size increase
 
 ---
 
