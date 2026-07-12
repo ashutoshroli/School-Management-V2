@@ -46,7 +46,10 @@ export default function EnterMarksPage() {
         }
         setExam(found);
 
-        const subjectsRes = await api.get(`/classes/${found.classId}/subjects`);
+        // FIX: this had no .catch() - if it failed for any reason, the
+        // whole load() threw and showed a misleading error even though
+        // the exam itself (examRes above) had already loaded fine.
+        const subjectsRes = await api.get(`/classes/${found.classId}/subjects`).catch(() => ({ data: { data: [] } }));
         const subjectList = (subjectsRes.data.data || []).map((cs: any) => cs.subject);
         setSubjects(subjectList);
         if (subjectList.length > 0) setSubjectId(subjectList[0].id);

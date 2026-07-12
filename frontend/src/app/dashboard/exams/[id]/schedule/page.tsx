@@ -137,9 +137,24 @@ export default function ExamSchedulePage() {
       if (!found) { setError("Exam not found"); return; }
       setExam(found);
 
+      // FIX: subjectsRes and scheduleRes previously had NO .catch()
+      // (unlike roomsRes/sectionsRes below, which already did). If
+      // EITHER of those two sub-requests failed for ANY reason (a
+      // transient 404/500, a slow cold-start, a network hiccup), the
+      // entire Promise.all rejected - even though the exam itself
+      // (examRes above) had already loaded successfully and `setExam`
+      // had already run. The resulting catch block then displayed
+      // whichever sub-request's own error message happened to bubble
+      // up (e.g. getExamSchedule's own "Exam not found" 404 text) as
+      // if the EXAM lookup itself had failed - a confusing false
+      // negative that looked exactly like a real "exam doesn't exist"
+      // error while the page's title/header still showed the exam's
+      // real name (fetched a moment earlier via examRes). Every
+      // sub-request here now degrades to an empty result on failure
+      // instead of taking the whole page down with it.
       const [subjectsRes, scheduleRes, roomsRes, sectionsRes] = await Promise.all([
-        api.get(`/classes/${found.classId}/subjects`),
-        api.get(`/academics/exams/${examId}/schedule`),
+        api.get(`/classes/${found.classId}/subjects`).catch(() => ({ data: { data: [] } })),
+        api.get(`/academics/exams/${examId}/schedule`).catch(() => ({ data: { data: [] } })),
         api.get("/facilities/school-buildings").catch(() => ({ data: { data: [] } })),
         api.get("/classes/sections", { params: { classId: found.classId } }).catch(() => ({ data: { data: [] } })),
       ]);
