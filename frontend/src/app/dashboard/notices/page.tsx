@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Bell, Plus, Pin, Trash2, Eye } from "lucide-react";
+import { Bell, Plus, Pin, Trash2, Eye, Globe } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
@@ -12,7 +12,7 @@ export default function NoticesPage() {
   const [showModal, setShowModal] = useState(false);
   // Note: branchId is deliberately NOT part of this form - the backend
   // always scopes creation to the logged-in user's own branch.
-  const [form, setForm] = useState({ title: "", body: "", type: "ALL", expiryDate: "" });
+  const [form, setForm] = useState({ title: "", body: "", type: "ALL", expiryDate: "", isPublic: false });
 
   // Search + date-range filter - previously impossible on the backend
   // (getNotices only supported a `type` filter).
@@ -39,6 +39,7 @@ export default function NoticesPage() {
   };
 
   const togglePin = async (id: string) => { await api.patch(`/communication/notices/${id}/pin`); fetch(); };
+  const togglePublicVisibility = async (id: string) => { await api.patch(`/communication/notices/${id}/public`); fetch(); };
   const deleteNotice = async (id: string) => { if (confirm("Delete?")) { await api.delete(`/communication/notices/${id}`); fetch(); } };
 
   // View Details - a direct "open one notice" endpoint (via the new
@@ -84,14 +85,18 @@ export default function NoticesPage() {
                     {n.isPinned && <Pin className="h-4 w-4 text-yellow-500" />}
                     <h3 className="font-semibold text-gray-900">{n.title}</h3>
                     <span className="text-xs px-2 py-0.5 bg-gray-100 rounded">{n.type}</span>
+                    {n.isPublic && <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded flex items-center gap-1"><Globe className="h-3 w-3" /> Public</span>}
                   </div>
                   <p className="text-sm text-gray-600 mb-2">{n.body}</p>
                   <p className="text-xs text-gray-400">{formatDate(n.createdAt)}</p>
                 </div>
                 <div className="flex gap-1">
                   <button onClick={() => openDetail(n.id)} className="p-1 rounded hover:bg-gray-100" title="View Details"><Eye className="h-4 w-4 text-gray-400" /></button>
-                  <button onClick={() => togglePin(n.id)} className="p-1 rounded hover:bg-gray-100"><Pin className="h-4 w-4 text-gray-400" /></button>
-                  <button onClick={() => deleteNotice(n.id)} className="p-1 rounded hover:bg-gray-100"><Trash2 className="h-4 w-4 text-red-400" /></button>
+                  <button onClick={() => togglePin(n.id)} className="p-1 rounded hover:bg-gray-100" title="Pin/unpin"><Pin className="h-4 w-4 text-gray-400" /></button>
+                  <button onClick={() => togglePublicVisibility(n.id)} className="p-1 rounded hover:bg-gray-100" title={n.isPublic ? "Remove from public notice board" : "Show on public notice board"}>
+                    <Globe className={`h-4 w-4 ${n.isPublic ? "text-blue-500" : "text-gray-400"}`} />
+                  </button>
+                  <button onClick={() => deleteNotice(n.id)} className="p-1 rounded hover:bg-gray-100" title="Delete"><Trash2 className="h-4 w-4 text-red-400" /></button>
                 </div>
               </div>
             </div>
@@ -111,6 +116,10 @@ export default function NoticesPage() {
               </select></div>
             <div><label className="block text-sm font-medium mb-1">Expiry Date</label><input type="date" className="input-field" value={form.expiryDate} onChange={e => setForm({...form, expiryDate: e.target.value})} /></div>
           </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={form.isPublic} onChange={(e) => setForm({ ...form, isPublic: e.target.checked })} />
+            Show on the public (no-login) notice board
+          </label>
           <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Publish</button></div>
         </form>
       </Modal>

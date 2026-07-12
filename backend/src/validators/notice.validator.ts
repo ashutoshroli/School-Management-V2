@@ -10,6 +10,7 @@ export const createNoticeSchema = z.object({
     targetClass: z.string().optional(),
     attachmentUrl: z.string().optional(),
     isPinned: z.boolean().optional(),
+    isPublic: z.boolean().optional(),
     expiryDate: z.coerce.date().optional(),
   }),
 });
