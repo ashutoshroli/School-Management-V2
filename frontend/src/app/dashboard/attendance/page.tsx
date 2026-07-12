@@ -36,6 +36,18 @@ export default function StudentAttendancePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // Period-wise attendance support - the backend already accepts a
+  // `period` param on markStudentAttendance (has since the original
+  // codebase, but the UI never sent it), and getClassAttendance now
+  // accepts a `period` query param too (Phase 4). The period picker
+  // shows the branch's PeriodConfig list.
+  const [periodConfigs, setPeriodConfigs] = useState<any[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(""); // "" = day-wise, "1"/"2"/... = period-wise
+
+  useEffect(() => {
+    api.get("/academics/period-config").then((r) => setPeriodConfigs((r.data.data || []).filter((p: any) => !p.isBreak))).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (isTeacher) {
       api.get("/academics/attendance/my-sections").then((r) => setMyAssignedSections(r.data.data || []));
@@ -56,14 +68,14 @@ export default function StudentAttendancePage() {
     setLoading(true);
     setError("");
     try {
-      const res = await api.get("/academics/attendance/class", { params: { sectionId, date } });
+      const res = await api.get("/academics/attendance/class", { params: { sectionId, date, period: selectedPeriod || undefined } });
       setStudents(res.data.data?.students || []);
     } catch (err: any) {
       setError(err.response?.data?.message || "Failed to load attendance for this section/date");
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { if (sectionId) fetchAttendance(); }, [sectionId, date]);
+  useEffect(() => { if (sectionId) fetchAttendance(); }, [sectionId, date, selectedPeriod]);
 
   const setStatus = (studentId: string, status: string) => {
     setStudents(prev => prev.map(s =>
@@ -76,7 +88,7 @@ export default function StudentAttendancePage() {
     setError("");
     try {
       const records = students.filter(s => s.attendance?.status).map(s => ({ studentId: s.studentId, status: s.attendance.status }));
-      const res = await api.post("/academics/attendance/mark", { sectionId, date, records });
+      const res = await api.post("/academics/attendance/mark", { sectionId, date, period: selectedPeriod ? parseInt(selectedPeriod, 10) : null, records });
       // BUG FIX: previously never refetched after a successful save -
       // the on-screen table kept showing whatever the teacher had just
       // clicked, with no confirmation that it actually matches what's
@@ -117,6 +129,16 @@ export default function StudentAttendancePage() {
           </>
         )}
         <input type="date" className="input-field w-auto" value={date} onChange={e => setDate(e.target.value)} />
+        {periodConfigs.length > 0 && (
+          <select className="input-field w-auto" value={selectedPeriod} onChange={e => setSelectedPeriod(e.target.value)}>
+            <option value="">Day-wise (full day)</option>
+            {periodConfigs.map((p: any) => (
+              <option key={p.periodNo} value={String(p.periodNo)}>
+                {p.label || `Period ${p.periodNo}`} ({p.startTime}-{p.endTime})
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       {isTeacher && myAssignedSections.length === 0 && (
         <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-4 py-3">

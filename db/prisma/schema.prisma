@@ -66,6 +66,7 @@ model Branch {
   vehicles        Vehicle[]
   hostelBuildings HostelBuilding[]
   schoolBuildings SchoolBuilding[]
+  periodConfigs   PeriodConfig[]
   libraryBooks    LibraryBook[]
   inventoryItems  InventoryItem[]
   devices         AttendanceDevice[]
@@ -976,8 +977,27 @@ enum PromotionStatus {
 }
 
 // ============================================
-// SECTION 13: TIMETABLE
+// SECTION 13: TIMETABLE + PERIOD CONFIG
 // ============================================
+
+// Admin-configurable list of periods per branch (replaces the previous
+// un-enforced "1-8" convention on TimetableSlot.period). Each branch
+// can define 6, 7, 8, or 9 periods with their exact start/end times -
+// the attendance marking UI's period picker shows this list, and the
+// TimetableSlot editor should use it too for consistency.
+model PeriodConfig {
+  id        String @id @default(cuid())
+  branchId  String
+  periodNo  Int
+  label     String? // "Period 1", "Lunch Break" (for display only)
+  startTime String  // "09:00"
+  endTime   String  // "09:45"
+  isBreak   Boolean @default(false) // true = not attendance-markable
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@unique([branchId, periodNo])
+}
 
 model Timetable {
   id             String   @id @default(cuid())

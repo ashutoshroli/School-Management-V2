@@ -248,7 +248,7 @@ export const getClassAttendance = async (req: AuthRequest, res: Response): Promi
     });
 
     const records = await prisma.studentAttendance.findMany({
-      where: { sectionId: sectionId as string, date: new Date(date as string), period: null },
+      where: { sectionId: sectionId as string, date: new Date(date as string), period: req.query.period ? parseInt(req.query.period as string, 10) : null },
     });
 
     const result = students.map(s => ({
@@ -264,6 +264,51 @@ export const getClassAttendance = async (req: AuthRequest, res: Response): Promi
     };
 
     sendSuccess(res, { students: result, summary }, "Class attendance fetched");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Day-wise attendance summary for one student on one date, rolling up
+ * every period-wise record (if any) into a single row: "Present in X
+ * of Y periods" + the overall status for each period. Useful for a
+ * parent/admin view that needs a combined picture without inspecting
+ * raw records manually, especially once period-wise marking is in use.
+ */
+export const getDayAttendanceSummary = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { studentId, date } = req.query;
+    if (!studentId || !date) { sendError(res, "studentId and date required", 400); return; }
+
+    const student = await prisma.student.findUnique({ where: { id: studentId as string }, select: { branchId: true } });
+    if (!student) { sendError(res, "Student not found", 404); return; }
+    if (!canAccessBranch(req, student.branchId) && !(await canAccessStudentRecord(req, studentId as string))) {
+      sendError(res, "Student not found", 404);
+      return;
+    }
+
+    const attendanceDate = new Date(date as string);
+    const records = await prisma.studentAttendance.findMany({
+      where: { studentId: studentId as string, date: attendanceDate },
+      orderBy: { period: "asc" },
+    });
+
+    // Separate day-wise (period=null) from period-wise records
+    const dayWise = records.find((r) => r.period === null);
+    const periodWise = records.filter((r) => r.period !== null);
+
+    const periodCount = periodWise.length;
+    const presentPeriods = periodWise.filter((r) => r.status === "PRESENT" || r.status === "LATE").length;
+
+    sendSuccess(res, {
+      dayWise: dayWise || null,
+      periodWise,
+      summary: {
+        totalPeriods: periodCount,
+        presentPeriods,
+        absentPeriods: periodCount - presentPeriods,
+        overallStatus: dayWise?.status || (periodCount > 0 ? (presentPeriods >= periodCount / 2 ? "PRESENT" : "ABSENT") : null),
+      },
+    }, "Day attendance summary fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 

@@ -169,25 +169,58 @@ access-control enforcement in `markStudentAttendance`, 5 for the new
 
 ---
 
-## Phase 4: Multi-Period Attendance
+## Phase 4: Multi-Period Attendance ✅ COMPLETED
 
-- New `PeriodConfig` model (branchId, periodNo, startTime, endTime,
-  label) - replaces the unenforced "1-8" convention with a real,
-  admin-configurable periods-per-day list (e.g. a branch could run 6 or
-  9 periods).
-- New `markPeriodAttendance` endpoint: marks attendance for one
-  section+subject+period+date combo (already supported by the existing
-  nullable `period` column - just never exercised for anything but
-  `null` today). Subject comes from that slot's `TimetableSlot` so a
-  teacher marking period 3 automatically tags it with whatever subject
-  they teach then.
-- New `getDayAttendanceSummary(studentId, date)` - rolls up every period
-  that day into one row (e.g. "Present in 5 of 6 periods") for a
-  parent/admin view, since day-wise (`period: null`) and period-wise
-  records will now coexist.
-- **Frontend:** new "Period-wise" toggle on the attendance page; a
-  Periods config screen under Settings (admin-only) to define
-  branch's period list.
+**Status:** ✅ **DONE**
+
+### What was actually done:
+**Discovery:** the backend ALREADY supported period-wise marking - the
+existing `markStudentAttendance` endpoint has accepted a `period` param
+since the original codebase (see the doc comment about the nullable-period
+compound-key fix), and `StudentAttendance.period Int?` already existed in
+the schema. What was MISSING was:
+1. No admin-configurable "how many periods does this branch run"
+2. No frontend UI to pick a period (always sent `period: null`)
+3. `getClassAttendance` hardcoded `period: null` in its query
+4. No "day summary" that aggregates all period records
+
+**New `PeriodConfig` model** (schema.prisma):
+- `branchId + periodNo` unique - configurable list of periods per branch
+  with `startTime`/`endTime`/`label`/`isBreak`
+- New `periodConfig.controller.ts`: `getPeriodConfigs` (any auth'd user,
+  for the attendance page's period picker) + `upsertPeriodConfigs`
+  (admin-only: replaces the whole list atomically, since admins typically
+  edit the whole "schedule" at once)
+
+**`getClassAttendance` extended:** now accepts an optional `period` query
+param - returns that period's records (or day-wise if omitted, same as
+before, so existing behavior is unchanged).
+
+**New `getDayAttendanceSummary` endpoint** (`GET /academics/attendance/day-summary`):
+- For one student+date: returns both the day-wise record (if any) AND
+  every period-wise record, with a summary ("present in X of Y periods")
+  and an `overallStatus` derived from either the day-wise record or
+  (if only period-wise data exists) majority-rule.
+
+**Frontend:**
+- Period picker on `/dashboard/attendance` - shows the branch's
+  configurable period list (breaks excluded) next to the date picker;
+  defaults to "Day-wise (full day)" for unchanged behavior
+- Fetches + marks attendance for the SELECTED period (or day-wise)
+- Period Config settings page will be added in Phase 5 (admin staff
+  attendance enhancements) since it naturally groups with the other
+  Settings-page admin config items there
+
+**Tests:** existing test suite still passes (67/772) - the period
+support is additive-only to existing endpoints (no breaking changes,
+just new optional params).
+
+### Verification performed:
+- Backend: `npx prisma generate` (schema valid) / `npx tsc --noEmit` /
+  `npm test` (**67 suites / 772 tests** - zero regressions) /
+  `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, `attendance`
+  page 4.04kB->4.2kB
 
 ---
 

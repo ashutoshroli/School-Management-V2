@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory, getMyAssignedSections } from "../controllers/studentAttendance.controller";
+import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory, getMyAssignedSections, getDayAttendanceSummary } from "../controllers/studentAttendance.controller";
+import { getPeriodConfigs, upsertPeriodConfigs } from "../controllers/periodConfig.controller";
 import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } from "../controllers/timetable.controller";
 import { createExam, getExams, getExamById, updateExam, deleteExam, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
 import { getGradeBands, createGradeBand, updateGradeBand, deleteGradeBand } from "../controllers/gradeSystem.controller";
@@ -25,9 +26,14 @@ router.post("/attendance/mark", authenticate, authorize(...TEACHERS), validate(m
 router.post("/attendance/card-tap", validate(cardTapSchema), studentCardTap); // Device auth via API key
 router.get("/attendance/class", authenticate, authorize(...TEACHERS), getClassAttendance);
 router.get("/attendance/my-sections", authenticate, authorize(UserRole.TEACHER), getMyAssignedSections);
+router.get("/attendance/day-summary", authenticate, getDayAttendanceSummary);
 // Access control (branch staff OR the student/parent themselves) is
 // enforced inside the controller via canAccessBranch/canAccessStudentRecord.
 router.get("/attendance/student/:studentId", authenticate, getStudentAttendanceHistory);
+
+// Period Config (admin-configurable periods-per-day for a branch)
+router.get("/period-config", authenticate, getPeriodConfigs);
+router.put("/period-config", authenticate, authorize(...ADMIN), upsertPeriodConfigs);
 
 // Timetable
 router.post("/timetable", authenticate, authorize(...ADMIN), validate(getOrCreateTimetableSchema), getOrCreateTimetable);
