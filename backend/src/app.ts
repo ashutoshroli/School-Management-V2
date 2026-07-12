@@ -3,7 +3,6 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
-import compression from "compression";
 import rateLimit from "express-rate-limit";
 import swaggerUi from "swagger-ui-express";
 import passport from "./config/passport";
@@ -25,10 +24,6 @@ initSentry(app);
 // tracing / log correlation. Added early so all downstream middleware
 // and route handlers can reference req.id in their logs.
 app.use(requestId);
-
-// Response compression (gzip/brotli) - reduces payload sizes by 60-80%
-// for JSON responses. Placed before routes so all responses benefit.
-app.use(compression());
 
 // Security middleware
 app.use(helmet());

@@ -1949,6 +1949,8 @@ model DisciplineIncident {
 
   student Student @relation(fields: [studentId], references: [id])
 
+  student Student @relation(fields: [studentId], references: [id])
+
   @@index([branchId, studentId])
   @@index([branchId, incidentDate])
 }
@@ -2186,6 +2188,7 @@ model QuizAttempt {
   status        String   @default("IN_PROGRESS")
 
   quiz    Quiz         @relation(fields: [quizId], references: [id])
+  student Student      @relation(fields: [studentId], references: [id])
   answers QuizAnswer[]
 
   @@unique([quizId, studentId, attemptNo])
