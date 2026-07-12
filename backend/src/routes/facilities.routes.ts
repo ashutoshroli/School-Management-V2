@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { addBook, getBooks, getBookById, issueBook, returnBook, getIssuedBooks, deleteBook } from "../controllers/library.controller";
+import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, getIssuedBooks, deleteBook } from "../controllers/library.controller";
 import { addItem, getItems, getItemById, purchaseStock, issueStock, getLowStockAlerts, deleteItem } from "../controllers/inventory.controller";
 import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, getVehicleById, addVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute } from "../controllers/transport.controller";
 import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding } from "../controllers/hostel.controller";
 import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
-import { addBookSchema, issueBookSchema } from "../validators/library.validator";
+import { addBookSchema, issueBookSchema, bulkIssueBookSchema } from "../validators/library.validator";
 import { addItemSchema, purchaseStockSchema, issueStockSchema } from "../validators/inventory.validator";
 import { createRouteSchema, addStopSchema, allocateStudentSchema, addVehicleSchema, assignVehicleToRouteSchema } from "../validators/transport.validator";
 import { createBuildingSchema, addFloorSchema, addRoomSchema, allocateRoomSchema, bulkAllocateRoomSchema } from "../validators/hostel.validator";
@@ -23,6 +23,7 @@ router.post("/library/books", authorize(...ADMIN, UserRole.LIBRARIAN), branchAcc
 router.get("/library/books", getBooks);
 router.get("/library/books/:id", getBookById);
 router.post("/library/issue", authorize(...ADMIN, UserRole.LIBRARIAN), validate(issueBookSchema), issueBook);
+router.post("/library/issue/bulk", authorize(...ADMIN, UserRole.LIBRARIAN), validate(bulkIssueBookSchema), bulkIssueBook);
 router.patch("/library/return/:id", authorize(...ADMIN, UserRole.LIBRARIAN), returnBook);
 router.get("/library/issued", authorize(...ADMIN, UserRole.LIBRARIAN), getIssuedBooks);
 router.delete("/library/books/:id", authorize(...ADMIN, UserRole.LIBRARIAN), deleteBook);

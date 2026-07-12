@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BookOpen, Plus, Search, RotateCcw, Trash2, Eye } from "lucide-react";
+import { BookOpen, Plus, Search, RotateCcw, Trash2, Eye, Users, X } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
@@ -78,6 +78,67 @@ export default function LibraryPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this book"); }
   };
 
+  // Bulk Issue - issue one book to a whole hand-picked list of
+  // students at once (e.g. handing out the same textbook to an entire
+  // class), via the new bulkIssueBook endpoint. Uses a simple
+  // comma-separated admission-number lookup rather than a full
+  // class/section picker, since library issuing is typically done from
+  // a physical stack of ID cards / attendance sheet.
+  const [bulkIssueBook, setBulkIssueBookTarget] = useState<any>(null);
+  const [bulkStudentQuery, setBulkStudentQuery] = useState("");
+  const [bulkSelectedStudents, setBulkSelectedStudents] = useState<any[]>([]);
+  const [bulkStudentResults, setBulkStudentResults] = useState<any[]>([]);
+  const [bulkDueDate, setBulkDueDate] = useState("");
+  const [bulkIssuing, setBulkIssuing] = useState(false);
+  const [bulkIssueResult, setBulkIssueResult] = useState<{ issued: number; skipped: number } | null>(null);
+
+  const openBulkIssue = (book: any) => {
+    setBulkIssueBookTarget(book);
+    setBulkStudentQuery("");
+    setBulkSelectedStudents([]);
+    setBulkStudentResults([]);
+    setBulkDueDate("");
+    setBulkIssueResult(null);
+  };
+
+  useEffect(() => {
+    if (!bulkStudentQuery.trim()) { setBulkStudentResults([]); return; }
+    const timer = setTimeout(() => {
+      api.get("/students", { params: { search: bulkStudentQuery, limit: 8 } })
+        .then((res) => setBulkStudentResults(res.data.data || []))
+        .catch(() => setBulkStudentResults([]));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [bulkStudentQuery]);
+
+  const addBulkStudent = (student: any) => {
+    if (!bulkSelectedStudents.some((s) => s.id === student.id)) {
+      setBulkSelectedStudents((prev) => [...prev, student]);
+    }
+    setBulkStudentQuery("");
+    setBulkStudentResults([]);
+  };
+
+  const handleBulkIssue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkIssueBook || bulkSelectedStudents.length === 0) return;
+    setBulkIssuing(true);
+    setBulkIssueResult(null);
+    try {
+      const res = await api.post("/facilities/library/issue/bulk", {
+        bookId: bulkIssueBook.id,
+        studentIds: bulkSelectedStudents.map((s) => s.id),
+        dueDate: bulkDueDate,
+      });
+      setBulkIssueResult(res.data.data);
+      fetch();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to bulk-issue book");
+    } finally {
+      setBulkIssuing(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -115,6 +176,7 @@ export default function LibraryPage() {
               {books.map(b => (<tr key={b.id} className="border-b"><td className="px-4 py-3 font-medium">{b.title}</td><td className="px-4 py-3">{b.author}</td><td className="px-4 py-3 text-xs">{b.category || "-"}</td><td className="px-4 py-3 text-center font-bold text-green-700">{b.availableCopies}</td><td className="px-4 py-3 text-center">{b.totalCopies}</td>
                 <td className="px-4 py-3 text-center">
                   <button onClick={() => openDetail(b.id)} title="View Details" className="text-gray-500 hover:text-gray-700 mr-3"><Eye className="h-4 w-4 inline" /></button>
+                  <button onClick={() => openBulkIssue(b)} title="Bulk Issue to multiple students" className="text-primary-600 hover:text-primary-700 mr-3" disabled={b.availableCopies === 0}><Users className="h-4 w-4 inline" /></button>
                   <button onClick={() => deleteBook(b.id, b.title)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button>
                 </td></tr>))}
             </tbody></table>
@@ -176,6 +238,55 @@ export default function LibraryPage() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal isOpen={!!bulkIssueBook} onClose={() => setBulkIssueBookTarget(null)} title={bulkIssueBook ? `Bulk Issue - ${bulkIssueBook.title}` : "Bulk Issue"}>
+        <form onSubmit={handleBulkIssue} className="space-y-4">
+          <p className="text-xs text-gray-400">
+            {bulkIssueBook?.availableCopies} copy/copies available. Issuance is capped at whatever's available even if
+            you select more students.
+          </p>
+          {bulkIssueResult && (
+            <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-3 py-2">
+              Issued to {bulkIssueResult.issued} student(s){bulkIssueResult.skipped > 0 ? `, ${bulkIssueResult.skipped} skipped (not enough copies)` : ""}.
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium mb-1">Add Students *</label>
+            <input className="input-field" placeholder="Search by name or admission no..." value={bulkStudentQuery} onChange={(e) => setBulkStudentQuery(e.target.value)} />
+            {bulkStudentResults.length > 0 && (
+              <div className="border rounded-lg mt-1 max-h-40 overflow-y-auto">
+                {bulkStudentResults.map((s: any) => (
+                  <button type="button" key={s.id} onClick={() => addBulkStudent(s)} className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm border-b last:border-b-0">
+                    {s.user?.name} ({s.admissionNo}) - {s.class?.name}-{s.section?.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {bulkSelectedStudents.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {bulkSelectedStudents.map((s) => (
+                <span key={s.id} className="flex items-center gap-1 text-xs px-2 py-1 bg-gray-100 rounded-full">
+                  {s.user?.name}
+                  <button type="button" onClick={() => setBulkSelectedStudents((prev) => prev.filter((x) => x.id !== s.id))}>
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium mb-1">Due Date *</label>
+            <input type="date" className="input-field" value={bulkDueDate} onChange={(e) => setBulkDueDate(e.target.value)} required />
+          </div>
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            <button type="button" onClick={() => setBulkIssueBookTarget(null)} className="btn-secondary">Close</button>
+            <button type="submit" disabled={bulkIssuing || bulkSelectedStudents.length === 0} className="btn-primary disabled:opacity-50">
+              {bulkIssuing ? "Issuing..." : `Issue to ${bulkSelectedStudents.length} Student(s)`}
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

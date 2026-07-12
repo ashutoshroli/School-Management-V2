@@ -79,6 +79,101 @@ export const createFeeStructure = async (req: AuthRequest, res: Response): Promi
 };
 
 /**
+ * Create the same fee structure "template" (category/amount/frequency/
+ * late-fee rules) across multiple classes for a session in one call
+ * (e.g. "Tuition Fee, Rs 5000/quarter" for Classes 6 through 10) - the
+ * bulk counterpart to createFeeStructure above. A class that already
+ * has a structure for this category+year is skipped (matching
+ * createFeeStructure's own uniqueness rejection, just without erroring
+ * out the whole batch over one collision). Installments, if provided,
+ * are cloned identically onto every newly-created structure.
+ */
+export const bulkCreateFeeStructure = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { academicYearId, classIds, feeCategoryId, amount, frequency, dueDay, lateFeeType, lateFeeValue, installments } = req.body;
+
+    if (!Array.isArray(classIds) || classIds.length === 0) {
+      sendError(res, "classIds must be a non-empty array", 400);
+      return;
+    }
+
+    const branchId = resolveEffectiveBranchId(req, req.body.branchId);
+    if (!branchId) {
+      sendError(res, "Branch ID could not be resolved - please select a branch", 400);
+      return;
+    }
+    if (!canAccessBranch(req, branchId)) {
+      sendError(res, "Access denied: branch mismatch", 403);
+      return;
+    }
+
+    // SECURITY: every target class must belong to this branch - same
+    // IDOR class guarded against on bulkAssignSubjectToClass/
+    // bulkPromote elsewhere in this codebase.
+    const classes = await prisma.class.findMany({ where: { id: { in: classIds } }, select: { id: true, branchId: true } });
+    const foundIds = new Set(classes.map((c) => c.id));
+    const notFound = classIds.filter((id: string) => !foundIds.has(id));
+    const wrongBranch = classes.filter((c) => c.branchId !== branchId);
+    if (wrongBranch.length > 0) {
+      sendError(res, `${wrongBranch.length} of the target classes do not belong to your branch`, 400);
+      return;
+    }
+
+    const validClassIds = classes.map((c) => c.id);
+    const existing = await prisma.feeStructure.findMany({
+      where: { branchId, academicYearId, feeCategoryId, classId: { in: validClassIds } },
+      select: { classId: true },
+    });
+    const existingSet = new Set(existing.map((e) => e.classId));
+    const newClassIds = validClassIds.filter((id) => !existingSet.has(id));
+
+    let created: { id: string; classId: string | null }[] = [];
+    if (newClassIds.length > 0) {
+      created = await prisma.$transaction(
+        newClassIds.map((classId) =>
+          prisma.feeStructure.create({
+            data: {
+              branchId, academicYearId, classId, feeCategoryId,
+              amount, frequency, dueDay: dueDay || 10,
+              lateFeeType: lateFeeType || "NONE",
+              lateFeeValue: lateFeeValue || 0,
+              isActive: true,
+            },
+            select: { id: true, classId: true },
+          })
+        )
+      );
+
+      if (installments && installments.length > 0) {
+        await prisma.feeInstallment.createMany({
+          data: created.flatMap((structure) =>
+            installments.map((inst: any) => ({
+              feeStructureId: structure.id,
+              installmentNo: inst.installmentNo,
+              amount: inst.amount,
+              dueDate: new Date(inst.dueDate),
+            }))
+          ),
+        });
+      }
+    }
+
+    await invalidateFeeStructuresCache(branchId);
+
+    const skipped = existingSet.size;
+    sendSuccess(
+      res,
+      { created: created.length, skipped, notFound: notFound.length, total: classIds.length },
+      `Fee structure created for ${created.length} class(es)` +
+        (skipped > 0 ? ` (${skipped} already had this category+year)` : ""),
+      201
+    );
+  } catch (error) {
+    sendError(res, "Failed to bulk-create fee structures", 500, (error as Error).message);
+  }
+};
+
+/**
  * Get single fee structure detail, with its installments and how many
  * students currently have it assigned - the list view (getFeeStructures)
  * already returns installments per row, but not the assignment count,

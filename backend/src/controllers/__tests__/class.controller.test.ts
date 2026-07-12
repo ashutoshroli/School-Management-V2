@@ -3,16 +3,17 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    class: { findUnique: jest.fn(), create: jest.fn() },
+    class: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn() },
     section: { findUnique: jest.fn(), create: jest.fn() },
     subject: { findUnique: jest.fn(), create: jest.fn() },
     staff: { findUnique: jest.fn() },
     subjectTeacher: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn(), delete: jest.fn() },
+    classSubject: { findMany: jest.fn(), createMany: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createClass, createSection, createSubject, getSubjectById, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
+import { createClass, createSection, createSubject, getSubjectById, bulkAssignSubjectToClass, assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher } from "../class.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -183,6 +184,82 @@ describe("class.controller", () => {
       const payload = (res.json as jest.Mock).mock.calls[0][0].data;
       expect(payload.classSubjects).toHaveLength(1);
       expect(payload.subjectTeachers).toHaveLength(1);
+    });
+  });
+
+  // Backend UX Gap Phase 4: assignSubjectToClass only ever handled one
+  // class at a time; bulkAssignSubjectToClass is the "one subject for
+  // Classes 6-10 in one call" counterpart.
+  describe("bulkAssignSubjectToClass", () => {
+    const SUBJECT = { id: "subj-1", branchId: "branch-1" };
+
+    beforeEach(() => {
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue(SUBJECT);
+      (prisma.class.findMany as jest.Mock).mockResolvedValue([
+        { id: "class-1", branchId: "branch-1" },
+        { id: "class-2", branchId: "branch-1" },
+      ]);
+      (prisma.classSubject.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.classSubject.createMany as jest.Mock).mockResolvedValue({ count: 2 });
+    });
+
+    it("returns 404 when the subject does not exist", async () => {
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { subjectId: "subj-1", classIds: ["class-1"] } });
+      const res = makeMockRes();
+
+      await bulkAssignSubjectToClass(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(prisma.classSubject.createMany).not.toHaveBeenCalled();
+    });
+
+    it("SECURITY: rejects a subject belonging to a DIFFERENT branch", async () => {
+      (prisma.subject.findUnique as jest.Mock).mockResolvedValue({ id: "subj-1", branchId: "branch-OTHER" });
+      const req = makeReq({ body: { subjectId: "subj-1", classIds: ["class-1"] } });
+      const res = makeMockRes();
+
+      await bulkAssignSubjectToClass(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("DATA INTEGRITY: rejects when a target class belongs to a DIFFERENT branch than the subject", async () => {
+      (prisma.class.findMany as jest.Mock).mockResolvedValue([{ id: "class-1", branchId: "branch-OTHER" }]);
+      const req = makeReq({ body: { subjectId: "subj-1", classIds: ["class-1"] } });
+      const res = makeMockRes();
+
+      await bulkAssignSubjectToClass(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.classSubject.createMany).not.toHaveBeenCalled();
+    });
+
+    it("assigns the subject to every target class not already having it", async () => {
+      const req = makeReq({ body: { subjectId: "subj-1", classIds: ["class-1", "class-2"] } });
+      const res = makeMockRes();
+
+      await bulkAssignSubjectToClass(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.classSubject.createMany).toHaveBeenCalledWith({
+        data: [{ classId: "class-1", subjectId: "subj-1" }, { classId: "class-2", subjectId: "subj-1" }],
+      });
+    });
+
+    it("skips classes that already have this subject assigned", async () => {
+      (prisma.classSubject.findMany as jest.Mock).mockResolvedValue([{ classId: "class-1" }]);
+      const req = makeReq({ body: { subjectId: "subj-1", classIds: ["class-1", "class-2"] } });
+      const res = makeMockRes();
+
+      await bulkAssignSubjectToClass(req, res);
+
+      expect(prisma.classSubject.createMany).toHaveBeenCalledWith({
+        data: [{ classId: "class-2", subjectId: "subj-1" }],
+      });
+      const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+      expect(payload.assigned).toBe(1);
+      expect(payload.skipped).toBe(1);
     });
   });
 

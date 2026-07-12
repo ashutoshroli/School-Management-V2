@@ -13,11 +13,13 @@ jest.mock("../../config/database", () => ({
     feeStructure: { findUnique: jest.fn(), create: jest.fn(), findMany: jest.fn() },
     feeInstallment: { createMany: jest.fn() },
     feeAssignment: { count: jest.fn() },
+    class: { findMany: jest.fn() },
+    $transaction: jest.fn(),
   },
 }));
 
 import prisma from "../../config/database";
-import { createFeeStructure, getFeeStructureById, getFeeStructures } from "../feeStructure.controller";
+import { createFeeStructure, bulkCreateFeeStructure, getFeeStructureById, getFeeStructures } from "../feeStructure.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -127,6 +129,90 @@ describe("feeStructure.controller - createFeeStructure", () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(prisma.feeStructure.findUnique).not.toHaveBeenCalled();
     expect(prisma.feeStructure.create).not.toHaveBeenCalled();
+  });
+});
+
+// Backend UX Gap Phase 4: createFeeStructure only ever handled one
+// class at a time; bulkCreateFeeStructure is the "same category/amount
+// across multiple classes for a session" counterpart.
+describe("feeStructure.controller - bulkCreateFeeStructure", () => {
+  const bulkBody = { academicYearId: "ay-1", classIds: ["class-1", "class-2"], feeCategoryId: "cat-1", amount: 5000, frequency: "MONTHLY" };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.class.findMany as jest.Mock).mockResolvedValue([
+      { id: "class-1", branchId: "branch-1" },
+      { id: "class-2", branchId: "branch-1" },
+    ]);
+    (prisma.feeStructure.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) => Promise.all(ops));
+    (prisma.feeStructure.create as jest.Mock).mockImplementation(({ data }: any) =>
+      Promise.resolve({ id: `structure-${data.classId}`, classId: data.classId })
+    );
+  });
+
+  it("returns 400 when no branchId can be resolved", async () => {
+    const req = makeReq({
+      body: { ...bulkBody, branchId: "" },
+      user: { userId: "u1", email: "e", role: UserRole.ACCOUNTANT, branchId: undefined },
+    });
+    const res = makeMockRes();
+
+    await bulkCreateFeeStructure(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("DATA INTEGRITY: rejects when a target class belongs to a DIFFERENT branch", async () => {
+    (prisma.class.findMany as jest.Mock).mockResolvedValue([{ id: "class-1", branchId: "branch-OTHER" }]);
+    const req = makeReq({ body: { ...bulkBody, classIds: ["class-1"], branchId: "" } });
+    const res = makeMockRes();
+
+    await bulkCreateFeeStructure(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("creates a structure for every target class not already having this category+year", async () => {
+    const req = makeReq({ body: { ...bulkBody, branchId: "" } });
+    const res = makeMockRes();
+
+    await bulkCreateFeeStructure(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.created).toBe(2);
+    expect(payload.skipped).toBe(0);
+  });
+
+  it("skips classes that already have a structure for this category+year", async () => {
+    (prisma.feeStructure.findMany as jest.Mock).mockResolvedValue([{ classId: "class-1" }]);
+    const req = makeReq({ body: { ...bulkBody, branchId: "" } });
+    const res = makeMockRes();
+
+    await bulkCreateFeeStructure(req, res);
+
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.created).toBe(1);
+    expect(payload.skipped).toBe(1);
+  });
+
+  it("clones the same installments onto every newly-created structure", async () => {
+    const req = makeReq({
+      body: { ...bulkBody, branchId: "", installments: [{ installmentNo: 1, amount: 2500, dueDate: "2025-08-01" }] },
+    });
+    const res = makeMockRes();
+
+    await bulkCreateFeeStructure(req, res);
+
+    expect(prisma.feeInstallment.createMany).toHaveBeenCalledWith({
+      data: [
+        { feeStructureId: "structure-class-1", installmentNo: 1, amount: 2500, dueDate: new Date("2025-08-01") },
+        { feeStructureId: "structure-class-2", installmentNo: 1, amount: 2500, dueDate: new Date("2025-08-01") },
+      ],
+    });
   });
 });
 

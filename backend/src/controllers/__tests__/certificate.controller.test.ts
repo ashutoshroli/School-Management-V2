@@ -4,7 +4,8 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     certificateTemplate: { findUnique: jest.fn(), findMany: jest.fn(), create: jest.fn() },
-    student: { findUnique: jest.fn() },
+    student: { findUnique: jest.fn(), findMany: jest.fn() },
+    class: { findUnique: jest.fn() },
     generatedCertificate: { count: jest.fn(), create: jest.fn(), findMany: jest.fn(), findUnique: jest.fn() },
     $transaction: jest.fn(),
   },
@@ -25,7 +26,7 @@ jest.mock("../../services/auditLog.service", () => ({
 import prisma from "../../config/database";
 import { storage } from "../../services/storage.service";
 import { renderCertificateByType } from "../../services/certificateGenerator.service";
-import { generateCertificate, getGeneratedCertificates, verifyCertificate } from "../certificate.controller";
+import { generateCertificate, bulkGenerateCertificates, getGeneratedCertificates, verifyCertificate } from "../certificate.controller";
 import { AuthRequest } from "../../types";
 
 /** Minimal Express Response mock capturing status()/json() calls. */
@@ -203,6 +204,112 @@ describe("certificate.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect(renderCertificateByType).toHaveBeenCalledWith("TRANSFER_CERTIFICATE", expect.objectContaining({ extraFields: undefined }));
+    });
+  });
+
+  // Backend UX Gap Phase 4: generateCertificate only ever handled one
+  // student at a time; bulkGenerateCertificates is the class-wide
+  // counterpart, matching the existing ID-card batch pattern.
+  describe("bulkGenerateCertificates", () => {
+    it("returns 404 when the template does not exist", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { templateId: "missing", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await bulkGenerateCertificates(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("rejects CUSTOM and ID_CARD types up front", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue({ ...TEMPLATE, type: "CUSTOM" });
+      const req = makeReq({ body: { templateId: "tmpl-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await bulkGenerateCertificates(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.class.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the class does not exist", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue(TEMPLATE);
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ body: { templateId: "tmpl-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await bulkGenerateCertificates(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("SECURITY: rejects a class belonging to a DIFFERENT branch", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue(TEMPLATE);
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue({ id: "class-1", branchId: "branch-OTHER" });
+      const req = makeReq({ body: { templateId: "tmpl-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await bulkGenerateCertificates(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("generates a certificate for every active student in the class", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue(TEMPLATE);
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue({ id: "class-1", branchId: "branch-1" });
+      (prisma.student.findMany as jest.Mock).mockResolvedValue([{ id: "student-1" }, { id: "student-2" }]);
+      (prisma.student.findUnique as jest.Mock).mockResolvedValue(makeStudent("branch-1"));
+      (renderCertificateByType as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+      (storage.save as jest.Mock).mockResolvedValue({ url: "/uploads/certificates/x.pdf" });
+      (prisma.generatedCertificate.create as jest.Mock).mockResolvedValue({ id: "gc-1", serialNo: "CERT-000001" });
+
+      const req = makeReq({ body: { templateId: "tmpl-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await bulkGenerateCertificates(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+      expect(payload.generated).toBe(2);
+      expect(payload.failed).toBe(0);
+    });
+
+    it("reports per-student failures without aborting the whole batch", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue(TEMPLATE);
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue({ id: "class-1", branchId: "branch-1" });
+      (prisma.student.findMany as jest.Mock).mockResolvedValue([{ id: "student-1" }, { id: "student-2" }]);
+      (prisma.student.findUnique as jest.Mock)
+        .mockResolvedValueOnce(null) // student-1 vanished/not found -> failure
+        .mockResolvedValueOnce(makeStudent("branch-1")); // student-2 succeeds
+      (renderCertificateByType as jest.Mock).mockResolvedValue(Buffer.from("%PDF-fake"));
+      (storage.save as jest.Mock).mockResolvedValue({ url: "/uploads/certificates/x.pdf" });
+      (prisma.generatedCertificate.create as jest.Mock).mockResolvedValue({ id: "gc-1", serialNo: "CERT-000001" });
+
+      const req = makeReq({ body: { templateId: "tmpl-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await bulkGenerateCertificates(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+      expect(payload.generated).toBe(1);
+      expect(payload.failed).toBe(1);
+      expect(payload.failures[0]).toEqual({ studentId: "student-1", error: "Student not found" });
+    });
+
+    it("returns 0/0/0 with no error when the class has no active students", async () => {
+      (prisma.certificateTemplate.findUnique as jest.Mock).mockResolvedValue(TEMPLATE);
+      (prisma.class.findUnique as jest.Mock).mockResolvedValue({ id: "class-1", branchId: "branch-1" });
+      (prisma.student.findMany as jest.Mock).mockResolvedValue([]);
+
+      const req = makeReq({ body: { templateId: "tmpl-1", classId: "class-1" } });
+      const res = makeMockRes();
+
+      await bulkGenerateCertificates(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+      expect(payload).toEqual({ generated: 0, failed: 0, total: 0, failures: [] });
     });
   });
 

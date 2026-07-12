@@ -4,10 +4,12 @@ import {
   createClass, getClasses, updateClass, deleteClass,
   createSection, getSections, updateSection, deleteSection,
   createSubject, getSubjects, getSubjectById, updateSubject, deleteSubject,
-  assignSubjectToClass, getClassSubjects, removeSubjectFromClass,
+  assignSubjectToClass, bulkAssignSubjectToClass, getClassSubjects, removeSubjectFromClass,
   assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher,
 } from "../controllers/class.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
+import { validate } from "../middleware/validate";
+import { bulkAssignSubjectToClassSchema } from "../validators/class.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -35,6 +37,7 @@ router.delete("/subjects/:id", authorize(...ADMIN), deleteSubject);
 
 // Class-Subject mapping
 router.post("/subjects/assign", authorize(...ADMIN), assignSubjectToClass);
+router.post("/subjects/assign/bulk", authorize(...ADMIN), validate(bulkAssignSubjectToClassSchema), bulkAssignSubjectToClass);
 router.get("/:classId/subjects", getClassSubjects);
 router.delete("/subjects/mapping/:id", authorize(...ADMIN), removeSubjectFromClass);
 

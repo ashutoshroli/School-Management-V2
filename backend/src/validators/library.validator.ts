@@ -23,3 +23,11 @@ export const issueBookSchema = z.object({
     dueDate: z.coerce.date({ errorMap: () => ({ message: "Valid dueDate is required" }) }),
   }),
 });
+
+export const bulkIssueBookSchema = z.object({
+  body: z.object({
+    bookId: z.string().min(1, "bookId is required"),
+    studentIds: z.array(z.string().min(1)).min(1, "studentIds must be a non-empty array"),
+    dueDate: z.coerce.date({ errorMap: () => ({ message: "Valid dueDate is required" }) }),
+  }),
+});

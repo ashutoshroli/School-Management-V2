@@ -203,6 +203,84 @@ export const getLeaveApplications = async (req: AuthRequest, res: Response): Pro
 };
 
 /**
+ * Bulk approve/reject a hand-picked list of PENDING leave applications
+ * in one call - the multi-select counterpart to updateLeaveStatus
+ * below (which handles one application at a time). Each application
+ * still needs its own attendance-marking side effect when approved
+ * (see updateLeaveStatus's ON_LEAVE upsert loop), and different
+ * applications can span different staff/date-ranges, so this loops
+ * per application rather than a single bulk updateMany - unlike
+ * bulkPromote/bulkAssignSalaryStructure, the per-row side effects here
+ * genuinely differ row-to-row, so there's no safe way to collapse it
+ * into one statement.
+ */
+export const bulkUpdateLeaveStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { applicationIds, status, remarks } = req.body;
+
+    if (!Array.isArray(applicationIds) || applicationIds.length === 0) {
+      sendError(res, "applicationIds must be a non-empty array", 400);
+      return;
+    }
+
+    const applications = await prisma.leaveApplication.findMany({
+      where: { id: { in: applicationIds } },
+      include: { staff: { select: { branchId: true } } },
+    });
+
+    const foundIds = new Set(applications.map((a) => a.id));
+    const notFound = applicationIds.filter((id: string) => !foundIds.has(id));
+
+    // SECURITY: every application's staff member must belong to a
+    // branch the caller can access - same IDOR class already fixed on
+    // getLeaveApplications/getLeaveBalance above, just for the bulk
+    // approval path. Combined with "must currently be PENDING" (can't
+    // re-approve/reject an already-decided application) to determine
+    // which applications this call actually touches.
+    const eligible = applications.filter((a) => a.status === "PENDING" && canAccessBranch(req, a.staff.branchId));
+
+    if (eligible.length === 0) {
+      sendSuccess(
+        res,
+        { updated: 0, skipped: applications.length, notFound: notFound.length, total: applicationIds.length },
+        "No eligible pending applications to update"
+      );
+      return;
+    }
+
+    await prisma.leaveApplication.updateMany({
+      where: { id: { in: eligible.map((a) => a.id) } },
+      data: { status, remarks, approvedBy: req.user!.userId },
+    });
+
+    if (status === "APPROVED") {
+      for (const application of eligible) {
+        const from = new Date(application.fromDate);
+        const to = new Date(application.toDate);
+        for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+          const dateOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+          await prisma.staffAttendance.upsert({
+            where: { staffId_date: { staffId: application.staffId, date: dateOnly } },
+            update: { status: "ON_LEAVE" },
+            create: { staffId: application.staffId, date: dateOnly, status: "ON_LEAVE", source: "MANUAL" },
+          });
+        }
+      }
+    }
+
+    const skipped = applications.length - eligible.length;
+    sendSuccess(
+      res,
+      { updated: eligible.length, skipped, notFound: notFound.length, total: applicationIds.length },
+      `${eligible.length} application(s) ${status.toLowerCase()}` +
+        (skipped > 0 ? ` (${skipped} skipped - not pending or not accessible)` : "")
+    );
+  } catch (error) {
+    sendError(res, "Failed to bulk-update leave status", 500, (error as Error).message);
+  }
+};
+
+/**
  * Approve/Reject leave
  */
 export const updateLeaveStatus = async (req: AuthRequest, res: Response): Promise<void> => {

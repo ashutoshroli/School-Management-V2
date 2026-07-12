@@ -2,12 +2,12 @@ import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { createNotice, getNotices, getNoticeById, deleteNotice, togglePin } from "../controllers/notice.controller";
 import { sendMessage, getConversation, getInbox } from "../controllers/message.controller";
-import { createTemplate, getTemplates, generateCertificate, getGeneratedCertificates, verifyCertificate } from "../controllers/certificate.controller";
+import { createTemplate, getTemplates, generateCertificate, bulkGenerateCertificates, getGeneratedCertificates, verifyCertificate } from "../controllers/certificate.controller";
 import { getMyNotifications } from "../controllers/notification.controller";
 import { registerDeviceToken, unregisterDeviceToken } from "../controllers/deviceToken.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
-import { generateCertificateSchema } from "../validators/certificate.validator";
+import { generateCertificateSchema, bulkGenerateCertificatesSchema } from "../validators/certificate.validator";
 import { createNoticeSchema } from "../validators/notice.validator";
 
 const router = Router();
@@ -43,6 +43,7 @@ router.get("/messages/:userId", getConversation);
 router.post("/certificates/templates", authorize(...ADMIN), createTemplate);
 router.get("/certificates/templates", authorize(...ADMIN), getTemplates);
 router.post("/certificates/generate", authorize(...ADMIN), validate(generateCertificateSchema), generateCertificate);
+router.post("/certificates/generate/bulk", authorize(...ADMIN), validate(bulkGenerateCertificatesSchema), bulkGenerateCertificates);
 router.get("/certificates/generated", authorize(...ADMIN), getGeneratedCertificates);
 
 export default router;

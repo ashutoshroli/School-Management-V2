@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Award, Plus, FileDown, X } from "lucide-react";
+import { Award, Plus, FileDown, X, Users } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
@@ -81,6 +81,41 @@ export default function CertificatesPage() {
     setStudents(res.data.data || []);
   };
 
+  // Bulk Generate - class-wide generation for
+  // Transfer/Bonafide/Character certificates (matching the ID-card
+  // batch pattern already on the student profile page), via the new
+  // bulkGenerateCertificates endpoint.
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkForm, setBulkForm] = useState({ templateId: "", classId: "", purpose: "" });
+  const [bulkGenerating, setBulkGenerating] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ generated: number; failed: number; total: number; failures: any[] } | null>(null);
+  const bulkTemplate = templates.find((t) => t.id === bulkForm.templateId);
+
+  const openBulkModal = () => {
+    setBulkForm({ templateId: "", classId: "", purpose: "" });
+    setBulkResult(null);
+    setShowBulkModal(true);
+  };
+
+  const handleBulkGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBulkGenerating(true);
+    setBulkResult(null);
+    try {
+      const res = await api.post("/communication/certificates/generate/bulk", {
+        templateId: bulkForm.templateId,
+        classId: bulkForm.classId,
+        ...(bulkForm.purpose ? { purpose: bulkForm.purpose } : {}),
+      });
+      setBulkResult(res.data.data);
+      fetch();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to bulk-generate certificates");
+    } finally {
+      setBulkGenerating(false);
+    }
+  };
+
   const generate = async () => {
     if (!form.templateId || !form.studentId) { alert("Select template and student"); return; }
     setGenerating(true);
@@ -112,7 +147,10 @@ export default function CertificatesPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Award className="h-6 w-6 text-primary-600" /> Certificates</h1>
-        <button onClick={() => { setForm({ templateId: "", studentSearch: "", studentId: "", purpose: "" }); setCustomFields([{ key: "", value: "" }]); setShowModal(true); }} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Generate</button>
+        <div className="flex items-center gap-2">
+          <button onClick={openBulkModal} className="btn-secondary flex items-center gap-2"><Users className="h-4 w-4" /> Bulk Generate</button>
+          <button onClick={() => { setForm({ templateId: "", studentSearch: "", studentId: "", purpose: "" }); setCustomFields([{ key: "", value: "" }]); setShowModal(true); }} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Generate</button>
+        </div>
       </div>
 
       {/* Templates */}
@@ -242,6 +280,44 @@ export default function CertificatesPage() {
             <button onClick={generate} disabled={generating} className="btn-primary disabled:opacity-50">{generating ? "Generating..." : "Generate"}</button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={showBulkModal} onClose={() => setShowBulkModal(false)} title="Bulk Generate Certificates">
+        <form onSubmit={handleBulkGenerate} className="space-y-4">
+          <p className="text-xs text-gray-400">
+            Generates this certificate for every active student in the selected class. CUSTOM and ID Card templates
+            aren&apos;t supported here - use the single-certificate flow for those.
+          </p>
+          {bulkResult && (
+            <div className={`text-sm rounded-lg px-3 py-2 border ${bulkResult.failed > 0 ? "bg-amber-50 border-amber-200 text-amber-700" : "bg-green-50 border-green-200 text-green-700"}`}>
+              Generated {bulkResult.generated} of {bulkResult.total}.{bulkResult.failed > 0 ? ` ${bulkResult.failed} failed.` : ""}
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium mb-1">Template *</label>
+            <select className="input-field" value={bulkForm.templateId} onChange={(e) => setBulkForm({ ...bulkForm, templateId: e.target.value })} required>
+              <option value="">Select</option>
+              {templates.filter((t) => t.type !== "CUSTOM" && t.type !== "ID_CARD").map((t) => <option key={t.id} value={t.id}>{t.name} ({t.type})</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Class *</label>
+            <select className="input-field" value={bulkForm.classId} onChange={(e) => setBulkForm({ ...bulkForm, classId: e.target.value })} required>
+              <option value="">Select</option>
+              {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          {bulkTemplate?.type === "BONAFIDE" && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Purpose (optional)</label>
+              <input className="input-field" placeholder="e.g., applying for a passport" value={bulkForm.purpose} onChange={(e) => setBulkForm({ ...bulkForm, purpose: e.target.value })} />
+            </div>
+          )}
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowBulkModal(false)} className="btn-secondary">Close</button>
+            <button type="submit" disabled={bulkGenerating} className="btn-primary disabled:opacity-50">{bulkGenerating ? "Generating..." : "Generate for Class"}</button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

@@ -3,13 +3,13 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    studentDiscount: { create: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn(), delete: jest.fn() },
-    student: { findUnique: jest.fn() },
+    studentDiscount: { create: jest.fn(), createMany: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn(), delete: jest.fn() },
+    student: { findUnique: jest.fn(), findMany: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { assignDiscount, getAllDiscounts, getDiscountById, toggleDiscount, deleteDiscount } from "../discount.controller";
+import { assignDiscount, bulkAssignDiscount, getAllDiscounts, getDiscountById, toggleDiscount, deleteDiscount } from "../discount.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -67,6 +67,45 @@ describe("discount.controller - assignDiscount", () => {
     expect(prisma.studentDiscount.create).toHaveBeenCalledWith({
       data: { studentId: "s1", type: "SIBLING", name: "Sibling Discount", value: 10, isPercent: true, isActive: true },
     });
+  });
+});
+
+// Backend UX Gap Phase 4: assignDiscount was solo-only; bulkAssignDiscount
+// now covers "give this scholarship to all Class 10 students" in one call.
+describe("discount.controller - bulkAssignDiscount", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("assigns the discount to every active student matched by classId", async () => {
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([{ id: "s1" }, { id: "s2" }]);
+    (prisma.studentDiscount.createMany as jest.Mock).mockResolvedValue({ count: 2 });
+    const req = makeReq({ body: { classId: "class-1", type: "MERIT", name: "Merit Scholarship", value: 20, isPercent: true } });
+    const res = makeMockRes();
+
+    await bulkAssignDiscount(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(prisma.student.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { branchId: "branch-1", isActive: true, classId: "class-1" } })
+    );
+    expect(prisma.studentDiscount.createMany).toHaveBeenCalledWith({
+      data: [
+        { studentId: "s1", type: "MERIT", name: "Merit Scholarship", value: 20, isPercent: true, isActive: true },
+        { studentId: "s2", type: "MERIT", name: "Merit Scholarship", value: 20, isPercent: true, isActive: true },
+      ],
+    });
+  });
+
+  it("returns 0 assigned with no error when no students match", async () => {
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([]);
+    const req = makeReq({ body: { classId: "class-1", type: "MERIT", name: "x", value: 20 } });
+    const res = makeMockRes();
+
+    await bulkAssignDiscount(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.studentDiscount.createMany).not.toHaveBeenCalled();
   });
 });
 

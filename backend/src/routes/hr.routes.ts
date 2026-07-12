@@ -1,12 +1,12 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCalendar, getDateAttendance } from "../controllers/staffAttendance.controller";
-import { getLeaveTypes, getLeaveTypeById, applyLeave, getLeaveApplications, updateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType } from "../controllers/leave.controller";
+import { getLeaveTypes, getLeaveTypeById, applyLeave, getLeaveApplications, updateLeaveStatus, bulkUpdateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType } from "../controllers/leave.controller";
 import { upsertSalaryStructure, bulkAssignSalaryStructure, assignSalaryStructureToStaff, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { markStaffAttendanceSchema, bulkMarkStaffAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
-import { applyLeaveSchema, updateLeaveStatusSchema, createLeaveTypeSchema, updateLeaveTypeSchema } from "../validators/leave.validator";
+import { applyLeaveSchema, updateLeaveStatusSchema, bulkUpdateLeaveStatusSchema, createLeaveTypeSchema, updateLeaveTypeSchema } from "../validators/leave.validator";
 import { upsertSalaryStructureSchema, bulkAssignSalaryStructureSchema, assignSalaryStructureToStaffSchema, runPayrollSchema } from "../validators/payroll.validator";
 
 const router = Router();
@@ -29,6 +29,7 @@ router.delete("/leave/types/:id", authenticate, authorize(...ADMIN), deleteLeave
 router.post("/leave/apply", authenticate, authorize(...STAFF_ROLES), validate(applyLeaveSchema), applyLeave);
 router.get("/leave/applications", authenticate, getLeaveApplications);
 router.patch("/leave/:id/status", authenticate, authorize(...ADMIN), validate(updateLeaveStatusSchema), updateLeaveStatus);
+router.patch("/leave/status/bulk", authenticate, authorize(...ADMIN), validate(bulkUpdateLeaveStatusSchema), bulkUpdateLeaveStatus);
 router.get("/leave/balance/:staffId", authenticate, getLeaveBalance);
 
 // ===== PAYROLL =====
