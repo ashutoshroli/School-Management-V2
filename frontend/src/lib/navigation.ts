@@ -140,6 +140,19 @@ export const navigation: NavItem[] = [
     icon: "Wallet",
     roles: ADMIN_ROLES,
   },
+  // Leave Management page already existed (pending/all applications,
+  // leave balance, leave types config) but had no sidebar entry at all
+  // - only reachable via a "Manage Leave ->" link buried on a staff
+  // member's own profile page. Visible to every staff role (not just
+  // admins) since a Teacher/Accountant/etc. needs this page to apply
+  // for their own leave and check their balance, same as Staff
+  // Attendance above.
+  {
+    label: "Leaves",
+    href: "/dashboard/leaves",
+    icon: "CalendarDays",
+    roles: STAFF_ROLES,
+  },
   {
     label: "Exams",
     href: "/dashboard/exams",

@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create/get timetable for a section
@@ -89,10 +90,34 @@ export const upsertSlot = async (req: AuthRequest, res: Response): Promise<void>
 
 /**
  * Get teacher's timetable
+ *
+ * SECURITY FIX: this previously had no access check at all beyond the
+ * route's `authenticate` - any authenticated user of any role (a
+ * Student, a Parent, a Teacher in a completely different branch)
+ * could pass an arbitrary `teacherId` and read that teacher's full
+ * weekly schedule (which classes/sections/subjects they teach and
+ * when), an IDOR with no ownership or branch check whatsoever. Fixed
+ * by resolving the teacher's own branch through their Staff record
+ * and requiring the caller to either be that same teacher, or have
+ * branch access to it (Super Admin, or a Branch/Staff member of that
+ * same branch) - the same ownership-or-branch-access shape already
+ * used by canAccessStaffRecord for other staff-scoped endpoints.
  */
 export const getTeacherTimetable = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { teacherId } = req.params;
+
+    const teacher = await prisma.staff.findUnique({
+      where: { id: teacherId },
+      select: { branchId: true, userId: true },
+    });
+    if (!teacher) { sendError(res, "Teacher not found", 404); return; }
+
+    const isSelf = teacher.userId === req.user?.userId;
+    if (!isSelf && !canAccessBranch(req, teacher.branchId)) {
+      sendError(res, "Teacher not found", 404);
+      return;
+    }
 
     const slots = await prisma.timetableSlot.findMany({
       where: { teacherId },

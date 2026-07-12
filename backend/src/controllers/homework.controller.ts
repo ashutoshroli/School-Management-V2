@@ -3,7 +3,7 @@ import { UserRole } from "@prisma/client";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
-import { canAccessBranch } from "../utils/branchScope";
+import { canAccessBranch, resolveBranchId } from "../utils/branchScope";
 
 /**
  * Create homework
@@ -110,6 +110,20 @@ export const getHomeworkById = async (req: AuthRequest, res: Response): Promise<
 
 /**
  * Get homeworks (filtered by class/subject/teacher)
+ *
+ * SECURITY FIX: this previously had NO branch scoping at all when
+ * called with no classId (e.g. the admin Homework list page's default
+ * "show everything" view) - any authenticated user (Teacher, Branch
+ * Admin, even a Student/Parent hitting this endpoint directly) could
+ * see homework assigned in EVERY branch, not just their own. Homework
+ * has no branchId column of its own (it only has a classId), so this
+ * resolves the branch through Class the same way getExams does for
+ * Exam - a classId already scopes to one specific branch on its own
+ * (a class can't span branches), so no additional filter is needed
+ * when one is explicitly provided; otherwise fall back to the
+ * caller's own branch (or every branch for a Super Admin with no
+ * session branch at all - matches every other unscoped list
+ * endpoint's convention in this codebase).
  */
 export const getHomeworks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -118,7 +132,12 @@ export const getHomeworks = async (req: AuthRequest, res: Response): Promise<voi
     const sectionId = req.query.sectionId as string;
 
     const where: any = {};
-    if (classId) where.classId = classId;
+    if (classId) {
+      where.classId = classId;
+    } else {
+      const branchId = resolveBranchId(req);
+      if (branchId) where.class = { branchId };
+    }
     if (subjectId) where.subjectId = subjectId;
     if (sectionId) where.sectionId = sectionId;
 
