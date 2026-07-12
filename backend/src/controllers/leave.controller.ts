@@ -23,6 +23,27 @@ export const getLeaveTypes = async (req: AuthRequest, res: Response): Promise<vo
 };
 
 /**
+ * Get single leave type detail, with how many applications have
+ * used it - useful context on the management UI (e.g. before
+ * deciding to deactivate vs. attempting a delete, which
+ * deleteLeaveType blocks outright once any application exists).
+ * LeaveType has no branchId (system-wide, see the model's doc
+ * comment above) so this is available to any authenticated user,
+ * matching getLeaveTypes.
+ */
+export const getLeaveTypeById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const type = await prisma.leaveType.findUnique({ where: { id } });
+    if (!type) { sendError(res, "Leave type not found", 404); return; }
+
+    const applicationCount = await prisma.leaveApplication.count({ where: { leaveTypeId: id } });
+
+    sendSuccess(res, { ...type, applicationCount }, "Leave type fetched");
+  } catch (error) { sendError(res, "Failed to fetch leave type", 500, (error as Error).message); }
+};
+
+/**
  * Create a leave type (e.g. a school adding "Sabbatical Leave").
  * `LeaveType` has no `branchId` in the schema - it's a single,
  * system-wide list shared by every branch, same as `GradeSystem` -

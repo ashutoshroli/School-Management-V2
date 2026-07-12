@@ -3,7 +3,7 @@ import { UserRole } from "@prisma/client";
 import {
   createClass, getClasses, updateClass, deleteClass,
   createSection, getSections, updateSection, deleteSection,
-  createSubject, getSubjects, updateSubject, deleteSubject,
+  createSubject, getSubjects, getSubjectById, updateSubject, deleteSubject,
   assignSubjectToClass, getClassSubjects, removeSubjectFromClass,
   assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher,
 } from "../controllers/class.controller";
@@ -29,6 +29,7 @@ router.delete("/sections/:id", authorize(...ADMIN), deleteSection);
 // Subjects
 router.post("/subjects", authorize(...ADMIN), branchAccess, createSubject);
 router.get("/subjects", getSubjects);
+router.get("/subjects/:id", getSubjectById);
 router.put("/subjects/:id", authorize(...ADMIN), updateSubject);
 router.delete("/subjects/:id", authorize(...ADMIN), deleteSubject);
 

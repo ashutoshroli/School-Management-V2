@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BookOpen, Plus, Search, RotateCcw, Trash2 } from "lucide-react";
+import { BookOpen, Plus, Search, RotateCcw, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
@@ -16,6 +16,25 @@ export default function LibraryPage() {
   // Note: branchId is deliberately NOT part of this form - the backend
   // always scopes creation to the logged-in user's own branch.
   const [form, setForm] = useState({ title: "", author: "", isbn: "", publisher: "", category: "", rackNo: "", totalCopies: "1", price: "" });
+
+  // View Details - drills into one book's full issue history via the
+  // new getBookById endpoint (the list view only shows stock counts).
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/facilities/library/books/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load book details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   const fetch = async () => {
     setLoading(true);
@@ -79,7 +98,10 @@ export default function LibraryPage() {
               <th className="px-4 py-3 text-left">Category</th><th className="px-4 py-3 text-center">Available</th><th className="px-4 py-3 text-center">Total</th><th className="px-4 py-3 text-center">Actions</th>
             </tr></thead><tbody>
               {books.map(b => (<tr key={b.id} className="border-b"><td className="px-4 py-3 font-medium">{b.title}</td><td className="px-4 py-3">{b.author}</td><td className="px-4 py-3 text-xs">{b.category || "-"}</td><td className="px-4 py-3 text-center font-bold text-green-700">{b.availableCopies}</td><td className="px-4 py-3 text-center">{b.totalCopies}</td>
-                <td className="px-4 py-3 text-center"><button onClick={() => deleteBook(b.id, b.title)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button></td></tr>))}
+                <td className="px-4 py-3 text-center">
+                  <button onClick={() => openDetail(b.id)} title="View Details" className="text-gray-500 hover:text-gray-700 mr-3"><Eye className="h-4 w-4 inline" /></button>
+                  <button onClick={() => deleteBook(b.id, b.title)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button>
+                </td></tr>))}
             </tbody></table>
           </div>
         ) : (
@@ -105,6 +127,40 @@ export default function LibraryPage() {
           </div>
           <div className="flex justify-end gap-3 pt-4 border-t"><button type="button" onClick={() => setShowModal(false)} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Add</button></div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title={detail?.title ? `Book - ${detail.title}` : "Book Details"}>
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Author</p><p className="font-medium">{detail.author}</p></div>
+              <div><p className="text-gray-500">ISBN</p><p className="font-medium">{detail.isbn || "-"}</p></div>
+              <div><p className="text-gray-500">Category</p><p className="font-medium">{detail.category || "-"}</p></div>
+              <div><p className="text-gray-500">Rack/Shelf</p><p className="font-medium">{detail.rackNo || "-"}</p></div>
+              <div><p className="text-gray-500">Available / Total</p><p className="font-medium">{detail.availableCopies} / {detail.totalCopies}</p></div>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Issue History</h4>
+              {detail.issues?.length > 0 ? (
+                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                  {detail.issues.map((iss: any) => (
+                    <div key={iss.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                      <span>{iss.student?.user?.name} ({iss.student?.class?.name})</span>
+                      <span className={`text-xs font-medium ${iss.status === "ISSUED" ? "text-amber-600" : "text-green-600"}`}>{iss.status}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400">No issue history yet.</p>
+              )}
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

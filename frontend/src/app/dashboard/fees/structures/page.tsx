@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Plus, UserCheck, Edit, Trash2 } from "lucide-react";
+import { FileText, Plus, UserCheck, Edit, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -123,6 +123,26 @@ export default function FeeStructuresPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this fee structure"); }
   };
 
+  // View Details - drills into one structure's installments plus how
+  // many students currently have it assigned, via the new
+  // getFeeStructureById endpoint.
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/fees/structures/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load fee structure details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -185,6 +205,9 @@ export default function FeeStructuresPage() {
                           Assigned via Transport
                         </span>
                       )}
+                      <button onClick={() => openDetail(s.id)} title="View Details" className="text-gray-500 hover:text-gray-700">
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
                       <button onClick={() => openEditModal(s)} title="Edit" className="text-gray-500 hover:text-gray-700">
                         <Edit className="h-3.5 w-3.5" />
                       </button>
@@ -319,6 +342,38 @@ export default function FeeStructuresPage() {
         </form>
       </Modal>
 
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title="Fee Structure Details">
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Class / Route</p><p className="font-medium">{detail.class?.name || detail.transportRoute?.name}</p></div>
+              <div><p className="text-gray-500">Category</p><p className="font-medium">{detail.feeCategory?.name}</p></div>
+              <div><p className="text-gray-500">Amount</p><p className="font-medium">{formatCurrency(detail.amount)}</p></div>
+              <div><p className="text-gray-500">Frequency</p><p className="font-medium">{detail.frequency}</p></div>
+              <div><p className="text-gray-500">Academic Year</p><p className="font-medium">{detail.academicYear?.name}</p></div>
+              <div><p className="text-gray-500">Students Assigned</p><p className="font-medium">{detail.assignedStudentCount}</p></div>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Installments</h4>
+              {detail.installments?.length > 0 ? (
+                <div className="space-y-1.5">
+                  {detail.installments.map((inst: any) => (
+                    <div key={inst.installmentNo} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                      <span>Installment {inst.installmentNo}</span>
+                      <span className="font-medium">{formatCurrency(inst.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-sm text-gray-400">No installments configured - full amount due at once.</p>}
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

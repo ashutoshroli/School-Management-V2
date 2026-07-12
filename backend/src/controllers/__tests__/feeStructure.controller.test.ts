@@ -5,11 +5,12 @@ jest.mock("../../config/database", () => ({
   default: {
     feeStructure: { findUnique: jest.fn(), create: jest.fn() },
     feeInstallment: { createMany: jest.fn() },
+    feeAssignment: { count: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createFeeStructure } from "../feeStructure.controller";
+import { createFeeStructure, getFeeStructureById } from "../feeStructure.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -119,5 +120,45 @@ describe("feeStructure.controller - createFeeStructure", () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(prisma.feeStructure.findUnique).not.toHaveBeenCalled();
     expect(prisma.feeStructure.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("feeStructure.controller - getFeeStructureById", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the structure does not exist", async () => {
+    (prisma.feeStructure.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "structure-1" } });
+    const res = makeMockRes();
+
+    await getFeeStructureById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a structure belonging to a DIFFERENT branch", async () => {
+    (prisma.feeStructure.findUnique as jest.Mock).mockResolvedValue({ id: "structure-1", branchId: "branch-OTHER" });
+    const req = makeReq({ params: { id: "structure-1" } });
+    const res = makeMockRes();
+
+    await getFeeStructureById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(prisma.feeAssignment.count).not.toHaveBeenCalled();
+  });
+
+  it("returns the structure with its assigned-student count", async () => {
+    (prisma.feeStructure.findUnique as jest.Mock).mockResolvedValue({ id: "structure-1", branchId: "branch-1", installments: [] });
+    (prisma.feeAssignment.count as jest.Mock).mockResolvedValue(42);
+    const req = makeReq({ params: { id: "structure-1" } });
+    const res = makeMockRes();
+
+    await getFeeStructureById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.assignedStudentCount).toBe(42);
   });
 });

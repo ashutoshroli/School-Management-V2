@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BookOpen, Plus, Edit, Trash2 } from "lucide-react";
+import { BookOpen, Plus, Edit, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import ErrorBanner from "@/components/ui/ErrorBanner";
@@ -81,6 +81,25 @@ export default function SubjectsPage() {
     }
   };
 
+  // View Details - drills into the classes/teachers using this
+  // subject via the new getSubjectById endpoint.
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/classes/subjects/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load subject details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -122,6 +141,9 @@ export default function SubjectsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
+                      <button onClick={() => openDetail(s.id)} title="View Details" className="text-gray-500 hover:text-gray-700">
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
                       <button onClick={() => openEditModal(s)} title="Edit" className="text-gray-500 hover:text-gray-700">
                         <Edit className="h-3.5 w-3.5" />
                       </button>
@@ -161,6 +183,45 @@ export default function SubjectsPage() {
             <button type="submit" className="btn-primary">{editingId ? "Save Changes" : "Create"}</button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title={detail?.name ? `Subject - ${detail.name}` : "Subject Details"}>
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Code</p><p className="font-medium font-mono">{detail.code}</p></div>
+              <div><p className="text-gray-500">Type</p><p className="font-medium">{detail.type}</p></div>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Assigned to Classes</h4>
+              {detail.classSubjects?.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {detail.classSubjects.map((cs: any) => (
+                    <span key={cs.class.id} className="text-xs px-2 py-1 bg-gray-100 rounded-full">{cs.class.name}</span>
+                  ))}
+                </div>
+              ) : <p className="text-sm text-gray-400">Not assigned to any class yet.</p>}
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Teachers</h4>
+              {detail.subjectTeachers?.length > 0 ? (
+                <div className="space-y-1.5">
+                  {detail.subjectTeachers.map((st: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                      <span>{st.staff?.user?.name}</span>
+                      <span className="text-xs text-gray-500">{st.class?.name || "All classes"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-sm text-gray-400">No teacher assigned yet.</p>}
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

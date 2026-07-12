@@ -258,6 +258,38 @@ export const createSubject = async (req: AuthRequest, res: Response): Promise<vo
   }
 };
 
+/**
+ * Get single subject detail, with the classes it's assigned to
+ * (ClassSubject) and the teachers currently teaching it
+ * (SubjectTeacher) - useful before editing/deleting a subject (mirrors
+ * the same counts deleteSubject already checks, but as browsable
+ * detail rather than just a delete-time error message).
+ */
+export const getSubjectById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const subject = await prisma.subject.findUnique({
+      where: { id },
+      include: {
+        classSubjects: { include: { class: { select: { id: true, name: true } } } },
+        subjectTeachers: {
+          include: {
+            staff: { include: { user: { select: { name: true } } } },
+            class: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    if (!subject) { sendError(res, "Subject not found", 404); return; }
+    if (!canAccessBranch(req, subject.branchId)) { sendError(res, "Subject not found", 404); return; }
+
+    sendSuccess(res, subject, "Subject fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch subject", 500, (error as Error).message);
+  }
+};
+
 export const getSubjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);

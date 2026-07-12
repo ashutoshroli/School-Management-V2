@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Calendar, Check, X, Clock, Plus, Trash2, Pencil } from "lucide-react";
+import { Calendar, Check, X, Clock, Plus, Trash2, Pencil, Eye } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
@@ -107,6 +107,27 @@ export default function LeavesPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Failed to delete leave type"); }
   };
 
+  // View Details - shows how many leave applications reference this
+  // type via the new getLeaveTypeById endpoint (useful context before
+  // deciding to deactivate vs. attempting a delete, which is blocked
+  // outright once any application exists).
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/hr/leave/types/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load leave type details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="mb-6">
@@ -162,6 +183,7 @@ export default function LeavesPage() {
                     </td>
                     <td className="px-4 py-3 text-center">
                       <div className="flex justify-center gap-2">
+                        <button onClick={() => openDetail(lt.id)} className="text-gray-500 hover:text-gray-700" title="View Details"><Eye className="h-4 w-4" /></button>
                         <button onClick={() => openEditType(lt)} className="text-primary-600 hover:text-primary-700" title="Edit"><Pencil className="h-4 w-4" /></button>
                         <button onClick={() => handleDeleteType(lt)} className="text-red-500 hover:text-red-700" title="Delete"><Trash2 className="h-4 w-4" /></button>
                       </div>
@@ -274,6 +296,25 @@ export default function LeavesPage() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title={detail?.name ? `Leave Type - ${detail.name}` : "Leave Type Details"}>
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Code</p><p className="font-medium font-mono">{detail.code}</p></div>
+              <div><p className="text-gray-500">Max Days/Year</p><p className="font-medium">{detail.maxDays}</p></div>
+              <div><p className="text-gray-500">Carry Forward</p><p className="font-medium">{detail.carryForward ? "Yes" : "No"}</p></div>
+              <div><p className="text-gray-500">Status</p><p className="font-medium">{detail.isActive ? "Active" : "Inactive"}</p></div>
+              <div><p className="text-gray-500">Applications Using This Type</p><p className="font-medium">{detail.applicationCount}</p></div>
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

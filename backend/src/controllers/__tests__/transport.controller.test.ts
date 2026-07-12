@@ -13,7 +13,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { createRoute, addStop, addVehicle, allocateStudent, removeAllocation, assignVehicleToRoute, unassignVehicleFromRoute } from "../transport.controller";
+import { createRoute, addStop, addVehicle, allocateStudent, removeAllocation, assignVehicleToRoute, unassignVehicleFromRoute, getVehicleById } from "../transport.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -358,6 +358,45 @@ describe("transport.controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(prisma.vehicleRoute.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getVehicleById", () => {
+    it("returns 404 when the vehicle does not exist", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue(null);
+      const req = makeReq({ params: { id: "vehicle-1" } });
+      const res = makeMockRes();
+
+      await getVehicleById(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("SECURITY: rejects a vehicle belonging to a DIFFERENT branch", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue({ id: "vehicle-1", branchId: "branch-OTHER", routes: [] });
+      const req = makeReq({ params: { id: "vehicle-1" } });
+      const res = makeMockRes();
+
+      await getVehicleById(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it("returns the vehicle with its assigned routes when in the caller's own branch", async () => {
+      (prisma.vehicle.findUnique as jest.Mock).mockResolvedValue({
+        id: "vehicle-1",
+        branchId: "branch-1",
+        vehicleNo: "DL01AB1234",
+        routes: [{ route: { id: "route-1", name: "Route A" } }],
+      });
+      const req = makeReq({ params: { id: "vehicle-1" } });
+      const res = makeMockRes();
+
+      await getVehicleById(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+      expect(payload.routes).toHaveLength(1);
     });
   });
 

@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Inbox, Download, Trash2, UserPlus } from "lucide-react";
+import { Inbox, Download, Trash2, UserPlus, Eye } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import DataTable from "@/components/ui/DataTable";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import Modal from "@/components/ui/Modal";
 import { openPdfInNewTab } from "@/lib/pdf";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -85,6 +86,26 @@ export default function AdmissionInquiriesPage() {
     }
   };
 
+  // View Details - the only prior way to see one inquiry's full
+  // detail was the PDF export; this uses the new getAdmissionInquiryById
+  // for a quick in-app look without generating a PDF.
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const openDetail = async (id: string) => {
+    setDetail({});
+    setDetailLoading(true);
+    try {
+      const res = await api.get(`/admission/inquiries/${id}`);
+      setDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load inquiry details");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   const columns = [
     {
       key: "studentName",
@@ -132,6 +153,14 @@ export default function AdmissionInquiriesPage() {
       label: "Actions",
       render: (i: any) => (
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => openDetail(i.id)}
+            className="text-gray-500 hover:text-gray-700"
+            title="View Details"
+          >
+            <Eye className="h-4 w-4" />
+          </button>
           <button
             type="button"
             onClick={() => convertToStudent(i)}
@@ -184,6 +213,31 @@ export default function AdmissionInquiriesPage() {
       <div className="card">
         <DataTable columns={columns} data={inquiries} loading={loading} page={page} totalPages={totalPages} onPageChange={setPage} emptyMessage="No admission inquiries yet" />
       </div>
+
+      <Modal isOpen={!!detail} onClose={() => setDetail(null)} title={detail?.studentName ? `Inquiry - ${detail.studentName}` : "Inquiry Details"}>
+        {detailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : detail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Date of Birth</p><p className="font-medium">{detail.dateOfBirth ? formatDate(detail.dateOfBirth) : "-"}</p></div>
+              <div><p className="text-gray-500">Gender</p><p className="font-medium">{detail.gender}</p></div>
+              <div><p className="text-gray-500">Class Applied For</p><p className="font-medium">{detail.classAppliedFor}</p></div>
+              <div><p className="text-gray-500">Branch</p><p className="font-medium">{detail.branch?.name}</p></div>
+              <div><p className="text-gray-500">Parent/Guardian</p><p className="font-medium">{detail.parentName}</p></div>
+              <div><p className="text-gray-500">Contact</p><p className="font-medium">{detail.parentPhone} / {detail.parentEmail}</p></div>
+              <div><p className="text-gray-500">Previous School</p><p className="font-medium">{detail.previousSchool || "-"}</p></div>
+              <div><p className="text-gray-500">Status</p><p className="font-medium">{detail.status}</p></div>
+            </div>
+            {detail.address && <div><p className="text-gray-500 text-sm">Address</p><p className="text-sm font-medium">{detail.address}</p></div>}
+            {detail.message && <div><p className="text-gray-500 text-sm">Message</p><p className="text-sm">{detail.message}</p></div>}
+            {detail.reviewNotes && <div><p className="text-gray-500 text-sm">Review Notes</p><p className="text-sm">{detail.reviewNotes}</p></div>}
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

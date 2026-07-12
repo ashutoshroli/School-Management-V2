@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus, Signpost, Link2, Link2Off } from "lucide-react";
+import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus, Signpost, Link2, Link2Off, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -48,6 +48,26 @@ export default function TransportPage() {
   const [selectedRouteId, setSelectedRouteId] = useState("");
   const [assigningRoute, setAssigningRoute] = useState(false);
   const [unassigningRouteId, setUnassigningRouteId] = useState<string | null>(null);
+
+  // View Details - drills into a vehicle's driver phone/license (not
+  // shown on the summary card) plus its assigned routes, via the new
+  // getVehicleById endpoint.
+  const [vehicleDetail, setVehicleDetail] = useState<any>(null);
+  const [vehicleDetailLoading, setVehicleDetailLoading] = useState(false);
+
+  const openVehicleDetail = async (id: string) => {
+    setVehicleDetail({});
+    setVehicleDetailLoading(true);
+    try {
+      const res = await api.get(`/facilities/transport/vehicles/${id}`);
+      setVehicleDetail(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to load vehicle details");
+      setVehicleDetail(null);
+    } finally {
+      setVehicleDetailLoading(false);
+    }
+  };
 
   const fetch = async () => {
     setLoading(true);
@@ -317,12 +337,20 @@ export default function TransportPage() {
                         ))}
                       </div>
                     )}
-                    <button
-                      onClick={() => openRouteModal(v)}
-                      className="mt-2 w-full text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-100 bg-white rounded-lg py-1 flex items-center justify-center gap-1"
-                    >
-                      <Link2 className="h-3.5 w-3.5" /> Manage Routes
-                    </button>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => openVehicleDetail(v.id)}
+                        className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-100 bg-white rounded-lg py-1 flex items-center justify-center gap-1"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Details
+                      </button>
+                      <button
+                        onClick={() => openRouteModal(v)}
+                        className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-100 bg-white rounded-lg py-1 flex items-center justify-center gap-1"
+                      >
+                        <Link2 className="h-3.5 w-3.5" /> Routes
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -565,6 +593,36 @@ export default function TransportPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={!!vehicleDetail} onClose={() => setVehicleDetail(null)} title={vehicleDetail?.vehicleNo ? `Vehicle - ${vehicleDetail.vehicleNo}` : "Vehicle Details"}>
+        {vehicleDetailLoading ? (
+          <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+        ) : vehicleDetail ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><p className="text-gray-500">Type</p><p className="font-medium">{vehicleDetail.type}</p></div>
+              <div><p className="text-gray-500">Capacity</p><p className="font-medium">{vehicleDetail.capacity}</p></div>
+              <div><p className="text-gray-500">Driver Name</p><p className="font-medium">{vehicleDetail.driverName || "-"}</p></div>
+              <div><p className="text-gray-500">Driver Phone</p><p className="font-medium">{vehicleDetail.driverPhone || "-"}</p></div>
+              <div><p className="text-gray-500">Driver License</p><p className="font-medium">{vehicleDetail.driverLicense || "-"}</p></div>
+              <div><p className="text-gray-500">Status</p><p className="font-medium">{vehicleDetail.isActive ? "Active" : "Inactive"}</p></div>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Assigned Routes</h4>
+              {vehicleDetail.routes?.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {vehicleDetail.routes.map((vr: any) => (
+                    <span key={vr.route.id} className="text-xs px-2 py-1 bg-gray-100 rounded-full">{vr.route.name}</span>
+                  ))}
+                </div>
+              ) : <p className="text-sm text-gray-400">Not assigned to any route yet.</p>}
+            </div>
+            <div className="flex justify-end pt-2 border-t">
+              <button type="button" onClick={() => setVehicleDetail(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

@@ -2,6 +2,7 @@ import { Response } from "express";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
+import { canAccessBranch } from "../utils/branchScope";
 
 /**
  * Create exam
@@ -83,6 +84,46 @@ export const deleteExam = async (req: AuthRequest, res: Response): Promise<void>
 
     await prisma.exam.delete({ where: { id } });
     sendSuccess(res, null, "Exam deleted");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Get single exam detail - Exam has no branchId of its own (see
+ * schema.prisma), so branch-scoping is checked via its Class instead,
+ * same as every other Exam mutation in this controller relies on
+ * (implicitly, via getExams's classId filter). Includes a subject-wise
+ * marks summary (count of marks recorded per subject + overall count)
+ * so the detail view can show progress without a separate results call.
+ */
+export const getExamById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const exam = await prisma.exam.findUnique({
+      where: { id },
+      include: {
+        class: { select: { id: true, name: true, branchId: true } },
+        academicYear: { select: { id: true, name: true } },
+      },
+    });
+    if (!exam) { sendError(res, "Exam not found", 404); return; }
+    if (!canAccessBranch(req, exam.class.branchId)) { sendError(res, "Exam not found", 404); return; }
+
+    const marks = await prisma.mark.groupBy({
+      by: ["subjectId"],
+      where: { examId: id },
+      _count: { _all: true },
+    });
+    const subjectIds = marks.map((m) => m.subjectId);
+    const subjects = subjectIds.length > 0
+      ? await prisma.subject.findMany({ where: { id: { in: subjectIds } }, select: { id: true, name: true, code: true } })
+      : [];
+    const marksSummary = marks.map((m) => ({
+      subject: subjects.find((s) => s.id === m.subjectId),
+      marksRecorded: m._count._all,
+    }));
+
+    sendSuccess(res, { ...exam, marksSummary }, "Exam fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 

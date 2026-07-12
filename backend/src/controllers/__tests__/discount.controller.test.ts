@@ -9,7 +9,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { assignDiscount, getAllDiscounts, toggleDiscount, deleteDiscount } from "../discount.controller";
+import { assignDiscount, getAllDiscounts, getDiscountById, toggleDiscount, deleteDiscount } from "../discount.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -121,6 +121,46 @@ describe("discount.controller - getAllDiscounts (branch-wide list)", () => {
     expect(prisma.studentDiscount.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { student: { branchId: "branch-1" }, isActive: true, type: "RTE" } })
     );
+  });
+});
+
+describe("discount.controller - getDiscountById", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the discount does not exist", async () => {
+    (prisma.studentDiscount.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "d1" } });
+    const res = makeMockRes();
+
+    await getDiscountById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a discount belonging to a student in a DIFFERENT branch", async () => {
+    (prisma.studentDiscount.findUnique as jest.Mock).mockResolvedValue({ id: "d1", student: { branchId: "branch-OTHER" } });
+    const req = makeReq({ params: { id: "d1" } });
+    const res = makeMockRes();
+
+    await getDiscountById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns the discount when its student is in the caller's own branch", async () => {
+    (prisma.studentDiscount.findUnique as jest.Mock).mockResolvedValue({
+      id: "d1",
+      name: "Sibling Discount",
+      student: { branchId: "branch-1", user: { name: "Ravi" } },
+    });
+    const req = makeReq({ params: { id: "d1" } });
+    const res = makeMockRes();
+
+    await getDiscountById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 });
 

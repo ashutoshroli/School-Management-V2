@@ -4,11 +4,12 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     feeCategory: { findUnique: jest.fn(), create: jest.fn() },
+    feeStructure: { count: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { createFeeCategory } from "../feeCategory.controller";
+import { createFeeCategory, getFeeCategoryById } from "../feeCategory.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -77,5 +78,44 @@ describe("feeCategory.controller - createFeeCategory", () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(prisma.feeCategory.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("feeCategory.controller - getFeeCategoryById", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the category does not exist", async () => {
+    (prisma.feeCategory.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "cat-1" } });
+    const res = makeMockRes();
+
+    await getFeeCategoryById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a category belonging to a DIFFERENT branch", async () => {
+    (prisma.feeCategory.findUnique as jest.Mock).mockResolvedValue({ id: "cat-1", branchId: "branch-OTHER" });
+    const req = makeReq({ params: { id: "cat-1" } });
+    const res = makeMockRes();
+
+    await getFeeCategoryById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns the category with its structure count", async () => {
+    (prisma.feeCategory.findUnique as jest.Mock).mockResolvedValue({ id: "cat-1", branchId: "branch-1", name: "Tuition Fee" });
+    (prisma.feeStructure.count as jest.Mock).mockResolvedValue(3);
+    const req = makeReq({ params: { id: "cat-1" } });
+    const res = makeMockRes();
+
+    await getFeeCategoryById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.structureCount).toBe(3);
   });
 });

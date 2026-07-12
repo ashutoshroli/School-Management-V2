@@ -28,6 +28,29 @@ export const addItem = async (req: AuthRequest, res: Response): Promise<void> =>
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 
+/**
+ * Get single inventory item detail, with its full purchase and issue
+ * history (most recent first) - the list view (getItems) only returns
+ * counts (`_count`), with no way to see the actual transactions.
+ */
+export const getItemById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const item = await prisma.inventoryItem.findUnique({
+      where: { id },
+      include: {
+        purchases: { orderBy: { createdAt: "desc" } },
+        issues: { orderBy: { createdAt: "desc" } },
+      },
+    });
+    if (!item) { sendError(res, "Item not found", 404); return; }
+    if (!canAccessBranch(req, item.branchId)) { sendError(res, "Item not found", 404); return; }
+
+    sendSuccess(res, item, "Item fetched");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
 export const getItems = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);

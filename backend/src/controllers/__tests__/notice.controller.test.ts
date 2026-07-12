@@ -3,7 +3,7 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    notice: { create: jest.fn() },
+    notice: { create: jest.fn(), findUnique: jest.fn() },
     staff: { findMany: jest.fn() },
     student: { findMany: jest.fn() },
     studentParent: { findMany: jest.fn() },
@@ -12,7 +12,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { createNotice } from "../notice.controller";
+import { createNotice, getNoticeById } from "../notice.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -72,5 +72,41 @@ describe("notice.controller - createNotice", () => {
 
     expect(res.status).toHaveBeenCalledWith(201);
     expect((prisma.notice.create as jest.Mock).mock.calls[0][0].data.branchId).toBe("branch-1");
+  });
+});
+
+describe("notice.controller - getNoticeById", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("returns 404 when the notice does not exist", async () => {
+    (prisma.notice.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ params: { id: "notice-1" } });
+    const res = makeMockRes();
+
+    await getNoticeById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a notice belonging to a DIFFERENT branch", async () => {
+    (prisma.notice.findUnique as jest.Mock).mockResolvedValue({ id: "notice-1", branchId: "branch-OTHER" });
+    const req = makeReq({ params: { id: "notice-1" } });
+    const res = makeMockRes();
+
+    await getNoticeById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns the notice when it belongs to the caller's own branch", async () => {
+    (prisma.notice.findUnique as jest.Mock).mockResolvedValue({ id: "notice-1", branchId: "branch-1", title: "Holiday" });
+    const req = makeReq({ params: { id: "notice-1" } });
+    const res = makeMockRes();
+
+    await getNoticeById(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 });

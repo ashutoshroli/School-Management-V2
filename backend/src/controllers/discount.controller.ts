@@ -68,6 +68,40 @@ export const getAllDiscounts = async (req: AuthRequest, res: Response): Promise<
 };
 
 /**
+ * Get single discount detail - both getAllDiscounts (branch-wide) and
+ * getStudentDiscounts (per-student) return lists, but there was no way
+ * to fetch one specific discount row directly (e.g. for a detail
+ * modal launched from either list).
+ */
+export const getDiscountById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const discount = await prisma.studentDiscount.findUnique({
+      where: { id },
+      include: {
+        student: {
+          select: {
+            id: true,
+            admissionNo: true,
+            branchId: true,
+            user: { select: { name: true } },
+            class: { select: { name: true } },
+            section: { select: { name: true } },
+          },
+        },
+      },
+    });
+    if (!discount) { sendError(res, "Discount not found", 404); return; }
+    if (!canAccessBranch(req, discount.student.branchId)) { sendError(res, "Discount not found", 404); return; }
+
+    sendSuccess(res, discount, "Discount fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch discount", 500, (error as Error).message);
+  }
+};
+
+/**
  * Get student's discounts
  */
 export const getStudentDiscounts = async (req: AuthRequest, res: Response): Promise<void> => {

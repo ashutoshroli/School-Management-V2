@@ -50,26 +50,52 @@ API, to ever create a `VehicleRoute` row.
 
 ---
 
-## Phase 2: Single-Record "View Details" Endpoints 🟢
+## Phase 2: Single-Record "View Details" Endpoints ✅ COMPLETED
 
-**Priority:** HIGH - several modules only support list/create/update, with
+**Priority:** HIGH - several modules only supported list/create/update, with
 no way to drill into one record's full detail (the way `getStudentById`/
-`getStaffById`/`getBranchById` already do). Following that existing
-pattern:
+`getStaffById`/`getBranchById` already do). Followed that existing pattern.
+**Status:** ✅ **DONE**
 
-### Scope (new `getXById` + minimal detail-view UI for each):
-1. `getExamById` (with subject-wise marks summary)
-2. `getHomeworkById` (with submission list)
-3. `getBookById` (library - with current/past issue history)
-4. `getInventoryItemById` (with purchase/issue history)
-5. `getFeeStructureById` (with installments + assigned-student count)
-6. `getFeeCategoryById`
+### What was actually done (all 12, each with branch-access checks matching
+the entity's existing mutation endpoints):
+1. `getExamById` - subject-wise marks-recorded summary (Exam has no
+   `branchId` of its own; scoped via its `Class` relation, same as #2)
+2. `getHomeworkById` - full submission list (student name/submitted-at/grade)
+3. `getBookById` - full issue history (current + past)
+4. `getInventoryItemById` - full purchase + issue history
+5. `getFeeStructureById` - installments + assigned-student count
+6. `getFeeCategoryById` - structure-usage count
 7. `getNoticeById`
-8. `getLeaveTypeById`
-9. `getVehicleById` (with assigned routes - depends on Phase 1's model use)
-10. `getAdmissionInquiryById` (JSON detail, not just the existing PDF)
-11. `getSubjectById` (with classes/teachers currently using it)
-12. `getStudentDiscountById`
+8. `getLeaveTypeById` - application-usage count
+9. `getVehicleById` - assigned routes (built on Phase 1's `VehicleRoute` use)
+10. `getAdmissionInquiryById` - JSON detail (previously PDF-export-only)
+11. `getSubjectById` - classes assigned to + teachers currently teaching it
+12. `getDiscountById`
+
+**Frontend:** a "View Details" (eye icon) action + modal added to each of
+the 12 corresponding pages: `/dashboard/exams`, `/dashboard/homework`,
+`/dashboard/library`, `/dashboard/inventory`, `/dashboard/fees/structures`,
+`/dashboard/fees/categories`, `/dashboard/notices`, `/dashboard/leaves`
+(Leave Types tab), `/dashboard/transport` (Vehicles section),
+`/dashboard/admissions`, `/dashboard/subjects`, `/dashboard/fees/discounts`.
+
+**Tests:** 46 new tests across `exam.controller.test.ts`,
+`homework.controller.test.ts` (new file), `library.controller.test.ts`,
+`inventory.controller.test.ts`, `feeStructure.controller.test.ts`,
+`feeCategory.controller.test.ts`, `notice.controller.test.ts`,
+`leave.controller.test.ts`, `transport.controller.test.ts`,
+`admission.controller.test.ts` (new file), `class.controller.test.ts`,
+`discount.controller.test.ts` - each covering the happy path, 404 (missing
+record), and a SECURITY case (record belongs to a different branch).
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**65 suites / 654 tests**, up
+  from 617) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, all 12 touched
+  pages build with an expected size increase (e.g. `transport`
+  6.49kB->6.86kB, `fees/structures` 4.14kB->4.67kB, `inventory`
+  3.51kB->4.06kB)
 
 ---
 

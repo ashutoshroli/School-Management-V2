@@ -24,6 +24,28 @@ export const getFeeCategories = async (req: AuthRequest, res: Response): Promise
 };
 
 /**
+ * Get single fee category detail, with how many fee structures
+ * currently use it (useful context before deciding to deactivate/edit
+ * it, and mirrors the count deleteFeeCategory already checks before
+ * blocking a delete).
+ */
+export const getFeeCategoryById = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const category = await prisma.feeCategory.findUnique({ where: { id } });
+    if (!category) { sendError(res, "Category not found", 404); return; }
+    if (!canAccessBranch(req, category.branchId)) { sendError(res, "Category not found", 404); return; }
+
+    const structureCount = await prisma.feeStructure.count({ where: { feeCategoryId: id } });
+
+    sendSuccess(res, { ...category, structureCount }, "Fee category fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch fee category", 500, (error as Error).message);
+  }
+};
+
+/**
  * Create custom fee category
  */
 export const createFeeCategory = async (req: AuthRequest, res: Response): Promise<void> => {
