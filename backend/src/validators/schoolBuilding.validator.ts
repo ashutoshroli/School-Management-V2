@@ -56,3 +56,44 @@ export const updateSchoolRoomSchema = z.object({
     department: z.string().nullable().optional(),
   }),
 });
+
+export const bulkAddSchoolFloorsSchema = z.object({
+  body: z.object({
+    buildingId: z.string().min(1, "buildingId is required"),
+    count: z.number().int().min(1, "count must be at least 1").max(50, "count cannot exceed 50 at once"),
+    startingFloorNo: z.number().int().optional(),
+    namePrefix: z.string().optional(),
+  }),
+});
+
+const bulkRoomEntrySchema = z.object({
+  roomNo: z.string().min(1, "roomNo is required"),
+  name: z.string().optional(),
+  type: z.enum(ROOM_TYPES),
+  capacity: z.number().int().min(0).optional(),
+  directionFromGate: z.string().optional(),
+  assignedStaffId: z.string().optional(),
+  department: z.string().optional(),
+});
+
+export const bulkAddSchoolRoomsSchema = z.object({
+  body: z.object({
+    floorId: z.string().min(1, "floorId is required"),
+    rooms: z.array(bulkRoomEntrySchema).min(1, "rooms must be a non-empty array"),
+  }),
+});
+
+export const addRoomCabinSchema = z.object({
+  body: z.object({
+    roomId: z.string().min(1, "roomId is required"),
+    cabinNo: z.string().min(1, "cabinNo is required"),
+    staffId: z.string().optional(),
+  }),
+});
+
+export const updateRoomCabinSchema = z.object({
+  body: z.object({
+    cabinNo: z.string().min(1).optional(),
+    staffId: z.string().nullable().optional(),
+  }),
+});

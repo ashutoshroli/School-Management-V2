@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Building, Plus, Trash2, Layers, DoorOpen, BarChart3, Edit } from "lucide-react";
+import { Building, Plus, Trash2, Layers, DoorOpen, BarChart3, Edit, Users, X } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 
@@ -26,6 +26,27 @@ export default function SchoolBuildingsPage() {
   const [floorBuilding, setFloorBuilding] = useState<any>(null);
   const [floorForm, setFloorForm] = useState({ floorNo: "", name: "" });
   const [addingFloor, setAddingFloor] = useState(false);
+
+  // Bulk Add Floors - set up N floors on a building in one call
+  // instead of one addSchoolFloor call each.
+  const [bulkFloorBuilding, setBulkFloorBuilding] = useState<any>(null);
+  const [bulkFloorForm, setBulkFloorForm] = useState({ count: "1", startingFloorNo: "0", namePrefix: "" });
+  const [addingBulkFloors, setAddingBulkFloors] = useState(false);
+
+  // Bulk Add Rooms - a whole list of rooms on one floor in one call.
+  const [bulkRoomFloor, setBulkRoomFloor] = useState<{ buildingName: string; floor: any } | null>(null);
+  const [bulkRoomRows, setBulkRoomRows] = useState<any[]>([{ roomNo: "", name: "", type: "CLASSROOM", capacity: "0" }]);
+  const [addingBulkRooms, setAddingBulkRooms] = useState(false);
+
+  // Multi-cabin chambers (RoomCabin) - only for CHAMBER/OFFICE/
+  // STAFF_ROOM-type rooms that need several named seats tracked
+  // individually, alongside SchoolRoom.assignedStaffId's existing
+  // single-occupant case (unaffected, opt-in only).
+  const [cabinsFor, setCabinsFor] = useState<any>(null);
+  const [cabins, setCabins] = useState<any[]>([]);
+  const [loadingCabins, setLoadingCabins] = useState(false);
+  const [newCabinNo, setNewCabinNo] = useState("");
+  const [newCabinStaffId, setNewCabinStaffId] = useState("");
 
   // Add/Edit Room
   const [roomFloor, setRoomFloor] = useState<{ buildingName: string; floor: any } | null>(null);
@@ -140,6 +161,108 @@ export default function SchoolBuildingsPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this room"); }
   };
 
+  const handleBulkAddFloors = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkFloorBuilding) return;
+    setAddingBulkFloors(true);
+    try {
+      await api.post("/facilities/school-buildings/floors/bulk", {
+        buildingId: bulkFloorBuilding.id,
+        count: parseInt(bulkFloorForm.count, 10),
+        startingFloorNo: parseInt(bulkFloorForm.startingFloorNo, 10) || 0,
+        namePrefix: bulkFloorForm.namePrefix || undefined,
+      });
+      setBulkFloorBuilding(null);
+      setBulkFloorForm({ count: "1", startingFloorNo: "0", namePrefix: "" });
+      fetchBuildings();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to add floors");
+    } finally {
+      setAddingBulkFloors(false);
+    }
+  };
+
+  const openBulkAddRooms = (buildingName: string, floor: any) => {
+    setBulkRoomFloor({ buildingName, floor });
+    setBulkRoomRows([{ roomNo: "", name: "", type: "CLASSROOM", capacity: "0" }]);
+  };
+
+  const addBulkRoomRow = () => setBulkRoomRows([...bulkRoomRows, { roomNo: "", name: "", type: "CLASSROOM", capacity: "0" }]);
+  const removeBulkRoomRow = (i: number) => setBulkRoomRows(bulkRoomRows.filter((_, idx) => idx !== i));
+  const updateBulkRoomRow = (i: number, field: string, value: string) =>
+    setBulkRoomRows(bulkRoomRows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+
+  const handleBulkAddRooms = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkRoomFloor) return;
+    const rows = bulkRoomRows.filter((r) => r.roomNo);
+    if (rows.length === 0) {
+      alert("Add at least one room with a room number");
+      return;
+    }
+    setAddingBulkRooms(true);
+    try {
+      await api.post("/facilities/school-buildings/rooms/bulk", {
+        floorId: bulkRoomFloor.floor.id,
+        rooms: rows.map((r) => ({ roomNo: r.roomNo, name: r.name || undefined, type: r.type, capacity: parseInt(r.capacity, 10) || 0 })),
+      });
+      setBulkRoomFloor(null);
+      fetchBuildings();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to add rooms");
+    } finally {
+      setAddingBulkRooms(false);
+    }
+  };
+
+  const openCabins = async (room: any) => {
+    setCabinsFor(room);
+    setNewCabinNo("");
+    setNewCabinStaffId("");
+    setLoadingCabins(true);
+    try {
+      const res = await api.get(`/facilities/school-buildings/rooms/${room.id}/cabins`);
+      setCabins(res.data.data || []);
+    } catch {
+      setCabins([]);
+    } finally {
+      setLoadingCabins(false);
+    }
+  };
+
+  const handleAddCabin = async () => {
+    if (!cabinsFor || !newCabinNo) return;
+    try {
+      const res = await api.post("/facilities/school-buildings/cabins", {
+        roomId: cabinsFor.id, cabinNo: newCabinNo, staffId: newCabinStaffId || undefined,
+      });
+      setCabins((prev) => [...prev, res.data.data]);
+      setNewCabinNo("");
+      setNewCabinStaffId("");
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to add cabin");
+    }
+  };
+
+  const handleUpdateCabinStaff = async (cabinId: string, staffId: string) => {
+    try {
+      await api.put(`/facilities/school-buildings/cabins/${cabinId}`, { staffId: staffId || null });
+      setCabins((prev) => prev.map((c) => (c.id === cabinId ? { ...c, staffId: staffId || null, staff: staffList.find((s) => s.id === staffId) || null } : c)));
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to update cabin");
+    }
+  };
+
+  const handleDeleteCabin = async (cabinId: string) => {
+    if (!confirm("Delete this cabin?")) return;
+    try {
+      await api.delete(`/facilities/school-buildings/cabins/${cabinId}`);
+      setCabins((prev) => prev.filter((c) => c.id !== cabinId));
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to delete cabin");
+    }
+  };
+
   const openOccupancy = async () => {
     setShowOccupancy(true);
     setOccupancyLoading(true);
@@ -199,6 +322,13 @@ export default function SchoolBuildingsPage() {
                   >
                     <Layers className="h-3.5 w-3.5" /> Add Floor
                   </button>
+                  <button
+                    onClick={() => setBulkFloorBuilding(b)}
+                    title="Add Multiple Floors at once"
+                    className="text-xs font-medium text-primary-600 hover:text-primary-700 border border-primary-200 hover:bg-primary-50 rounded-lg px-2.5 py-1 flex items-center gap-1"
+                  >
+                    <Layers className="h-3.5 w-3.5" /> Add Multiple Floors
+                  </button>
                   <button onClick={() => deleteBuilding(b.id, b.name)} title="Delete Building" className="text-red-400 hover:text-red-600">
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -209,12 +339,20 @@ export default function SchoolBuildingsPage() {
                 <div key={f.id} className="mb-3">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-sm font-medium text-gray-600">{f.name || `Floor ${f.floorNo}`}</p>
-                    <button
-                      onClick={() => openAddRoom(b.name, f)}
-                      className="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1"
-                    >
-                      <DoorOpen className="h-3.5 w-3.5" /> Add Room
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => openAddRoom(b.name, f)}
+                        className="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                      >
+                        <DoorOpen className="h-3.5 w-3.5" /> Add Room
+                      </button>
+                      <button
+                        onClick={() => openBulkAddRooms(b.name, f)}
+                        className="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                      >
+                        <DoorOpen className="h-3.5 w-3.5" /> Add Multiple Rooms
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
                     {f.rooms?.map((r: any) => {
@@ -229,6 +367,11 @@ export default function SchoolBuildingsPage() {
                           {r.type === "CLASSROOM" && r.capacity > 0 && <p className="text-gray-500">{occupied}/{r.capacity}</p>}
                           {r.type === "CHAMBER" && r.assignedStaff && <p className="text-gray-500 truncate">{r.assignedStaff.user?.name}</p>}
                           <p className="text-[10px] text-gray-400">{r.type.replace(/_/g, " ")}</p>
+                          {(r.type === "CHAMBER" || r.type === "OFFICE" || r.type === "STAFF_ROOM") && (
+                            <button onClick={() => openCabins(r)} title="Manage cabins (multiple teachers sharing this room)" className="text-primary-500 hover:text-primary-700 text-[10px] mt-1 flex items-center justify-center gap-0.5 w-full">
+                              <Users className="h-3 w-3" /> Cabins
+                            </button>
+                          )}
                           <button onClick={() => deleteRoom(r.id, r.roomNo)} className="text-red-400 hover:text-red-600 text-[10px] mt-1 block w-full">
                             <Trash2 className="h-3 w-3 inline" />
                           </button>
@@ -281,6 +424,97 @@ export default function SchoolBuildingsPage() {
             <button type="submit" disabled={addingFloor} className="btn-primary disabled:opacity-50">{addingFloor ? "Adding..." : "Add Floor"}</button>
           </div>
         </form>
+      </Modal>
+
+      <Modal isOpen={!!bulkFloorBuilding} onClose={() => setBulkFloorBuilding(null)} title={`Add Multiple Floors - ${bulkFloorBuilding?.name || ""}`}>
+        <form onSubmit={handleBulkAddFloors} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">How many floors? *</label>
+            <input type="number" min={1} max={50} className="input-field" value={bulkFloorForm.count} onChange={(e) => setBulkFloorForm({ ...bulkFloorForm, count: e.target.value })} required />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Starting Floor Number</label>
+            <input type="number" className="input-field" value={bulkFloorForm.startingFloorNo} onChange={(e) => setBulkFloorForm({ ...bulkFloorForm, startingFloorNo: e.target.value })} placeholder="e.g. 0 for Ground Floor" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Name Prefix (optional)</label>
+            <input className="input-field" value={bulkFloorForm.namePrefix} onChange={(e) => setBulkFloorForm({ ...bulkFloorForm, namePrefix: e.target.value })} placeholder="e.g. Wing A -> 'Wing A Floor 1', 'Wing A Floor 2'..." />
+          </div>
+          <p className="text-xs text-gray-400">This will create floors {bulkFloorForm.startingFloorNo || 0} to {(parseInt(bulkFloorForm.startingFloorNo || "0", 10) + Math.max(parseInt(bulkFloorForm.count || "1", 10), 1) - 1)}.</p>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setBulkFloorBuilding(null)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={addingBulkFloors} className="btn-primary disabled:opacity-50">{addingBulkFloors ? "Adding..." : "Add Floors"}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={!!bulkRoomFloor}
+        onClose={() => setBulkRoomFloor(null)}
+        title={`Add Multiple Rooms - ${bulkRoomFloor?.buildingName || ""}, ${bulkRoomFloor?.floor?.name || `Floor ${bulkRoomFloor?.floor?.floorNo ?? ""}`}`}
+        size="lg"
+      >
+        <form onSubmit={handleBulkAddRooms} className="space-y-4">
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {bulkRoomRows.map((r, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                <input className="input-field col-span-3" placeholder="Room No *" value={r.roomNo} onChange={(e) => updateBulkRoomRow(i, "roomNo", e.target.value)} />
+                <input className="input-field col-span-3" placeholder="Name" value={r.name} onChange={(e) => updateBulkRoomRow(i, "name", e.target.value)} />
+                <select className="input-field col-span-3" value={r.type} onChange={(e) => updateBulkRoomRow(i, "type", e.target.value)}>
+                  {ROOM_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                </select>
+                <input type="number" min={0} className="input-field col-span-2" placeholder="Capacity" value={r.capacity} onChange={(e) => updateBulkRoomRow(i, "capacity", e.target.value)} />
+                <button type="button" onClick={() => removeBulkRoomRow(i)} className="col-span-1 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={addBulkRoomRow} className="btn-secondary flex items-center gap-2 text-sm"><Plus className="h-4 w-4" /> Add Row</button>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setBulkRoomFloor(null)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={addingBulkRooms} className="btn-primary disabled:opacity-50">{addingBulkRooms ? "Adding..." : `Add ${bulkRoomRows.filter((r) => r.roomNo).length} Room(s)`}</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={!!cabinsFor} onClose={() => setCabinsFor(null)} title={cabinsFor ? `Cabins - Room ${cabinsFor.roomNo}` : "Cabins"}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">
+            Multiple teachers can share this room, each with their own named cabin. This is independent of the room&apos;s
+            single &quot;Assigned Staff&quot; field above.
+          </p>
+          {loadingCabins ? (
+            <div className="flex justify-center py-6"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {cabins.map((c) => (
+                <div key={c.id} className="flex items-center gap-2 border rounded-lg px-3 py-2">
+                  <span className="text-sm font-medium w-16">{c.cabinNo}</span>
+                  <select
+                    className="input-field flex-1"
+                    value={c.staffId || ""}
+                    onChange={(e) => handleUpdateCabinStaff(c.id, e.target.value)}
+                  >
+                    <option value="">Vacant</option>
+                    {staffList.map((s: any) => <option key={s.id} value={s.id}>{s.user?.name} ({s.designation})</option>)}
+                  </select>
+                  <button onClick={() => handleDeleteCabin(c.id)} className="text-red-400 hover:text-red-600"><X className="h-4 w-4" /></button>
+                </div>
+              ))}
+              {cabins.length === 0 && <p className="text-sm text-gray-400 text-center py-4">No cabins yet - add one below</p>}
+            </div>
+          )}
+          <div className="flex items-center gap-2 pt-3 border-t">
+            <input className="input-field w-24" placeholder="Cabin No" value={newCabinNo} onChange={(e) => setNewCabinNo(e.target.value)} />
+            <select className="input-field flex-1" value={newCabinStaffId} onChange={(e) => setNewCabinStaffId(e.target.value)}>
+              <option value="">Vacant</option>
+              {staffList.map((s: any) => <option key={s.id} value={s.id}>{s.user?.name} ({s.designation})</option>)}
+            </select>
+            <button type="button" onClick={handleAddCabin} disabled={!newCabinNo} className="btn-primary flex items-center gap-1 disabled:opacity-50"><Plus className="h-4 w-4" /> Add</button>
+          </div>
+          <div className="flex justify-end pt-2">
+            <button type="button" onClick={() => setCabinsFor(null)} className="btn-secondary">Close</button>
+          </div>
+        </div>
       </Modal>
 
       <Modal

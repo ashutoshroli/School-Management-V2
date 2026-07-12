@@ -4,7 +4,7 @@ import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, g
 import { addItem, getItems, getItemById, purchaseStock, issueStock, getLowStockAlerts, deleteItem } from "../controllers/inventory.controller";
 import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, getVehicleById, addVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute } from "../controllers/transport.controller";
 import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding } from "../controllers/hostel.controller";
-import { createSchoolBuilding, getSchoolBuildings, addSchoolFloor, addSchoolRoom, updateSchoolRoom, deleteSchoolRoom, deleteSchoolBuilding, getSchoolOccupancySummary } from "../controllers/schoolBuilding.controller";
+import { createSchoolBuilding, getSchoolBuildings, addSchoolFloor, addSchoolRoom, updateSchoolRoom, deleteSchoolRoom, deleteSchoolBuilding, getSchoolOccupancySummary, bulkAddSchoolFloors, bulkAddSchoolRooms, addRoomCabin, getRoomCabins, updateRoomCabin, deleteRoomCabin } from "../controllers/schoolBuilding.controller";
 import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -12,7 +12,7 @@ import { addBookSchema, issueBookSchema, bulkIssueBookSchema } from "../validato
 import { addItemSchema, purchaseStockSchema, issueStockSchema } from "../validators/inventory.validator";
 import { createRouteSchema, addStopSchema, allocateStudentSchema, addVehicleSchema, assignVehicleToRouteSchema } from "../validators/transport.validator";
 import { createBuildingSchema, addFloorSchema, addRoomSchema, allocateRoomSchema, bulkAllocateRoomSchema } from "../validators/hostel.validator";
-import { createSchoolBuildingSchema, addSchoolFloorSchema, addSchoolRoomSchema, updateSchoolRoomSchema } from "../validators/schoolBuilding.validator";
+import { createSchoolBuildingSchema, addSchoolFloorSchema, addSchoolRoomSchema, updateSchoolRoomSchema, bulkAddSchoolFloorsSchema, bulkAddSchoolRoomsSchema, addRoomCabinSchema, updateRoomCabinSchema } from "../validators/schoolBuilding.validator";
 import { createDeviceSchema, updateDeviceSchema } from "../validators/attendanceDevice.validator";
 
 const router = Router();
@@ -73,6 +73,16 @@ router.post("/school-buildings/rooms", authorize(...ADMIN), validate(addSchoolRo
 router.put("/school-buildings/rooms/:id", authorize(...ADMIN), validate(updateSchoolRoomSchema), updateSchoolRoom);
 router.delete("/school-buildings/rooms/:id", authorize(...ADMIN), deleteSchoolRoom);
 router.delete("/school-buildings/:id", authorize(...ADMIN), deleteSchoolBuilding);
+router.post("/school-buildings/floors/bulk", authorize(...ADMIN), validate(bulkAddSchoolFloorsSchema), bulkAddSchoolFloors);
+router.post("/school-buildings/rooms/bulk", authorize(...ADMIN), validate(bulkAddSchoolRoomsSchema), bulkAddSchoolRooms);
+
+// Multi-cabin chambers (RoomCabin) - opt-in, only for rooms that need
+// several named seats tracked individually (see the model's doc
+// comment in schema.prisma).
+router.post("/school-buildings/cabins", authorize(...ADMIN), validate(addRoomCabinSchema), addRoomCabin);
+router.get("/school-buildings/rooms/:roomId/cabins", authorize(...ADMIN), getRoomCabins);
+router.put("/school-buildings/cabins/:id", authorize(...ADMIN), validate(updateRoomCabinSchema), updateRoomCabin);
+router.delete("/school-buildings/cabins/:id", authorize(...ADMIN), deleteRoomCabin);
 
 // === ATTENDANCE DEVICES (RFID/card-tap readers) - Phase 5 ===
 router.post("/attendance-devices", authorize(...ADMIN), branchAccess, validate(createDeviceSchema), createDevice);

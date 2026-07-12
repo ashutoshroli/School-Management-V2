@@ -204,6 +204,7 @@ model Staff {
   subjectTeachers SubjectTeacher[]
   timetableSlots  TimetableSlot[]
   assignedRooms   SchoolRoom[]      @relation("RoomAssignedStaff")
+  assignedCabins  RoomCabin[]       @relation("CabinAssignedStaff")
 }
 
 
@@ -1506,6 +1507,7 @@ model SchoolRoom {
   sections      Section[]
   examSchedules ExamSchedule[]
   examSeatAllocations ExamSeatAllocation[]
+  cabins        RoomCabin[]
 }
 
 enum SchoolRoomType {
@@ -1522,6 +1524,30 @@ enum SchoolRoomType {
   CANTEEN
   MEDICAL_ROOM
   OTHER
+}
+
+// One physical room (typically CHAMBER/OFFICE/STAFF_ROOM type) can
+// hold several teachers' individual cabins - e.g. a shared staff room
+// with 6 desks/cabins, each belonging to a different teacher.
+// Deliberately OPT-IN and separate from SchoolRoom.assignedStaffId
+// (which stays exactly as-is, fully backward compatible, for the
+// common "one room = one occupant" case, e.g. the Principal's own
+// chamber) - cabins are only added for rooms that actually need
+// multiple named seats tracked individually. staffId is nullable so a
+// cabin can be declared (and reserved a spot/number) before anyone is
+// assigned to it yet.
+model RoomCabin {
+  id        String   @id @default(cuid())
+  roomId    String
+  cabinNo   String
+  staffId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  room  SchoolRoom @relation(fields: [roomId], references: [id])
+  staff Staff?     @relation("CabinAssignedStaff", fields: [staffId], references: [id])
+
+  @@unique([roomId, cabinNo])
 }
 
 

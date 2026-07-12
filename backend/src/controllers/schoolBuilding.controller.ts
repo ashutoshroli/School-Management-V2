@@ -199,6 +199,181 @@ export const deleteSchoolBuilding = async (req: AuthRequest, res: Response): Pro
 };
 
 /**
+ * Creates N floors on one building in a single call (e.g. "set up an
+ * entire new building: 4 floors") instead of N separate addSchoolFloor
+ * calls. Floor numbers are auto-sequenced from `startingFloorNo`
+ * (default 0 = ground floor); names are auto-generated as "Floor N"
+ * unless a `namePrefix` is given (e.g. namePrefix "Wing A" -> "Wing A
+ * Floor 1", "Wing A Floor 2", ...).
+ */
+export const bulkAddSchoolFloors = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { buildingId, count, startingFloorNo, namePrefix } = req.body;
+
+    const building = await prisma.schoolBuilding.findUnique({ where: { id: buildingId } });
+    if (!building) { sendError(res, "Building not found", 404); return; }
+    if (!canAccessBranch(req, building.branchId)) { sendError(res, "Building not found", 404); return; }
+
+    const start = startingFloorNo ?? 0;
+    const floors = Array.from({ length: count }, (_, i) => ({
+      buildingId,
+      floorNo: start + i,
+      name: namePrefix ? `${namePrefix} Floor ${start + i}` : null,
+    }));
+
+    // createMany (one INSERT) rather than a loop of N addSchoolFloor
+    // calls - the whole point of "bulk" here is avoiding N round trips
+    // for what's normally a "set up a whole building at once" action.
+    await prisma.schoolFloor.createMany({ data: floors });
+
+    const created = await prisma.schoolFloor.findMany({
+      where: { buildingId, floorNo: { in: floors.map((f) => f.floorNo) } },
+      orderBy: { floorNo: "asc" },
+    });
+    sendSuccess(res, created, `${created.length} floor(s) added`, 201);
+  } catch (error) { sendError(res, "Failed to add floors", 500, (error as Error).message); }
+};
+
+/**
+ * Creates a whole list of rooms on one floor in a single call (e.g.
+ * "8 classrooms on this floor") instead of one addSchoolRoom call per
+ * room. Applies the exact same assignedStaffId branch-ownership guard
+ * as the single-room endpoint, but checked once up front for every
+ * room in the list (rather than N separate lookups) so a bad staffId
+ * anywhere in the batch fails the WHOLE call before anything is
+ * written - a partial bulk-create (7 of 8 rooms created, 1 silently
+ * skipped) would be a confusing result for what's meant to be one
+ * atomic "set up this floor" action.
+ */
+export const bulkAddSchoolRooms = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { floorId, rooms } = req.body;
+
+    const floor = await prisma.schoolFloor.findUnique({ where: { id: floorId }, include: { building: true } });
+    if (!floor) { sendError(res, "Floor not found", 404); return; }
+    if (!canAccessBranch(req, floor.building.branchId)) { sendError(res, "Floor not found", 404); return; }
+
+    const staffIds = [...new Set(rooms.map((r: any) => r.assignedStaffId).filter(Boolean))] as string[];
+    if (staffIds.length > 0) {
+      const staffRows = await prisma.staff.findMany({ where: { id: { in: staffIds } } });
+      const staffById = new Map(staffRows.map((s) => [s.id, s]));
+      for (const staffId of staffIds) {
+        const staff = staffById.get(staffId);
+        if (!staff || staff.branchId !== floor.building.branchId) {
+          sendError(res, `Assigned staff (${staffId}) must belong to the same branch as this building`, 400);
+          return;
+        }
+      }
+    }
+
+    await prisma.schoolRoom.createMany({
+      data: rooms.map((r: any) => ({
+        floorId,
+        roomNo: r.roomNo,
+        name: r.name || null,
+        type: r.type,
+        capacity: r.capacity || 0,
+        directionFromGate: r.directionFromGate || null,
+        assignedStaffId: r.assignedStaffId || null,
+        department: r.department || null,
+      })),
+    });
+
+    const created = await prisma.schoolRoom.findMany({
+      where: { floorId, roomNo: { in: rooms.map((r: any) => r.roomNo) } },
+      orderBy: { roomNo: "asc" },
+    });
+    sendSuccess(res, created, `${created.length} room(s) added`, 201);
+  } catch (error) { sendError(res, "Failed to add rooms", 500, (error as Error).message); }
+};
+
+/**
+ * Multi-cabin chambers (RoomCabin) - see the model's doc comment in
+ * schema.prisma. addRoomCabin/updateRoomCabin/deleteRoomCabin/
+ * getRoomCabins below all resolve the cabin's OWN room's branchId from
+ * the DB and require canAccessBranch, same convention as every other
+ * facilities endpoint above.
+ */
+
+export const addRoomCabin = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { roomId, cabinNo, staffId } = req.body;
+
+    const room = await prisma.schoolRoom.findUnique({ where: { id: roomId }, include: { floor: { include: { building: true } } } });
+    if (!room) { sendError(res, "Room not found", 404); return; }
+    if (!canAccessBranch(req, room.floor.building.branchId)) { sendError(res, "Room not found", 404); return; }
+
+    if (staffId) {
+      const staff = await prisma.staff.findUnique({ where: { id: staffId } });
+      if (!staff || staff.branchId !== room.floor.building.branchId) {
+        sendError(res, "Assigned staff must belong to the same branch as this building", 400);
+        return;
+      }
+    }
+
+    const cabin = await prisma.roomCabin.create({ data: { roomId, cabinNo, staffId: staffId || null } });
+    sendSuccess(res, cabin, "Cabin added", 201);
+  } catch (error) { sendError(res, "Failed to add cabin", 500, (error as Error).message); }
+};
+
+export const getRoomCabins = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { roomId } = req.params;
+
+    const room = await prisma.schoolRoom.findUnique({ where: { id: roomId }, include: { floor: { include: { building: true } } } });
+    if (!room) { sendError(res, "Room not found", 404); return; }
+    if (!canAccessBranch(req, room.floor.building.branchId)) { sendError(res, "Room not found", 404); return; }
+
+    const cabins = await prisma.roomCabin.findMany({
+      where: { roomId },
+      include: { staff: { include: { user: { select: { name: true } } } } },
+      orderBy: { cabinNo: "asc" },
+    });
+    sendSuccess(res, cabins, "Cabins fetched");
+  } catch (error) { sendError(res, "Failed to fetch cabins", 500, (error as Error).message); }
+};
+
+export const updateRoomCabin = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { cabinNo, staffId } = req.body;
+
+    const cabin = await prisma.roomCabin.findUnique({ where: { id }, include: { room: { include: { floor: { include: { building: true } } } } } });
+    if (!cabin) { sendError(res, "Cabin not found", 404); return; }
+    if (!canAccessBranch(req, cabin.room.floor.building.branchId)) { sendError(res, "Cabin not found", 404); return; }
+
+    if (staffId) {
+      const staff = await prisma.staff.findUnique({ where: { id: staffId } });
+      if (!staff || staff.branchId !== cabin.room.floor.building.branchId) {
+        sendError(res, "Assigned staff must belong to the same branch as this building", 400);
+        return;
+      }
+    }
+
+    const updated = await prisma.roomCabin.update({
+      where: { id },
+      data: {
+        ...(cabinNo !== undefined && { cabinNo }),
+        ...(staffId !== undefined && { staffId: staffId || null }),
+      },
+    });
+    sendSuccess(res, updated, "Cabin updated");
+  } catch (error) { sendError(res, "Failed to update cabin", 500, (error as Error).message); }
+};
+
+export const deleteRoomCabin = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const cabin = await prisma.roomCabin.findUnique({ where: { id }, include: { room: { include: { floor: { include: { building: true } } } } } });
+    if (!cabin) { sendError(res, "Cabin not found", 404); return; }
+    if (!canAccessBranch(req, cabin.room.floor.building.branchId)) { sendError(res, "Cabin not found", 404); return; }
+
+    await prisma.roomCabin.delete({ where: { id } });
+    sendSuccess(res, null, "Cabin deleted");
+  } catch (error) { sendError(res, "Failed to delete cabin", 500, (error as Error).message); }
+};
+
+/**
  * Branch-wide occupancy summary: total rooms, a room-type breakdown
  * (count per type), and for CLASSROOM-type rooms specifically, vacant
  * vs filled seats derived from each linked section's live student
