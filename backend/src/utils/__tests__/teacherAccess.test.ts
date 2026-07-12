@@ -10,7 +10,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { canTeacherAccessSection, getOwnAssignedSectionIds } from "../teacherAccess";
+import { canTeacherAccessSection, getOwnAssignedSectionIds, canTeacherTeachSubjectForClass } from "../teacherAccess";
 import { AuthRequest } from "../../types";
 
 const makeReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
@@ -133,5 +133,66 @@ describe("teacherAccess - getOwnAssignedSectionIds", () => {
 
     expect(result).toEqual([]);
     expect(prisma.section.findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+// New Features: exam question paper upload access - unlike
+// canTeacherAccessSection (attendance), a subject's school-wide
+// DEFAULT teacher (classId: null) DOES count here, since "who teaches
+// this subject" is exactly what matters for setting its exam paper.
+describe("teacherAccess - canTeacherTeachSubjectForClass", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("always returns true for non-TEACHER roles (never widens anyone else's access)", async () => {
+    const req = makeReq({ user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" } });
+
+    const result = await canTeacherTeachSubjectForClass(req, "sub-1", "class-1");
+
+    expect(result).toBe(true);
+    expect(prisma.staff.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns false when the TEACHER has no linked Staff record", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq();
+
+    const result = await canTeacherTeachSubjectForClass(req, "sub-1", "class-1");
+
+    expect(result).toBe(false);
+  });
+
+  it("returns true when the teacher has a class-specific SubjectTeacher row for this subject+class", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.subjectTeacher.count as jest.Mock).mockResolvedValue(1);
+    const req = makeReq();
+
+    const result = await canTeacherTeachSubjectForClass(req, "sub-1", "class-1");
+
+    expect(result).toBe(true);
+    expect(prisma.subjectTeacher.count).toHaveBeenCalledWith({
+      where: { staffId: "staff-1", subjectId: "sub-1", OR: [{ classId: "class-1" }, { classId: null }] },
+    });
+  });
+
+  it("returns true when the teacher is only the subject's school-wide DEFAULT teacher (classId: null)", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.subjectTeacher.count as jest.Mock).mockResolvedValue(1);
+    const req = makeReq();
+
+    const result = await canTeacherTeachSubjectForClass(req, "sub-1", "class-1");
+
+    expect(result).toBe(true);
+  });
+
+  it("SECURITY: returns false when the teacher has no assignment for this subject at all", async () => {
+    (prisma.staff.findUnique as jest.Mock).mockResolvedValue({ id: "staff-1" });
+    (prisma.subjectTeacher.count as jest.Mock).mockResolvedValue(0);
+    const req = makeReq();
+
+    const result = await canTeacherTeachSubjectForClass(req, "sub-1", "class-1");
+
+    expect(result).toBe(false);
   });
 });

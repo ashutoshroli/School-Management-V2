@@ -21,6 +21,18 @@ const DOCX_MIME_TYPES = new Set([
   "application/octet-stream",
 ]);
 
+// Exam question papers may be either a scanned/typed PDF or a Word
+// (.docx) file - unlike DOCUMENT_MIME_TYPES (which is images + PDF,
+// for student/staff document proofs) or DOCX_MIME_TYPES (Word-only,
+// for certificate/receipt templates), this is the union of the two
+// since a question paper is never an image scan-as-photo but IS
+// commonly typed directly in Word.
+const EXAM_PAPER_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/octet-stream",
+]);
+
 const memoryStorage = multer.memoryStorage();
 
 const fileFilterFor = (allowed: Set<string>) => (
@@ -54,6 +66,13 @@ export const uploadTemplate = multer({
   storage: memoryStorage,
   limits: { fileSize: config.upload.maxSize },
   fileFilter: fileFilterFor(DOCX_MIME_TYPES),
+}).single("file");
+
+/** Single-file upload middleware for exam question papers, PDF or DOCX (field name: "file"). */
+export const uploadExamPaper = multer({
+  storage: memoryStorage,
+  limits: { fileSize: config.upload.maxSize },
+  fileFilter: fileFilterFor(EXAM_PAPER_MIME_TYPES),
 }).single("file");
 
 type MulterSingleMiddleware = (req: Request, res: Response, callback: (err: unknown) => void) => void;

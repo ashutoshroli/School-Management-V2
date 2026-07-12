@@ -139,6 +139,7 @@ export default function ExamsPage() {
                       <button onClick={() => openDetail(e.id)} title="View Details" className="text-gray-500 hover:text-gray-700">
                         <Eye className="h-3.5 w-3.5" />
                       </button>
+                      <a href={`/dashboard/exams/${e.id}/schedule`} className="text-primary-600 text-xs font-medium hover:underline">Timetable</a>
                       <a href={`/dashboard/exams/${e.id}/results`} className="text-primary-600 text-xs font-medium hover:underline">Results</a>
                       <a href={`/dashboard/exams/${e.id}/marks`} className="text-primary-600 text-xs font-medium hover:underline">Enter Marks</a>
                       <button onClick={() => openEditModal(e)} title="Edit" className="text-gray-500 hover:text-gray-700">
