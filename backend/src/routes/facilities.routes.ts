@@ -4,6 +4,7 @@ import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, g
 import { addItem, getItems, getItemById, purchaseStock, issueStock, getLowStockAlerts, deleteItem } from "../controllers/inventory.controller";
 import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, getVehicleById, addVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute } from "../controllers/transport.controller";
 import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding } from "../controllers/hostel.controller";
+import { createSchoolBuilding, getSchoolBuildings, addSchoolFloor, addSchoolRoom, updateSchoolRoom, deleteSchoolRoom, deleteSchoolBuilding, getSchoolOccupancySummary } from "../controllers/schoolBuilding.controller";
 import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -11,6 +12,7 @@ import { addBookSchema, issueBookSchema, bulkIssueBookSchema } from "../validato
 import { addItemSchema, purchaseStockSchema, issueStockSchema } from "../validators/inventory.validator";
 import { createRouteSchema, addStopSchema, allocateStudentSchema, addVehicleSchema, assignVehicleToRouteSchema } from "../validators/transport.validator";
 import { createBuildingSchema, addFloorSchema, addRoomSchema, allocateRoomSchema, bulkAllocateRoomSchema } from "../validators/hostel.validator";
+import { createSchoolBuildingSchema, addSchoolFloorSchema, addSchoolRoomSchema, updateSchoolRoomSchema } from "../validators/schoolBuilding.validator";
 import { createDeviceSchema, updateDeviceSchema } from "../validators/attendanceDevice.validator";
 
 const router = Router();
@@ -61,6 +63,16 @@ router.post("/hostel/allocate/bulk", authorize(...ADMIN, UserRole.WARDEN), valid
 router.patch("/hostel/deallocate/:id", authorize(...ADMIN, UserRole.WARDEN), deallocateRoom);
 router.get("/hostel/occupancy", getOccupancy);
 router.delete("/hostel/buildings/:id", authorize(...ADMIN, UserRole.WARDEN), deleteBuilding);
+
+// === SCHOOL BUILDINGS (general-purpose: classrooms/labs/offices/etc) ===
+router.post("/school-buildings", authorize(...ADMIN), branchAccess, validate(createSchoolBuildingSchema), createSchoolBuilding);
+router.get("/school-buildings", getSchoolBuildings);
+router.get("/school-buildings/occupancy", authorize(...ADMIN), getSchoolOccupancySummary);
+router.post("/school-buildings/floors", authorize(...ADMIN), validate(addSchoolFloorSchema), addSchoolFloor);
+router.post("/school-buildings/rooms", authorize(...ADMIN), validate(addSchoolRoomSchema), addSchoolRoom);
+router.put("/school-buildings/rooms/:id", authorize(...ADMIN), validate(updateSchoolRoomSchema), updateSchoolRoom);
+router.delete("/school-buildings/rooms/:id", authorize(...ADMIN), deleteSchoolRoom);
+router.delete("/school-buildings/:id", authorize(...ADMIN), deleteSchoolBuilding);
 
 // === ATTENDANCE DEVICES (RFID/card-tap readers) - Phase 5 ===
 router.post("/attendance-devices", authorize(...ADMIN), branchAccess, validate(createDeviceSchema), createDevice);

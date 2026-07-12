@@ -180,6 +180,12 @@ export const navigation: NavItem[] = [
     roles: [...ADMIN_ROLES, "WARDEN", "STUDENT", "PARENT"],
   },
   {
+    label: "School Buildings",
+    href: "/dashboard/buildings",
+    icon: "Building",
+    roles: ADMIN_ROLES,
+  },
+  {
     label: "Inventory",
     href: "/dashboard/inventory",
     icon: "Package",
