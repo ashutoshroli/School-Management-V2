@@ -127,21 +127,45 @@ that skips the extra query).
 
 ---
 
-## Phase 3: Teacher Class-Scoped Attendance Access Control
+## Phase 3: Teacher Class-Scoped Attendance Access Control ✅ COMPLETED
 
-**The core access-control change** ("assigned teacher can access only
-their assigned class attendance"):
-- New helper `canTeacherAccessSection(req, sectionId)` in a shared
-  utils file: TEACHER role is allowed only if they are that section's
-  `classTeacher` OR have a `SubjectTeacher` row for that section's class.
-  ADMIN roles remain unrestricted (existing `canAccessBranch` behavior
-  unchanged for them).
-- Enforce this in `markStudentAttendance`, `getClassAttendance`, and add
-  a new `getMyAssignedSections` endpoint (for a teacher's own dashboard/
-  section-picker, so they only ever see sections they can act on).
-- **Frontend:** the attendance-marking page's section dropdown is
-  filtered to `getMyAssignedSections` for TEACHER role (unchanged for
-  admins, who still see everything).
+**Status:** ✅ **DONE - the core access-control fix the user explicitly
+requested** ("assigned teacher can access only their assigned class attendance")
+
+### What was actually done:
+- New `canTeacherAccessSection(req, sectionId)` helper
+  (`utils/teacherAccess.ts`): a TEACHER is allowed only if they're that
+  section's `classTeacher` OR have a class-specific `SubjectTeacher` row
+  for that section's class. Deliberately does NOT count a subject's
+  school-wide DEFAULT teacher (`SubjectTeacher.classId: null`) as
+  attendance access - that's a subject-teaching default, not evidence
+  this teacher is responsible for this class's roll call. Every other
+  role (ADMIN, ACCOUNTANT, etc) is unaffected - this only narrows
+  TEACHER further, never widens anyone's access.
+- Enforced in **both** `markStudentAttendance` (marking) and
+  `getClassAttendance` (viewing) - the latter had **no access check
+  whatsoever** before this (not even branch-level), a real pre-existing
+  IDOR that got fixed as part of the same change.
+- New `getMyAssignedSections` endpoint + `getOwnAssignedSectionIds`
+  helper: every section a TEACHER can act on (class-teacher sections +
+  sections of classes they have a subject assignment in), de-duplicated -
+  so the UI never even offers a section the backend would reject.
+- **Frontend:** `/dashboard/attendance`'s section picker is now
+  role-aware - a TEACHER gets a flat "your assigned class/section" list
+  from `getMyAssignedSections` (with a clear message if they have no
+  assignments yet), while ADMIN roles keep the original two-step
+  Class → Section picker over the full `/classes` list, unchanged.
+
+**Tests:** 10 new tests in `teacherAccess.test.ts` (the helper itself) +
+9 new tests in `studentAttendance.controller.test.ts` (4 for the
+access-control enforcement in `markStudentAttendance`, 5 for the new
+`getClassAttendance` branch/teacher checks and `getMyAssignedSections`).
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**67 suites / 772 tests**, up
+  from 751) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, `attendance`
+  page grew 2.4kB->4.04kB
 
 ---
 
