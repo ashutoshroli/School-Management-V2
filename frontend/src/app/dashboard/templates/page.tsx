@@ -224,6 +224,29 @@ const TEMPLATE_SLOTS: TemplateSlot[] = [
   },
   {
     category: "document",
+    type: "ADMIT_CARD",
+    label: "Admit Card",
+    description: "Exam admit card / hall ticket, listing every subject a student is permitted to sit for (with date/time/room) - separate from the Report Card template above, which is for RESULTS, not exam entry permission.",
+    sampleFile: "ADMIT_CARD.docx",
+    loopSyntaxNote:
+      "The {{subjects}} data is a per-subject list (date/time/room) - build a one-row table in Word, wrap that row in " +
+      "{#subjects}...{/subjects} (single curly braces), and inside the row use single-brace {subjectName}, " +
+      "{examDate}, {startTime}, {endTime}, {roomNo}. Everything between the tags repeats once per subject the " +
+      "student is permitted to sit for.",
+    placeholders: [
+      { key: "studentName", description: "Student's full name" },
+      { key: "admissionNo", description: "Admission number" },
+      { key: "className", description: "Class name" },
+      { key: "sectionName", description: "Section name" },
+      { key: "examName", description: "Exam name, e.g. Half Yearly, Annual" },
+      { key: "serialNo", description: "Unique admit card serial number" },
+      { key: "status", description: "ELIGIBLE, PROVISIONAL, or DENIED" },
+      { key: "remarks", description: "Reason, if PROVISIONAL/DENIED (e.g. an eligibility rule that failed)" },
+      ...BRANCH_PLACEHOLDERS,
+    ],
+  },
+  {
+    category: "document",
     type: "ADMISSION_FORM",
     label: "Admission Form",
     description: "Printable form summarizing a new admission inquiry/application.",

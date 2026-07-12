@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, CalendarClock, Save, Plus, Trash2, Upload, FileText, Loader2, Armchair, X, Users, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, CalendarClock, Save, Plus, Trash2, Upload, FileText, Loader2, Armchair, X, Users, ClipboardCheck, Contact, Download, CheckCircle2, AlertTriangle } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import ErrorBanner from "@/components/ui/ErrorBanner";
@@ -78,6 +78,21 @@ export default function ExamSchedulePage() {
   const [savingAttendance, setSavingAttendance] = useState(false);
   const [attendanceMessage, setAttendanceMessage] = useState("");
 
+  // Admit Cards - eligibility rule checklist (75% attendance + fees
+  // cleared till month) + single/bulk generation.
+  const [admitCards, setAdmitCards] = useState<any[]>([]);
+  const [loadingAdmitCards, setLoadingAdmitCards] = useState(false);
+  const [showAdmitCardModal, setShowAdmitCardModal] = useState(false);
+  const [admitCardRules, setAdmitCardRules] = useState({
+    enableAttendanceRule: false,
+    minAttendancePercent: "75",
+    enableFeesRule: false,
+    feesClearedTillMonth: "",
+    onIneligible: "DENY" as "DENY" | "PROVISIONAL",
+  });
+  const [generatingAdmitCards, setGeneratingAdmitCards] = useState(false);
+  const [admitCardResult, setAdmitCardResult] = useState<any>(null);
+
   const flattenRooms = (buildings: any[]) =>
     buildings.flatMap((b: any) =>
       (b.floors || []).flatMap((f: any) =>
@@ -109,6 +124,8 @@ export default function ExamSchedulePage() {
     setMarkingAttendanceFor(null);
     setAttendanceRooms([]);
     setAttendanceEdits({});
+    setAdmitCards([]);
+    setAdmitCardResult(null);
     try {
       // BUG FIX: this used to fetch the ENTIRE (unscoped) exam list and
       // find this exam client-side - fragile (any transient mismatch
@@ -164,9 +181,77 @@ export default function ExamSchedulePage() {
     } finally {
       setLoading(false);
     }
+    fetchAdmitCards();
   };
 
   useEffect(() => { load(); }, [examId]);
+
+  const fetchAdmitCards = async () => {
+    setLoadingAdmitCards(true);
+    try {
+      const res = await api.get(`/academics/exams/${examId}/admit-cards`);
+      setAdmitCards(res.data.data || []);
+    } catch {
+      setAdmitCards([]);
+    } finally {
+      setLoadingAdmitCards(false);
+    }
+  };
+
+  const buildRuleConfig = () => {
+    const ruleConfig: any = {};
+    if (admitCardRules.enableAttendanceRule) {
+      ruleConfig.minAttendancePercent = parseFloat(admitCardRules.minAttendancePercent) || 75;
+    }
+    if (admitCardRules.enableFeesRule && admitCardRules.feesClearedTillMonth) {
+      ruleConfig.feesClearedTillMonth = admitCardRules.feesClearedTillMonth;
+    }
+    return Object.keys(ruleConfig).length > 0 ? ruleConfig : undefined;
+  };
+
+  const handleBulkGenerateAdmitCards = async () => {
+    setGeneratingAdmitCards(true);
+    setAdmitCardResult(null);
+    try {
+      const res = await api.post(`/academics/exams/${examId}/admit-cards/bulk-generate`, {
+        ruleConfig: buildRuleConfig(),
+        onIneligible: admitCardRules.onIneligible,
+      });
+      setAdmitCardResult(res.data.data);
+      await fetchAdmitCards();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to bulk-generate admit cards");
+    } finally {
+      setGeneratingAdmitCards(false);
+    }
+  };
+
+  const downloadAdmitCard = async (studentId: string, studentName: string) => {
+    try {
+      const res = await api.get(`/academics/exams/${examId}/admit-cards/${studentId}/pdf`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.response?.data?.message || `Failed to download admit card for ${studentName} (it may have been denied)`);
+    }
+  };
+
+  const deleteAdmitCard = async (studentId: string) => {
+    if (!confirm("Remove this student's admit card record?")) return;
+    try {
+      await api.delete(`/academics/exams/${examId}/admit-cards/${studentId}`);
+      fetchAdmitCards();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to delete admit card");
+    }
+  };
 
   const addRow = () => setRows([...rows, { ...EMPTY_ROW }]);
   const removeRow = (index: number) => setRows(rows.filter((_, i) => i !== index));
@@ -638,8 +723,160 @@ export default function ExamSchedulePage() {
               </div>
             )}
           </div>
+          <div className="card mt-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold flex items-center gap-2"><Contact className="h-5 w-5 text-rose-600" /> Admit Cards</h3>
+              {isAdmin && (
+                <button onClick={() => { setAdmitCardResult(null); setShowAdmitCardModal(true); }} className="btn-primary flex items-center gap-2 text-sm">
+                  <Contact className="h-4 w-4" /> Bulk Generate
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Generate admit cards for every active student in this class, optionally gated by eligibility rules
+              (minimum attendance %, fees cleared through a chosen month). A student who fails a rule can either be
+              denied a card entirely, or issued a provisional card limited to the subjects already scheduled -
+              re-run generation after they fix the issue to get an updated card.
+            </p>
+
+            {loadingAdmitCards ? (
+              <div className="flex justify-center py-6"><Loader2 className="h-6 w-6 animate-spin text-primary-600" /></div>
+            ) : admitCards.length === 0 ? (
+              <p className="text-sm text-gray-400">No admit cards generated yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b bg-gray-50">
+                    <th className="px-3 py-2 text-left">Student</th>
+                    <th className="px-3 py-2 text-left">Roll No</th>
+                    <th className="px-3 py-2 text-center">Status</th>
+                    <th className="px-3 py-2 text-left">Remarks</th>
+                    <th className="px-3 py-2 text-center">Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {admitCards.map((ac: any) => (
+                      <tr key={ac.id} className="border-b">
+                        <td className="px-3 py-2">{ac.student?.user?.name}</td>
+                        <td className="px-3 py-2">{ac.student?.rollNo || "-"}</td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-xs ${ac.status === "ELIGIBLE" ? "bg-green-100 text-green-700" : ac.status === "PROVISIONAL" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                            {ac.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-500">{ac.remarks || "-"}</td>
+                        <td className="px-3 py-2 text-center">
+                          <div className="flex items-center justify-center gap-3">
+                            {ac.status !== "DENIED" && (
+                              <button onClick={() => downloadAdmitCard(ac.student.id, ac.student.user.name)} className="text-primary-600 hover:underline flex items-center gap-1">
+                                <Download className="h-3.5 w-3.5" /> PDF
+                              </button>
+                            )}
+                            {isAdmin && (
+                              <button onClick={() => deleteAdmitCard(ac.student.id)} className="text-red-500 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       ) : null}
+
+      <Modal isOpen={showAdmitCardModal} onClose={() => setShowAdmitCardModal(false)} title="Bulk Generate Admit Cards" size="md">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">
+            Every active student in <strong>{exam?.class?.name}</strong> will be evaluated against the rules you enable below.
+          </p>
+
+          <div className="border rounded-lg p-3 space-y-3">
+            <p className="text-sm font-medium text-gray-700">Eligibility Rules Checklist</p>
+
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={admitCardRules.enableAttendanceRule}
+                onChange={(e) => setAdmitCardRules({ ...admitCardRules, enableAttendanceRule: e.target.checked })}
+              />
+              <span className="flex-1">
+                Minimum attendance %
+                {admitCardRules.enableAttendanceRule && (
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    className="input-field w-20 inline-block ml-2 py-1"
+                    value={admitCardRules.minAttendancePercent}
+                    onChange={(e) => setAdmitCardRules({ ...admitCardRules, minAttendancePercent: e.target.value })}
+                  />
+                )}
+                <span className="text-xs text-gray-400 block mt-0.5">Computed over the academic year so far (default 75%)</span>
+              </span>
+            </label>
+
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={admitCardRules.enableFeesRule}
+                onChange={(e) => setAdmitCardRules({ ...admitCardRules, enableFeesRule: e.target.checked })}
+              />
+              <span className="flex-1">
+                Monthly fees cleared through
+                {admitCardRules.enableFeesRule && (
+                  <input
+                    type="month"
+                    className="input-field w-40 inline-block ml-2 py-1"
+                    value={admitCardRules.feesClearedTillMonth}
+                    onChange={(e) => setAdmitCardRules({ ...admitCardRules, feesClearedTillMonth: e.target.value })}
+                  />
+                )}
+                <span className="text-xs text-gray-400 block mt-0.5">Only MONTHLY-frequency fee structures are checked</span>
+              </span>
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">If a student fails a rule:</label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name="onIneligible" checked={admitCardRules.onIneligible === "DENY"} onChange={() => setAdmitCardRules({ ...admitCardRules, onIneligible: "DENY" })} />
+                Deny admit card entirely
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name="onIneligible" checked={admitCardRules.onIneligible === "PROVISIONAL"} onChange={() => setAdmitCardRules({ ...admitCardRules, onIneligible: "PROVISIONAL" })} />
+                Issue provisional (only scheduled subjects)
+              </label>
+            </div>
+          </div>
+
+          {admitCardResult && (
+            <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg px-3 py-2">
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <span>
+                Generated {admitCardResult.total} admit card(s): {admitCardResult.eligible} eligible, {admitCardResult.provisional} provisional, {admitCardResult.denied} denied.
+              </span>
+            </div>
+          )}
+
+          {!admitCardRules.enableAttendanceRule && !admitCardRules.enableFeesRule && (
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg px-3 py-2">
+              <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" /> No rules enabled - every active student will simply get an ELIGIBLE card.
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            <button type="button" onClick={() => setShowAdmitCardModal(false)} className="btn-secondary">Close</button>
+            <button type="button" onClick={handleBulkGenerateAdmitCards} disabled={generatingAdmitCards} className="btn-primary flex items-center gap-2 disabled:opacity-60">
+              {generatingAdmitCards && <Loader2 className="h-4 w-4 animate-spin" />} {generatingAdmitCards ? "Generating..." : "Generate for Whole Class"}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal isOpen={!!seatPlanModalFor} onClose={() => setSeatPlanModalFor(null)} title="Generate Seat Plan" size="md">
         <div className="space-y-4">

@@ -8,6 +8,7 @@ import { bulkSetExamSchedule, getExamSchedule, updateExamScheduleEntry, deleteEx
 import { uploadExamQuestionPaper, getExamQuestionPapers, deleteExamQuestionPaper } from "../controllers/examQuestionPaper.controller";
 import { generateSeatPlan, getSeatPlan, clearSeatPlan, getStudentSeatSlipPdf } from "../controllers/examSeatPlan.controller";
 import { markExamAttendance, getExamAttendance, getExamAttendanceSummary } from "../controllers/examAttendance.controller";
+import { generateAdmitCard, bulkGenerateAdmitCards, getAdmitCards, deleteAdmitCard, getAdmitCardPdf } from "../controllers/admitCard.controller";
 import { getGradeBands, createGradeBand, updateGradeBand, deleteGradeBand } from "../controllers/gradeSystem.controller";
 import { getReportCardPdf } from "../controllers/document.controller";
 import { createHomework, getHomeworks, getHomeworkById, updateHomework, deleteHomework, submitHomework, getSubmissions } from "../controllers/homework.controller";
@@ -21,6 +22,7 @@ import { createExamSchema, updateExamSchema, enterMarksSchema } from "../validat
 import { bulkSetExamScheduleSchema, updateExamScheduleEntrySchema } from "../validators/examSchedule.validator";
 import { generateSeatPlanSchema } from "../validators/examSeatPlan.validator";
 import { markExamAttendanceSchema } from "../validators/examAttendance.validator";
+import { generateAdmitCardSchema, bulkGenerateAdmitCardsSchema } from "../validators/admitCard.validator";
 import { createGradeBandSchema, updateGradeBandSchema } from "../validators/gradeSystem.validator";
 import { createHomeworkSchema, updateHomeworkSchema, submitHomeworkSchema } from "../validators/homework.validator";
 import { bulkPromoteSchema } from "../validators/promotion.validator";
@@ -81,6 +83,13 @@ router.get("/exams/schedule/:examScheduleId/seat-plan/student/:studentId/slip", 
 router.post("/exams/schedule/:examScheduleId/attendance", authenticate, authorize(...TEACHERS), validate(markExamAttendanceSchema), markExamAttendance);
 router.get("/exams/schedule/:examScheduleId/attendance", authenticate, authorize(...TEACHERS), getExamAttendance);
 router.get("/exams/:examId/attendance-summary", authenticate, authorize(...TEACHERS), getExamAttendanceSummary);
+
+// Admit Cards (single + bulk generation, eligibility rules, template-first PDF)
+router.post("/exams/:examId/admit-cards/generate", authenticate, authorize(...ADMIN), validate(generateAdmitCardSchema), generateAdmitCard);
+router.post("/exams/:examId/admit-cards/bulk-generate", authenticate, authorize(...ADMIN), validate(bulkGenerateAdmitCardsSchema), bulkGenerateAdmitCards);
+router.get("/exams/:examId/admit-cards", authenticate, authorize(...TEACHERS), getAdmitCards);
+router.delete("/exams/:examId/admit-cards/:studentId", authenticate, authorize(...ADMIN), deleteAdmitCard);
+router.get("/exams/:examId/admit-cards/:studentId/pdf", authenticate, getAdmitCardPdf);
 
 // Grade System (grading scale bands, e.g. CBSE A1/A2/B1...) - system-wide,
 // not branch-scoped (see gradeSystem.controller.ts's doc comment), so any
