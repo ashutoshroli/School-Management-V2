@@ -63,6 +63,29 @@ export const assignTransportFeeToStudentsSchema = z.object({
   }),
 });
 
+export const bulkCreateFeeStructureSchema = z.object({
+  body: z.object({
+    branchId: z.string().optional(),
+    academicYearId: z.string().min(1, "academicYearId is required"),
+    classIds: z.array(z.string().min(1)).min(1, "classIds must be a non-empty array"),
+    feeCategoryId: z.string().min(1, "feeCategoryId is required"),
+    amount: positiveAmount,
+    frequency: z.enum(["MONTHLY", "QUARTERLY", "HALF_YEARLY", "YEARLY", "ONE_TIME"]),
+    dueDay: z.number().int().min(1).max(28).optional(),
+    lateFeeType: z.enum(["NONE", "FIXED", "PERCENTAGE"]).optional(),
+    lateFeeValue: z.union([z.number(), z.string()]).transform((v) => Number(v)).optional(),
+    installments: z
+      .array(
+        z.object({
+          installmentNo: z.number().int().min(1),
+          amount: positiveAmount,
+          dueDate: z.coerce.date(),
+        })
+      )
+      .optional(),
+  }),
+});
+
 export const createRazorpayOrderSchema = z.object({
   body: z.object({
     // Optional - see collectPaymentSchema's comment above.

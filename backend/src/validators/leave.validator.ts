@@ -16,6 +16,14 @@ export const updateLeaveStatusSchema = z.object({
   }),
 });
 
+export const bulkUpdateLeaveStatusSchema = z.object({
+  body: z.object({
+    applicationIds: z.array(z.string().min(1)).min(1, "applicationIds must be a non-empty array"),
+    status: z.enum(["APPROVED", "REJECTED"]),
+    remarks: z.string().optional(),
+  }),
+});
+
 export const createLeaveTypeSchema = z.object({
   body: z.object({
     name: z.string().min(1, "name is required"),

@@ -4,13 +4,14 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     staff: { findUnique: jest.fn() },
-    leaveApplication: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn() },
+    leaveApplication: { findMany: jest.fn(), aggregate: jest.fn(), count: jest.fn(), updateMany: jest.fn() },
     leaveType: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+    staffAttendance: { upsert: jest.fn() },
   },
 }));
 
 import prisma from "../../config/database";
-import { getLeaveApplications, getLeaveBalance, getLeaveTypes, getLeaveTypeById, createLeaveType, updateLeaveType, deleteLeaveType } from "../leave.controller";
+import { getLeaveApplications, getLeaveBalance, getLeaveTypes, getLeaveTypeById, createLeaveType, updateLeaveType, deleteLeaveType, bulkUpdateLeaveStatus } from "../leave.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -115,6 +116,87 @@ describe("leave.controller - getLeaveApplications (IDOR fix)", () => {
     const whereArg = (prisma.leaveApplication.findMany as jest.Mock).mock.calls[0][0].where;
     expect(whereArg.toDate).toEqual({ gte: new Date("2024-06-01") });
     expect(whereArg.fromDate).toEqual({ lte: new Date("2024-06-30") });
+  });
+});
+
+// Backend UX Gap Phase 4: updateLeaveStatus previously only handled one
+// application at a time; bulkUpdateLeaveStatus is the multi-select
+// approve/reject counterpart.
+describe("leave.controller - bulkUpdateLeaveStatus", () => {
+  const PENDING_APP = (id: string, branchId = "branch-1") => ({
+    id, status: "PENDING", staffId: `staff-${id}`, fromDate: new Date("2025-06-01"), toDate: new Date("2025-06-02"),
+    staff: { branchId },
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("approves every eligible PENDING application and marks attendance ON_LEAVE for each day", async () => {
+    (prisma.leaveApplication.findMany as jest.Mock).mockResolvedValue([PENDING_APP("app-1"), PENDING_APP("app-2")]);
+    (prisma.leaveApplication.updateMany as jest.Mock).mockResolvedValue({ count: 2 });
+    const req = makeReq({
+      body: { applicationIds: ["app-1", "app-2"], status: "APPROVED" },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await bulkUpdateLeaveStatus(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.leaveApplication.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["app-1", "app-2"] } },
+      data: { status: "APPROVED", remarks: undefined, approvedBy: "admin-1" },
+    });
+    expect(prisma.staffAttendance.upsert).toHaveBeenCalled();
+  });
+
+  it("does NOT touch attendance when rejecting", async () => {
+    (prisma.leaveApplication.findMany as jest.Mock).mockResolvedValue([PENDING_APP("app-1")]);
+    (prisma.leaveApplication.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    const req = makeReq({
+      body: { applicationIds: ["app-1"], status: "REJECTED" },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await bulkUpdateLeaveStatus(req, res);
+
+    expect(prisma.staffAttendance.upsert).not.toHaveBeenCalled();
+  });
+
+  it("SECURITY: skips applications belonging to a staff member in a DIFFERENT branch", async () => {
+    (prisma.leaveApplication.findMany as jest.Mock).mockResolvedValue([PENDING_APP("app-1", "branch-1"), PENDING_APP("app-2", "branch-OTHER")]);
+    (prisma.leaveApplication.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    const req = makeReq({
+      body: { applicationIds: ["app-1", "app-2"], status: "APPROVED" },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await bulkUpdateLeaveStatus(req, res);
+
+    expect(prisma.leaveApplication.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["app-1"] } } })
+    );
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.updated).toBe(1);
+    expect(payload.skipped).toBe(1);
+  });
+
+  it("skips applications that are not currently PENDING", async () => {
+    (prisma.leaveApplication.findMany as jest.Mock).mockResolvedValue([{ ...PENDING_APP("app-1"), status: "APPROVED" }]);
+    const req = makeReq({
+      body: { applicationIds: ["app-1"], status: "REJECTED" },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await bulkUpdateLeaveStatus(req, res);
+
+    expect(prisma.leaveApplication.updateMany).not.toHaveBeenCalled();
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.updated).toBe(0);
   });
 });
 

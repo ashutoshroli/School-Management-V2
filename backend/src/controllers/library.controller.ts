@@ -93,6 +93,62 @@ export const issueBook = async (req: AuthRequest, res: Response): Promise<void> 
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 
+/**
+ * Issue one book to a whole hand-picked list of students at once
+ * (e.g. handing out the same textbook to an entire class) - the bulk
+ * counterpart to issueBook above. Each issue still needs its own row
+ * (different studentId) and the book's availableCopies must be
+ * decremented exactly once per issue, so this can't collapse into a
+ * single createMany the way e.g. bulkPromote's Student.updateMany
+ * does (those all write IDENTICAL data; these do not).
+ *
+ * Capped at whatever `availableCopies` actually allows: if fewer
+ * copies are available than requested student count, only that many
+ * students (in the order given) get a copy, and the rest are reported
+ * as skipped - the librarian gets an honest count instead of a
+ * confusing partial-failure error mid-way through.
+ */
+export const bulkIssueBook = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { bookId, studentIds, dueDate } = req.body;
+
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      sendError(res, "studentIds must be a non-empty array", 400);
+      return;
+    }
+
+    const book = await prisma.libraryBook.findUnique({ where: { id: bookId } });
+    if (!book) { sendError(res, "Book not found", 404); return; }
+    if (!canAccessBranch(req, book.branchId)) { sendError(res, "Book not found", 404); return; }
+
+    const copiesToIssue = Math.min(book.availableCopies, studentIds.length);
+    if (copiesToIssue === 0) {
+      sendSuccess(res, { issued: 0, skipped: studentIds.length, total: studentIds.length }, "No copies available to issue");
+      return;
+    }
+
+    const issuedStudentIds = studentIds.slice(0, copiesToIssue);
+    const due = new Date(dueDate);
+
+    await prisma.$transaction([
+      prisma.libraryIssue.createMany({
+        data: issuedStudentIds.map((studentId: string) => ({ bookId, studentId, dueDate: due, status: "ISSUED" as const })),
+      }),
+      prisma.libraryBook.update({ where: { id: bookId }, data: { availableCopies: { decrement: copiesToIssue } } }),
+    ]);
+
+    const skipped = studentIds.length - copiesToIssue;
+    sendSuccess(
+      res,
+      { issued: copiesToIssue, skipped, total: studentIds.length },
+      `Issued to ${copiesToIssue} student(s)` + (skipped > 0 ? ` (${skipped} skipped - not enough copies available)` : ""),
+      201
+    );
+  } catch (error) {
+    sendError(res, "Failed to bulk-issue book", 500, (error as Error).message);
+  }
+};
+
 export const returnBook = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;

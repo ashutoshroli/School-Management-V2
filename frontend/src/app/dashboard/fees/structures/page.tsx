@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { FileText, Plus, UserCheck, Edit, Trash2, Eye } from "lucide-react";
+import { FileText, Plus, UserCheck, Edit, Trash2, Eye, Users } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
@@ -127,6 +127,47 @@ export default function FeeStructuresPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Cannot delete this fee structure"); }
   };
 
+  // Bulk Create - "same category/amount across multiple classes for a
+  // session in one call", via the new bulkCreateFeeStructure endpoint
+  // (createFeeStructure only ever handled one class at a time before).
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkForm, setBulkForm] = useState({
+    classIds: [] as string[], feeCategoryId: "", academicYearId: "",
+    amount: "", frequency: "MONTHLY", dueDay: "10", lateFeeType: "NONE", lateFeeValue: "0",
+  });
+  const [bulkCreating, setBulkCreating] = useState(false);
+  const [bulkCreateResult, setBulkCreateResult] = useState<{ created: number; skipped: number } | null>(null);
+
+  const openBulkCreate = () => {
+    setBulkForm({ classIds: [], feeCategoryId: "", academicYearId: "", amount: "", frequency: "MONTHLY", dueDay: "10", lateFeeType: "NONE", lateFeeValue: "0" });
+    setBulkCreateResult(null);
+    setShowBulkModal(true);
+  };
+
+  const toggleBulkClass = (classId: string) => {
+    setBulkForm((f) => ({
+      ...f,
+      classIds: f.classIds.includes(classId) ? f.classIds.filter((id) => id !== classId) : [...f.classIds, classId],
+    }));
+  };
+
+  const handleBulkCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBulkCreating(true);
+    try {
+      const res = await api.post("/fees/structures/bulk", {
+        ...bulkForm, amount: parseFloat(bulkForm.amount), dueDay: parseInt(bulkForm.dueDay),
+        lateFeeValue: parseFloat(bulkForm.lateFeeValue),
+      });
+      setBulkCreateResult(res.data.data);
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to bulk-create fee structures");
+    } finally {
+      setBulkCreating(false);
+    }
+  };
+
   // View Details - drills into one structure's installments plus how
   // many students currently have it assigned, via the new
   // getFeeStructureById endpoint.
@@ -156,9 +197,14 @@ export default function FeeStructuresPage() {
           </h1>
           <p className="text-gray-500 mt-1">Class-wise fee configuration</p>
         </div>
-        <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2">
-          <Plus className="h-4 w-4" /> Create Structure
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={openBulkCreate} className="btn-secondary flex items-center gap-2">
+            <Users className="h-4 w-4" /> Bulk Create
+          </button>
+          <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2">
+            <Plus className="h-4 w-4" /> Create Structure
+          </button>
+        </div>
       </div>
 
       <div className="card mb-4">
@@ -384,6 +430,63 @@ export default function FeeStructuresPage() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal isOpen={showBulkModal} onClose={() => setShowBulkModal(false)} title="Bulk Create Fee Structure" size="lg">
+        <form onSubmit={handleBulkCreate} className="space-y-4">
+          {bulkCreateResult && (
+            <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-3 py-2">
+              Created for {bulkCreateResult.created} class(es){bulkCreateResult.skipped > 0 ? `, ${bulkCreateResult.skipped} already had this category+year` : ""}.
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Classes *</label>
+            <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto border rounded-lg p-2">
+              {classes.map((c) => (
+                <label key={c.id} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={bulkForm.classIds.includes(c.id)} onChange={() => toggleBulkClass(c.id)} />
+                  {c.name}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fee Category *</label>
+              <select className="input-field" value={bulkForm.feeCategoryId} onChange={(e) => setBulkForm({ ...bulkForm, feeCategoryId: e.target.value })} required>
+                <option value="">Select</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Academic Year *</label>
+              <select className="input-field" value={bulkForm.academicYearId} onChange={(e) => setBulkForm({ ...bulkForm, academicYearId: e.target.value })} required>
+                <option value="">Select</option>
+                {years.map((y) => <option key={y.id} value={y.id}>{y.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (Rs) *</label>
+              <input type="number" className="input-field" value={bulkForm.amount} onChange={(e) => setBulkForm({ ...bulkForm, amount: e.target.value })} required />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Frequency *</label>
+              <select className="input-field" value={bulkForm.frequency} onChange={(e) => setBulkForm({ ...bulkForm, frequency: e.target.value })}>
+                <option value="MONTHLY">Monthly</option>
+                <option value="QUARTERLY">Quarterly</option>
+                <option value="HALF_YEARLY">Half Yearly</option>
+                <option value="YEARLY">Yearly</option>
+                <option value="ONE_TIME">One Time</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowBulkModal(false)} className="btn-secondary">Close</button>
+            <button type="submit" disabled={bulkCreating || bulkForm.classIds.length === 0} className="btn-primary disabled:opacity-50">
+              {bulkCreating ? "Creating..." : `Create for ${bulkForm.classIds.length} Class(es)`}
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

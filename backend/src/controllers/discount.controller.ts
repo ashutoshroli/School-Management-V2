@@ -26,6 +26,56 @@ export const assignDiscount = async (req: AuthRequest, res: Response): Promise<v
 };
 
 /**
+ * Bulk-assign the same discount "template" (type/name/value/isPercent)
+ * to every ACTIVE student matching the given filters (classId and/or
+ * sectionId - e.g. "give this scholarship to all Class 10 students")
+ * - the discount counterpart to bulkAssignSalaryStructure/bulkPromote
+ * elsewhere in this codebase. At least one of classId/sectionId is
+ * required so this can never accidentally target "every student in
+ * the branch" from a single call.
+ *
+ * Unlike bulkAssignSalaryStructure (one structure per staff, so
+ * "already has one" is a meaningful skip condition),
+ * StudentDiscount has no unique constraint preventing a student from
+ * holding several discounts of the same type/name - so this always
+ * creates a new discount row per matched student rather than
+ * skipping/overwriting, via a single createMany.
+ */
+export const bulkAssignDiscount = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { classId, sectionId, type, name, value, isPercent } = req.body;
+
+    if (!classId && !sectionId) {
+      sendError(res, "At least one of classId or sectionId is required to target students", 400);
+      return;
+    }
+
+    const branchId = resolveBranchId(req);
+    if (!branchId) { sendError(res, "Branch ID required", 400); return; }
+
+    const studentWhere: any = { branchId, isActive: true };
+    if (classId) studentWhere.classId = classId;
+    if (sectionId) studentWhere.sectionId = sectionId;
+
+    const students = await prisma.student.findMany({ where: studentWhere, select: { id: true } });
+    if (students.length === 0) {
+      sendSuccess(res, { assigned: 0, total: 0 }, "No active students matched the given filters");
+      return;
+    }
+
+    const { count } = await prisma.studentDiscount.createMany({
+      data: students.map((s) => ({
+        studentId: s.id, type, name, value, isPercent: isPercent || false, isActive: true,
+      })),
+    });
+
+    sendSuccess(res, { assigned: count, total: students.length }, `Discount assigned to ${count} student(s)`, 201);
+  } catch (error) {
+    sendError(res, "Failed to bulk-assign discount", 500, (error as Error).message);
+  }
+};
+
+/**
  * Branch-wide discount list, for an accountant auditing every active
  * (or, with `includeInactive=true`, every) concession currently
  * granted - unlike getStudentDiscounts below (one student's own

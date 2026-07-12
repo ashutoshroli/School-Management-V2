@@ -507,6 +507,68 @@ export const assignSubjectToClass = async (req: AuthRequest, res: Response): Pro
   }
 };
 
+/**
+ * Assign one subject to multiple classes at once (e.g. "Science" for
+ * Classes 6 through 10 in one call) - the bulk counterpart to
+ * assignSubjectToClass above. Classes already having this subject are
+ * silently skipped (matching assignSubjectToClass's own "already
+ * assigned" no-op, just without needing per-class round trips to
+ * discover that).
+ */
+export const bulkAssignSubjectToClass = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { subjectId, classIds } = req.body;
+
+    if (!Array.isArray(classIds) || classIds.length === 0) {
+      sendError(res, "classIds must be a non-empty array", 400);
+      return;
+    }
+
+    const subject = await prisma.subject.findUnique({ where: { id: subjectId } });
+    if (!subject) { sendError(res, "Subject not found", 404); return; }
+    if (!canAccessBranch(req, subject.branchId)) { sendError(res, "Subject not found", 404); return; }
+
+    // SECURITY: every target class must belong to the SAME branch as
+    // the subject (and one the caller can access) - otherwise a Branch
+    // Admin could wire up a subject to a class in a different branch
+    // by just supplying that branch's real classId (IDOR), the same
+    // class of bug already fixed on assignSubjectTeacher/bulkPromote
+    // elsewhere in this codebase.
+    const classes = await prisma.class.findMany({ where: { id: { in: classIds } }, select: { id: true, branchId: true } });
+    const foundIds = new Set(classes.map((c) => c.id));
+    const notFound = classIds.filter((id: string) => !foundIds.has(id));
+    const wrongBranch = classes.filter((c) => c.branchId !== subject.branchId);
+    if (wrongBranch.length > 0) {
+      sendError(res, `${wrongBranch.length} of the target classes do not belong to this subject's branch`, 400);
+      return;
+    }
+
+    const validClassIds = classes.map((c) => c.id);
+    const existing = await prisma.classSubject.findMany({
+      where: { subjectId, classId: { in: validClassIds } },
+      select: { classId: true },
+    });
+    const existingSet = new Set(existing.map((e) => e.classId));
+    const newClassIds = validClassIds.filter((id) => !existingSet.has(id));
+
+    if (newClassIds.length > 0) {
+      await prisma.classSubject.createMany({
+        data: newClassIds.map((classId) => ({ classId, subjectId })),
+      });
+    }
+
+    const skipped = existingSet.size;
+    sendSuccess(
+      res,
+      { assigned: newClassIds.length, skipped, notFound: notFound.length, total: classIds.length },
+      `Subject assigned to ${newClassIds.length} class(es)` +
+        (skipped > 0 ? ` (${skipped} already had this subject)` : "")
+    );
+  } catch (error) {
+    sendError(res, "Failed to bulk-assign subject to classes", 500, (error as Error).message);
+  }
+};
+
 export const getClassSubjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { classId } = req.params;

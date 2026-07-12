@@ -3,13 +3,14 @@ import { UserRole } from "@prisma/client";
 jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
-    libraryBook: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
-    libraryIssue: { findMany: jest.fn() },
+    libraryBook: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), update: jest.fn() },
+    libraryIssue: { findMany: jest.fn(), createMany: jest.fn() },
+    $transaction: jest.fn(),
   },
 }));
 
 import prisma from "../../config/database";
-import { addBook, getBookById, getBooks, getIssuedBooks } from "../library.controller";
+import { addBook, getBookById, getBooks, getIssuedBooks, bulkIssueBook } from "../library.controller";
 import { AuthRequest } from "../../types";
 
 const makeMockRes = () => {
@@ -190,5 +191,72 @@ describe("library.controller - getIssuedBooks (classId/studentId/overdueOnly fil
     const whereArg = (prisma.libraryIssue.findMany as jest.Mock).mock.calls[0][0].where;
     expect(whereArg.status).toBe("ISSUED");
     expect(whereArg.dueDate).toBeUndefined();
+  });
+});
+
+// Backend UX Gap Phase 4: issueBook only ever handled one student at a
+// time; bulkIssueBook is the "issue to a whole class at once" counterpart.
+describe("library.controller - bulkIssueBook", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) => Promise.all(ops));
+  });
+
+  it("returns 404 when the book does not exist", async () => {
+    (prisma.libraryBook.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ body: { bookId: "book-1", studentIds: ["s1"], dueDate: "2025-07-01" } });
+    const res = makeMockRes();
+
+    await bulkIssueBook(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects a book belonging to a DIFFERENT branch", async () => {
+    (prisma.libraryBook.findUnique as jest.Mock).mockResolvedValue({ id: "book-1", branchId: "branch-OTHER", availableCopies: 5 });
+    const req = makeReq({ body: { bookId: "book-1", studentIds: ["s1"], dueDate: "2025-07-01" } });
+    const res = makeMockRes();
+
+    await bulkIssueBook(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("issues to every student when enough copies are available", async () => {
+    (prisma.libraryBook.findUnique as jest.Mock).mockResolvedValue({ id: "book-1", branchId: "branch-1", availableCopies: 5 });
+    const req = makeReq({ body: { bookId: "book-1", studentIds: ["s1", "s2", "s3"], dueDate: "2025-07-01" } });
+    const res = makeMockRes();
+
+    await bulkIssueBook(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.issued).toBe(3);
+    expect(payload.skipped).toBe(0);
+  });
+
+  it("DATA INTEGRITY: caps issuance at availableCopies and reports the rest as skipped", async () => {
+    (prisma.libraryBook.findUnique as jest.Mock).mockResolvedValue({ id: "book-1", branchId: "branch-1", availableCopies: 2 });
+    const req = makeReq({ body: { bookId: "book-1", studentIds: ["s1", "s2", "s3", "s4"], dueDate: "2025-07-01" } });
+    const res = makeMockRes();
+
+    await bulkIssueBook(req, res);
+
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.issued).toBe(2);
+    expect(payload.skipped).toBe(2);
+  });
+
+  it("issues to nobody and reports 0/skipped=all when no copies are available", async () => {
+    (prisma.libraryBook.findUnique as jest.Mock).mockResolvedValue({ id: "book-1", branchId: "branch-1", availableCopies: 0 });
+    const req = makeReq({ body: { bookId: "book-1", studentIds: ["s1", "s2"], dueDate: "2025-07-01" } });
+    const res = makeMockRes();
+
+    await bulkIssueBook(req, res);
+
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.issued).toBe(0);
+    expect(payload.skipped).toBe(2);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

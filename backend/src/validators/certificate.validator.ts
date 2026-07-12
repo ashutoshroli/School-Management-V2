@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+export const bulkGenerateCertificatesSchema = z.object({
+  body: z.object({
+    templateId: z.string().min(1, "templateId is required"),
+    classId: z.string().min(1, "classId is required"),
+    purpose: z.string().max(200).optional(),
+  }),
+});
+
 export const generateCertificateSchema = z.object({
   body: z.object({
     templateId: z.string().min(1, "templateId is required"),

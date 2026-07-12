@@ -72,6 +72,38 @@ export default function LeavesPage() {
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
   };
 
+  // Bulk approve/reject - multi-select checkboxes on the Pending
+  // Approvals tab, using the new bulkUpdateLeaveStatus endpoint
+  // instead of clicking Approve/Reject one application at a time.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkActing, setBulkActing] = useState(false);
+
+  useEffect(() => { setSelectedIds([]); }, [tab, applications.length]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => (prev.length === applications.length ? [] : applications.map((a) => a.id)));
+  };
+
+  const handleBulkAction = async (status: "APPROVED" | "REJECTED") => {
+    if (selectedIds.length === 0) return;
+    setBulkActing(true);
+    try {
+      const res = await api.patch("/hr/leave/status/bulk", { applicationIds: selectedIds, status });
+      const { updated, skipped } = res.data.data;
+      if (skipped > 0) alert(`${updated} application(s) ${status.toLowerCase()}, ${skipped} skipped (already decided or inaccessible).`);
+      setSelectedIds([]);
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to bulk-update leave status");
+    } finally {
+      setBulkActing(false);
+    }
+  };
+
   const openAddType = () => {
     setEditingType(null);
     setTypeForm({ name: "", code: "", maxDays: "12", carryForward: false });
@@ -238,9 +270,27 @@ export default function LeavesPage() {
               </div>
             </div>
           )}
+          {tab === "pending" && selectedIds.length > 0 && (
+            <div className="card mb-4 flex items-center justify-between bg-primary-50 border-primary-200">
+              <span className="text-sm font-medium text-primary-800">{selectedIds.length} selected</span>
+              <div className="flex gap-2">
+                <button onClick={() => handleBulkAction("APPROVED")} disabled={bulkActing} className="btn-primary text-sm py-1.5 disabled:opacity-50">
+                  {bulkActing ? "Working..." : "Approve Selected"}
+                </button>
+                <button onClick={() => handleBulkAction("REJECTED")} disabled={bulkActing} className="btn-secondary text-sm py-1.5 disabled:opacity-50">
+                  Reject Selected
+                </button>
+              </div>
+            </div>
+          )}
           <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="border-b bg-gray-50">
+              {tab === "pending" && (
+                <th className="px-4 py-3 text-center">
+                  <input type="checkbox" checked={applications.length > 0 && selectedIds.length === applications.length} onChange={toggleSelectAll} />
+                </th>
+              )}
               <th className="px-4 py-3 text-left">Staff</th>
               <th className="px-4 py-3 text-left">Type</th>
               <th className="px-4 py-3 text-left">From</th>
@@ -253,6 +303,11 @@ export default function LeavesPage() {
             <tbody>
               {applications.map(a => (
                 <tr key={a.id} className="border-b">
+                  {tab === "pending" && (
+                    <td className="px-4 py-3 text-center">
+                      <input type="checkbox" checked={selectedIds.includes(a.id)} onChange={() => toggleSelect(a.id)} />
+                    </td>
+                  )}
                   <td className="px-4 py-3 font-medium">{a.staff?.user?.name}</td>
                   <td className="px-4 py-3">{a.leaveType?.name}</td>
                   <td className="px-4 py-3">{formatDate(a.fromDate)}</td>
@@ -282,7 +337,7 @@ export default function LeavesPage() {
                   )}
                 </tr>
               ))}
-              {applications.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">No applications</td></tr>}
+              {applications.length === 0 && <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-500">No applications</td></tr>}
             </tbody>
           </table>
           </div>

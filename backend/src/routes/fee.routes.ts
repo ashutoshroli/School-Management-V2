@@ -1,18 +1,20 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { getFeeCategories, getFeeCategoryById, createFeeCategory, updateFeeCategory, toggleFeeCategory, deleteFeeCategory } from "../controllers/feeCategory.controller";
-import { createFeeStructure, getFeeStructures, getFeeStructureById, updateFeeStructure, deleteFeeStructure } from "../controllers/feeStructure.controller";
+import { createFeeStructure, bulkCreateFeeStructure, getFeeStructures, getFeeStructureById, updateFeeStructure, deleteFeeStructure } from "../controllers/feeStructure.controller";
 import { bulkAssignFees, assignFeesToStudents, assignTransportFee, assignTransportFeeToStudents, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund, sendFeeRemindersHandler } from "../controllers/feeCollection.controller";
 import { createRazorpayOrder, verifyRazorpayPayment, razorpayWebhook } from "../controllers/payment.controller";
 import { getPaymentReceiptPdf } from "../controllers/document.controller";
-import { assignDiscount, getAllDiscounts, getStudentDiscounts, getDiscountById, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
+import { assignDiscount, bulkAssignDiscount, getAllDiscounts, getStudentDiscounts, getDiscountById, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
 import { getCollectionDayBook, getDefaultersList, getClassWiseSummary, getFeeCollectionTrend, getPaymentModeBreakdown, exportDefaultersCsv } from "../controllers/feeReports.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import {
   collectPaymentSchema, createRefundSchema, bulkAssignFeesSchema, assignFeesToStudentsSchema,
   assignTransportFeeSchema, assignTransportFeeToStudentsSchema, createRazorpayOrderSchema, verifyRazorpayPaymentSchema,
+  bulkCreateFeeStructureSchema,
 } from "../validators/fee.validator";
+import { bulkAssignDiscountSchema } from "../validators/discount.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -38,6 +40,7 @@ router.delete("/categories/:id", authorize(...ADMIN), deleteFeeCategory);
 router.get("/structures", authorize(...FINANCE), getFeeStructures);
 router.get("/structures/:id", authorize(...FINANCE), getFeeStructureById);
 router.post("/structures", authorize(...ADMIN), branchAccess, createFeeStructure);
+router.post("/structures/bulk", authorize(...ADMIN), branchAccess, validate(bulkCreateFeeStructureSchema), bulkCreateFeeStructure);
 router.put("/structures/:id", authorize(...ADMIN), updateFeeStructure);
 router.delete("/structures/:id", authorize(...ADMIN), deleteFeeStructure);
 
@@ -83,6 +86,7 @@ router.get("/discounts", authorize(...FINANCE), getAllDiscounts);
 router.get("/discounts/detail/:id", authorize(...FINANCE), getDiscountById);
 router.get("/discounts/:studentId", authorize(...FINANCE), getStudentDiscounts);
 router.post("/discounts", authorize(...ADMIN), assignDiscount);
+router.post("/discounts/bulk", authorize(...ADMIN), validate(bulkAssignDiscountSchema), bulkAssignDiscount);
 router.patch("/discounts/:id/toggle", authorize(...ADMIN), toggleDiscount);
 router.delete("/discounts/:id", authorize(...ADMIN), deleteDiscount);
 

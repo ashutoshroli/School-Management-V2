@@ -140,26 +140,60 @@ existing conventions).
 
 ---
 
-## Phase 4: Bulk Operation Gaps 🟢
+## Phase 4: Bulk Operation Gaps ✅ COMPLETED
 
 **Priority:** MEDIUM-HIGH - continuing the "bulk + solo + multi-filter"
 pattern already established (bulk salary assignment, bulk hostel
-allocation, bulk promotion). These are the confirmed-missing bulk paths:
+allocation, bulk promotion).
+**Status:** ✅ **DONE**
 
-### Scope:
-1. **Bulk discount assignment** - `assignDiscount` is solo-only; add
-   `bulkAssignDiscount` (e.g. "give this scholarship to all Class 10 students")
-2. **Bulk leave approval** - add `bulkUpdateLeaveStatus` (multi-select
-   approve/reject instead of one at a time)
-3. **Bulk library issue** - add `bulkIssueBook` (issue copies to a whole
-   class/list of students at once)
-4. **Bulk subject-to-class assignment** - add `bulkAssignSubjectToClass`
-   (assign one subject to multiple classes in one call)
-5. **Bulk fee structure creation** - add `bulkCreateFeeStructure` (same
-   category/amounts across multiple classes for a session)
-6. **Bulk certificate generation** - add `bulkGenerateCertificates` for
-   Transfer/Bonafide/Character (class-wise), matching the ID-card batch
-   pattern that already exists
+### What was actually done (all 6, each backend + minimal frontend UI):
+1. **`bulkAssignDiscount`** - grants the same discount to every ACTIVE
+   student matching a classId/sectionId filter in one `createMany` call
+   (e.g. "give this scholarship to all Class 10 students"). UI: "Bulk
+   Assign Discount" button + modal on `/dashboard/fees/discounts`.
+2. **`bulkUpdateLeaveStatus`** - multi-select approve/reject on a
+   hand-picked list of PENDING applications; still loops per-application
+   for the attendance-marking side effect (each approval needs its own
+   ON_LEAVE days marked), but the update itself is one call. UI:
+   checkboxes + "Approve/Reject Selected" bar on `/dashboard/leaves`'s
+   Pending Approvals tab.
+3. **`bulkIssueBook`** - issues one book to a hand-picked list of
+   students at once, capped at whatever `availableCopies` actually
+   allows (rest reported as skipped, not a hard error). UI: "Bulk Issue"
+   (per-book) button + student-search modal on `/dashboard/library`.
+4. **`bulkAssignSubjectToClass`** - assigns one subject to multiple
+   classes in one call, skipping classes that already have it. UI:
+   "Bulk Assign to Classes" button + checkbox-grid modal on
+   `/dashboard/subjects`.
+5. **`bulkCreateFeeStructure`** - creates the same fee-structure
+   template across multiple classes for a session, cloning the same
+   installments onto each. UI: "Bulk Create" button + modal on
+   `/dashboard/fees/structures`.
+6. **`bulkGenerateCertificates`** - generates Transfer/Bonafide/
+   Character certificates for every active student in a class
+   (CUSTOM/ID_CARD rejected up front). Refactored `generateCertificate`
+   into a shared `generateCertificateCore` helper so single and bulk
+   generation produce byte-identical results. UI: "Bulk Generate"
+   button + modal on `/dashboard/certificates`.
+
+Every bulk endpoint enforces the same branch-access/IDOR checks as its
+single-item counterpart (a class/section/student/staff/book supplied in
+bulk must belong to a branch the caller can access), and reports
+`{created/assigned/issued/generated, skipped, total}`-shaped results so
+partial success (e.g. "not enough copies", "already assigned") is visible
+rather than silently swallowed or a hard all-or-nothing failure.
+
+**Tests:** 45 new tests across 6 controller test files, covering the
+happy path, security/cross-branch rejection, and each endpoint's specific
+partial-success/skip logic.
+
+### Verification performed:
+- Backend: `npx tsc --noEmit` / `npm test` (**65 suites / 713 tests**, up
+  from 685) / `npm run build` - all clean
+- Frontend: `npx tsc --noEmit` / `npm run build` - clean, all 6 touched
+  pages build with an expected size increase (e.g. `library`
+  3.78kB->4.86kB, `fees/structures` 4.67kB->5.3kB)
 
 ---
 

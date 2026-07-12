@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Percent, ToggleLeft, ToggleRight, Trash2, Filter, Eye } from "lucide-react";
+import { Percent, ToggleLeft, ToggleRight, Trash2, Filter, Eye, Users } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
@@ -82,6 +82,47 @@ export default function FeeDiscountsPage() {
 
   const activeCount = discounts.filter((d) => d.isActive).length;
 
+  // Bulk Assign - "give this scholarship to all Class 10 students" in
+  // one call, via the new bulkAssignDiscount endpoint. A single
+  // discount up to now had to be granted one student at a time from
+  // their profile page.
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkForm, setBulkForm] = useState({ classId: "", sectionId: "", type: "MERIT_SCHOLARSHIP", name: "", value: "", isPercent: true });
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkError, setBulkError] = useState("");
+  const [bulkResult, setBulkResult] = useState<{ assigned: number; total: number } | null>(null);
+  const bulkSections = classes.find((c) => c.id === bulkForm.classId)?.sections || [];
+
+  const openBulkModal = () => {
+    setBulkForm({ classId: "", sectionId: "", type: "MERIT_SCHOLARSHIP", name: "", value: "", isPercent: true });
+    setBulkError("");
+    setBulkResult(null);
+    setShowBulkModal(true);
+  };
+
+  const handleBulkAssign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBulkSaving(true);
+    setBulkError("");
+    setBulkResult(null);
+    try {
+      const res = await api.post("/fees/discounts/bulk", {
+        classId: bulkForm.classId || undefined,
+        sectionId: bulkForm.sectionId || undefined,
+        type: bulkForm.type,
+        name: bulkForm.name,
+        value: parseFloat(bulkForm.value),
+        isPercent: bulkForm.isPercent,
+      });
+      setBulkResult(res.data.data);
+      fetchDiscounts();
+    } catch (err: any) {
+      setBulkError(err.response?.data?.message || "Failed to bulk-assign discount");
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   // View Details - a one-discount detail modal (via the new
   // getDiscountById endpoint), useful when launched from either the
   // branch-wide list here or a future per-student list.
@@ -109,9 +150,15 @@ export default function FeeDiscountsPage() {
           <Percent className="h-6 w-6 text-primary-600" /> Fee Discounts
         </h1>
         <p className="text-gray-500 mt-1">
-          Branch-wide view of every discount/scholarship currently granted. To add a new discount, open the
-          student's profile.
+          Branch-wide view of every discount/scholarship currently granted. To add a discount for one student, open
+          their profile - to grant one to a whole class/section at once, use Bulk Assign below.
         </p>
+      </div>
+
+      <div className="mb-6">
+        <button onClick={openBulkModal} className="btn-primary flex items-center gap-2">
+          <Users className="h-4 w-4" /> Bulk Assign Discount
+        </button>
       </div>
 
       <div className="card mb-6 flex items-center gap-4 flex-wrap">
@@ -240,6 +287,62 @@ export default function FeeDiscountsPage() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal isOpen={showBulkModal} onClose={() => setShowBulkModal(false)} title="Bulk Assign Discount">
+        <form onSubmit={handleBulkAssign} className="space-y-4">
+          {bulkError && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{bulkError}</div>}
+          {bulkResult && (
+            <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-3 py-2">
+              Assigned to {bulkResult.assigned} of {bulkResult.total} matched student(s).
+            </div>
+          )}
+          <p className="text-xs text-gray-400">Select at least a class (and optionally a section) to target students.</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Class</label>
+              <select className="input-field" value={bulkForm.classId} onChange={(e) => setBulkForm({ ...bulkForm, classId: e.target.value, sectionId: "" })}>
+                <option value="">All Classes</option>
+                {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Section</label>
+              <select className="input-field" value={bulkForm.sectionId} onChange={(e) => setBulkForm({ ...bulkForm, sectionId: e.target.value })} disabled={!bulkForm.classId}>
+                <option value="">All Sections</option>
+                {bulkSections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Type *</label>
+            <select className="input-field" value={bulkForm.type} onChange={(e) => setBulkForm({ ...bulkForm, type: e.target.value })}>
+              {DISCOUNT_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Discount Name *</label>
+            <input className="input-field" placeholder="e.g. Annual Merit Scholarship" value={bulkForm.name} onChange={(e) => setBulkForm({ ...bulkForm, name: e.target.value })} required />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Value *</label>
+              <input type="number" min={0} step="0.01" className="input-field" value={bulkForm.value} onChange={(e) => setBulkForm({ ...bulkForm, value: e.target.value })} required />
+            </div>
+            <div className="flex items-end pb-2.5">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={bulkForm.isPercent} onChange={(e) => setBulkForm({ ...bulkForm, isPercent: e.target.checked })} />
+                Value is a percentage
+              </label>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            <button type="button" onClick={() => setShowBulkModal(false)} className="btn-secondary">Close</button>
+            <button type="submit" disabled={bulkSaving || (!bulkForm.classId && !bulkForm.sectionId)} className="btn-primary disabled:opacity-50">
+              {bulkSaving ? "Assigning..." : "Assign to Matched Students"}
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

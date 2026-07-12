@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { BookOpen, Plus, Edit, Trash2, Eye } from "lucide-react";
+import { BookOpen, Plus, Edit, Trash2, Eye, Users } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import ErrorBanner from "@/components/ui/ErrorBanner";
@@ -81,6 +81,43 @@ export default function SubjectsPage() {
     }
   };
 
+  // Bulk Assign to Classes - "Science for Classes 6-10 in one call",
+  // via the new bulkAssignSubjectToClass endpoint (assignSubjectToClass
+  // only ever handled one class at a time before).
+  const [bulkSubject, setBulkSubject] = useState<Subject | null>(null);
+  const [allClasses, setAllClasses] = useState<any[]>([]);
+  const [bulkSelectedClassIds, setBulkSelectedClassIds] = useState<string[]>([]);
+  const [bulkAssigning, setBulkAssigning] = useState(false);
+  const [bulkAssignResult, setBulkAssignResult] = useState<{ assigned: number; skipped: number } | null>(null);
+
+  useEffect(() => {
+    api.get("/classes").then((res) => setAllClasses(res.data.data || [])).catch(() => {});
+  }, []);
+
+  const openBulkAssign = (subject: Subject) => {
+    setBulkSubject(subject);
+    setBulkSelectedClassIds([]);
+    setBulkAssignResult(null);
+  };
+
+  const toggleBulkClass = (classId: string) => {
+    setBulkSelectedClassIds((prev) => (prev.includes(classId) ? prev.filter((id) => id !== classId) : [...prev, classId]));
+  };
+
+  const handleBulkAssign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkSubject || bulkSelectedClassIds.length === 0) return;
+    setBulkAssigning(true);
+    try {
+      const res = await api.post("/classes/subjects/assign/bulk", { subjectId: bulkSubject.id, classIds: bulkSelectedClassIds });
+      setBulkAssignResult(res.data.data);
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to bulk-assign subject to classes");
+    } finally {
+      setBulkAssigning(false);
+    }
+  };
+
   // View Details - drills into the classes/teachers using this
   // subject via the new getSubjectById endpoint.
   const [detail, setDetail] = useState<any>(null);
@@ -143,6 +180,9 @@ export default function SubjectsPage() {
                     <div className="flex items-center gap-3">
                       <button onClick={() => openDetail(s.id)} title="View Details" className="text-gray-500 hover:text-gray-700">
                         <Eye className="h-3.5 w-3.5" />
+                      </button>
+                      <button onClick={() => openBulkAssign(s)} title="Bulk Assign to Classes" className="text-primary-600 hover:text-primary-700">
+                        <Users className="h-3.5 w-3.5" />
                       </button>
                       <button onClick={() => openEditModal(s)} title="Edit" className="text-gray-500 hover:text-gray-700">
                         <Edit className="h-3.5 w-3.5" />
@@ -222,6 +262,31 @@ export default function SubjectsPage() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal isOpen={!!bulkSubject} onClose={() => setBulkSubject(null)} title={bulkSubject ? `Bulk Assign - ${bulkSubject.name}` : "Bulk Assign"}>
+        <form onSubmit={handleBulkAssign} className="space-y-4">
+          <p className="text-xs text-gray-400">Select every class that should have this subject.</p>
+          {bulkAssignResult && (
+            <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-3 py-2">
+              Assigned to {bulkAssignResult.assigned} class(es){bulkAssignResult.skipped > 0 ? `, ${bulkAssignResult.skipped} already had it` : ""}.
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+            {allClasses.map((c) => (
+              <label key={c.id} className="flex items-center gap-2 text-sm px-2 py-1.5 border rounded-lg hover:bg-gray-50">
+                <input type="checkbox" checked={bulkSelectedClassIds.includes(c.id)} onChange={() => toggleBulkClass(c.id)} />
+                {c.name}
+              </label>
+            ))}
+          </div>
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            <button type="button" onClick={() => setBulkSubject(null)} className="btn-secondary">Close</button>
+            <button type="submit" disabled={bulkAssigning || bulkSelectedClassIds.length === 0} className="btn-primary disabled:opacity-50">
+              {bulkAssigning ? "Assigning..." : `Assign to ${bulkSelectedClassIds.length} Class(es)`}
+            </button>
+          </div>
+        </form>
       </Modal>
     </div>
   );
