@@ -6,6 +6,25 @@ import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 import { canAccessStaffRecord } from "../utils/staffAccess";
 import { authenticateDevice, extractDeviceApiKey } from "../utils/deviceAuth";
 import { toAttendanceDateOnly } from "../utils/attendanceDate";
+import { buildCsv, sendCsv, CsvColumn } from "../services/csvExport.service";
+
+/**
+ * A "day start" cutoff used to auto-flag LATE instead of PRESENT when
+ * a staff member's inTime is after this - without this, an admin had
+ * to remember to manually pick LATE every time instead of the system
+ * just knowing. Kept as a simple constant (not yet a
+ * per-branch-configurable setting) since there's no existing
+ * "branch settings" key-value store to hang it off of - PeriodConfig's
+ * first period start time would be a reasonable proxy for a future
+ * enhancement, but that couples two independent concepts (period
+ * schedule vs. staff late-cutoff) for a same-phase implementation.
+ */
+const LATE_CUTOFF_HOUR = 9;
+const LATE_CUTOFF_MINUTE = 15;
+
+const isLateArrival = (inTime: Date): boolean => {
+  return inTime.getHours() > LATE_CUTOFF_HOUR || (inTime.getHours() === LATE_CUTOFF_HOUR && inTime.getMinutes() > LATE_CUTOFF_MINUTE);
+};
 
 /**
  * Mark staff attendance (manual - admin/HR marks) for a single staff
@@ -38,10 +57,18 @@ export const markAttendance = async (req: AuthRequest, res: Response): Promise<v
       select: { id: true },
     }));
 
+    // Auto-upgrade a manually-picked PRESENT to LATE based on inTime,
+    // rather than requiring the admin to remember to pick LATE
+    // themselves - an explicit non-PRESENT status (ABSENT/HALF_DAY/
+    // ON_LEAVE) is always respected as-is, this only ever narrows
+    // PRESENT specifically.
+    const parsedInTime = inTime ? new Date(inTime) : null;
+    const finalStatus = status === "PRESENT" && parsedInTime && isLateArrival(parsedInTime) ? "LATE" : status;
+
     const attendance = await prisma.staffAttendance.upsert({
       where: { staffId_date: { staffId, date: attendanceDate } },
-      update: { status, inTime: inTime ? new Date(inTime) : undefined, outTime: outTime ? new Date(outTime) : undefined, remarks },
-      create: { staffId, date: attendanceDate, status, inTime: inTime ? new Date(inTime) : null, outTime: outTime ? new Date(outTime) : null, source: "MANUAL", remarks },
+      update: { status: finalStatus, inTime: parsedInTime || undefined, outTime: outTime ? new Date(outTime) : undefined, remarks },
+      create: { staffId, date: attendanceDate, status: finalStatus, inTime: parsedInTime, outTime: outTime ? new Date(outTime) : null, source: "MANUAL", remarks },
     });
 
     sendSuccess(res, attendance, existed ? "Attendance updated" : "Attendance marked", existed ? 200 : 201);
@@ -182,10 +209,12 @@ export const cardTapAttendance = async (req: AuthRequest, res: Response): Promis
         sendSuccess(res, { action: "OUT", time: tapTime }, "OUT time recorded");
       }
     } else {
-      // First tap = IN
+      // First tap = IN - auto-flagged LATE instead of PRESENT if past
+      // the day-start cutoff, same rule markAttendance applies for a
+      // manually-entered inTime.
       await prisma.staffAttendance.create({
         data: {
-          staffId: staff.id, date: today, status: "PRESENT",
+          staffId: staff.id, date: today, status: isLateArrival(tapTime) ? "LATE" : "PRESENT",
           inTime: tapTime, source: "CARD_TAP", deviceId,
         },
       });
@@ -193,6 +222,51 @@ export const cardTapAttendance = async (req: AuthRequest, res: Response): Promis
     }
   } catch (error) {
     sendError(res, "Card tap failed", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Self check-in/out: a logged-in staff member punches their OWN
+ * attendance, restricted to their own `staffId` (resolved from the
+ * session, never trusting a client-supplied one) and always TODAY's
+ * date - previously the only way to mark attendance at all was an
+ * admin manually entering it for someone else via `markAttendance`.
+ *
+ * A first call with no existing record for today creates an IN punch;
+ * a second call on the same day (no outTime yet) records the OUT
+ * punch instead - so the same "Check In / Check Out" button just
+ * works without the staff member needing to know which state they're in.
+ */
+export const selfMarkAttendance = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { sendError(res, "Not authenticated", 401); return; }
+
+    const staff = await prisma.staff.findUnique({ where: { userId }, select: { id: true } });
+    if (!staff) { sendError(res, "No staff record linked to this account", 404); return; }
+
+    const now = new Date();
+    const today = toAttendanceDateOnly(now);
+
+    const existing = await prisma.staffAttendance.findUnique({ where: { staffId_date: { staffId: staff.id, date: today } } });
+
+    if (!existing) {
+      const created = await prisma.staffAttendance.create({
+        data: { staffId: staff.id, date: today, status: isLateArrival(now) ? "LATE" : "PRESENT", inTime: now, source: "MANUAL" },
+      });
+      sendSuccess(res, { action: "IN", attendance: created }, "Checked in", 201);
+      return;
+    }
+
+    if (!existing.outTime) {
+      const updated = await prisma.staffAttendance.update({ where: { id: existing.id }, data: { outTime: now } });
+      sendSuccess(res, { action: "OUT", attendance: updated }, "Checked out");
+      return;
+    }
+
+    sendError(res, "You have already checked in and out for today", 400);
+  } catch (error) {
+    sendError(res, "Failed to self-mark attendance", 500, (error as Error).message);
   }
 };
 
@@ -269,4 +343,109 @@ export const getDateAttendance = async (req: AuthRequest, res: Response): Promis
   } catch (error) {
     sendError(res, "Failed to fetch", 500, (error as Error).message);
   }
+};
+
+interface StaffAttendanceReportRow {
+  employeeId: string;
+  name: string;
+  designation: string;
+  department: string;
+  present: number;
+  absent: number;
+  halfDay: number;
+  late: number;
+  onLeave: number;
+  workingDays: number;
+  attendancePercent: number;
+}
+
+/**
+ * Branch-wide monthly attendance report - one row per active staff
+ * member with the month's present/absent/late/leave totals and an
+ * attendance percentage, excluding declared Holidays from the
+ * "working days" denominator so a school-wide closure doesn't
+ * artificially tank everyone's percentage. Shared by the JSON endpoint
+ * and the CSV export below so both always compute identically.
+ */
+const buildStaffAttendanceReport = async (branchId: string, month: number, year: number): Promise<StaffAttendanceReportRow[]> => {
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 0, 23, 59, 59);
+
+  const [staffList, holidays] = await Promise.all([
+    prisma.staff.findMany({
+      where: { branchId, isActive: true },
+      include: { user: { select: { name: true } }, attendances: { where: { date: { gte: startDate, lte: endDate } } } },
+      orderBy: { user: { name: "asc" } },
+    }),
+    prisma.holiday.count({ where: { branchId, date: { gte: startDate, lte: endDate } } }),
+  ]);
+
+  // Working days = calendar days in the month minus declared holidays.
+  // Deliberately does NOT also subtract weekends - this codebase has
+  // no per-branch "which days are off" concept (see DayOfWeek's
+  // MONDAY-SATURDAY-only enum on TimetableSlot, implying Sunday is
+  // already assumed off school-wide, but that's a timetable concept,
+  // not wired into attendance reporting) - a future enhancement could
+  // add a branch-level "working days" setting for a fully accurate
+  // denominator.
+  const daysInMonth = endDate.getDate();
+  const workingDays = Math.max(daysInMonth - holidays, 1);
+
+  return staffList.map((staff) => {
+    const present = staff.attendances.filter((a) => a.status === "PRESENT").length;
+    const absent = staff.attendances.filter((a) => a.status === "ABSENT").length;
+    const halfDay = staff.attendances.filter((a) => a.status === "HALF_DAY").length;
+    const late = staff.attendances.filter((a) => a.status === "LATE").length;
+    const onLeave = staff.attendances.filter((a) => a.status === "ON_LEAVE").length;
+    const effectivePresentDays = present + late + halfDay * 0.5;
+
+    return {
+      employeeId: staff.employeeId,
+      name: staff.user.name,
+      designation: staff.designation,
+      department: staff.department,
+      present, absent, halfDay, late, onLeave,
+      workingDays,
+      attendancePercent: workingDays > 0 ? Math.round((effectivePresentDays / workingDays) * 1000) / 10 : 0,
+    };
+  });
+};
+
+const STAFF_ATTENDANCE_REPORT_CSV_COLUMNS: CsvColumn<StaffAttendanceReportRow>[] = [
+  { header: "Employee ID", accessor: (r) => r.employeeId },
+  { header: "Name", accessor: (r) => r.name },
+  { header: "Designation", accessor: (r) => r.designation },
+  { header: "Department", accessor: (r) => r.department },
+  { header: "Present", accessor: (r) => r.present },
+  { header: "Absent", accessor: (r) => r.absent },
+  { header: "Half Day", accessor: (r) => r.halfDay },
+  { header: "Late", accessor: (r) => r.late },
+  { header: "On Leave", accessor: (r) => r.onLeave },
+  { header: "Working Days", accessor: (r) => r.workingDays },
+  { header: "Attendance %", accessor: (r) => r.attendancePercent },
+];
+
+export const getStaffAttendanceReport = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    if (!branchId) { sendError(res, "Branch ID required", 400); return; }
+    const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+
+    const rows = await buildStaffAttendanceReport(branchId, month, year);
+    sendSuccess(res, { rows, month, year }, "Staff attendance report fetched");
+  } catch (error) { sendError(res, "Failed to fetch report", 500, (error as Error).message); }
+};
+
+export const exportStaffAttendanceReportCsv = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    if (!branchId) { sendError(res, "Branch ID required", 400); return; }
+    const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+
+    const rows = await buildStaffAttendanceReport(branchId, month, year);
+    const csv = buildCsv(rows, STAFF_ATTENDANCE_REPORT_CSV_COLUMNS);
+    sendCsv(res, `staff-attendance-${year}-${String(month).padStart(2, "0")}.csv`, csv);
+  } catch (error) { sendError(res, "Failed to export report", 500, (error as Error).message); }
 };
