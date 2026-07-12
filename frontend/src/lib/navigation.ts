@@ -88,7 +88,7 @@ export const navigation: NavItem[] = [
   {
     label: "Staff Attendance",
     href: "/dashboard/staff/attendance",
-    icon: "UserCheck2",
+    icon: "UserCheck",
     roles: STAFF_ROLES,
   },
   // The parent-portal ("My ...") pages below are deliberately separate
@@ -146,14 +146,12 @@ export const navigation: NavItem[] = [
     icon: "FileText",
     roles: [...ADMIN_ROLES, "TEACHER"],
   },
-  // Exam Attendance (per-sitting, room-wise) already existed as a
-  // panel inside each exam's Timetable page but had no direct sidebar
-  // entry point of its own - links into the same Exams list, where
-  // "Timetable" -> the per-subject "Exam Attendance" button is reached.
+  // Exam Attendance (per-sitting, room-wise) - dedicated page with
+  // multi-filter (exam → subject) attendance marking grid.
   {
     label: "Exam Attendance",
-    href: "/dashboard/exams",
-    icon: "ClipboardCheck",
+    href: "/dashboard/exam-attendance",
+    icon: "ClipboardList",
     roles: [...ADMIN_ROLES, "TEACHER"],
   },
   {
