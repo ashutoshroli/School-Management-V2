@@ -18,6 +18,16 @@ export default function TimetablePage() {
   const [subjects, setSubjects] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [error, setError] = useState("");
+  // Branch's configured period schedule (Dashboard > Settings > Period
+  // Schedule) - used to auto-fill a new slot's Start/End Time (and
+  // pre-check "This is a break period" for a period marked as a break
+  // there) instead of making the admin retype the same times for every
+  // single period/day combination. Purely a convenience default - the
+  // fields stay fully editable, and saving a slot never reads this
+  // list again (whatever the admin actually types/leaves is what's
+  // saved), so a class that genuinely needs a different time for one
+  // specific period is completely unaffected.
+  const [periodConfigs, setPeriodConfigs] = useState<any[]>([]);
 
   // Consolidated "Full Class Timetable" view - shows every section of
   // the selected class stacked in one read-only, printable layout
@@ -34,7 +44,14 @@ export default function TimetablePage() {
     // TEACHING staff only - a timetable slot assigns a teacher, not
     // any other staff role.
     api.get("/staff", { params: { type: "TEACHING", limit: 200 } }).then(r => setTeachers(r.data.data || []));
+    api.get("/academics/period-config").then(r => setPeriodConfigs(r.data.data || [])).catch(() => setPeriodConfigs([]));
   }, []);
+
+  // The branch's configured Start/End Time for a given period number
+  // (1-based, matching PERIODS above) - undefined if that period
+  // hasn't been configured in Settings yet, in which case the slot
+  // editor simply falls back to its old empty-field behavior.
+  const configForPeriod = (period: number) => periodConfigs.find((p: any) => p.periodNo === period);
 
   useEffect(() => {
     const cls = classes.find(c => c.id === classId);
@@ -76,14 +93,21 @@ export default function TimetablePage() {
 
   const openSlotEditor = (day: string, period: number) => {
     const existing = getSlot(day, period);
+    const configured = configForPeriod(period);
     setSlotDay(day);
     setSlotPeriod(period);
     setSlotForm({
       subjectId: existing?.subjectId || "",
       teacherId: existing?.teacherId || "",
-      startTime: existing?.startTime || "",
-      endTime: existing?.endTime || "",
-      isBreak: existing?.isBreak || false,
+      // Auto-fill from the branch's Period Schedule (Settings) when
+      // this slot has never been saved before - an already-saved slot
+      // keeps whatever time it was actually saved with (never
+      // silently overwritten by a later Settings change). Still fully
+      // editable either way; this only decides the field's starting
+      // value.
+      startTime: existing?.startTime || configured?.startTime || "",
+      endTime: existing?.endTime || configured?.endTime || "",
+      isBreak: existing ? existing.isBreak : (configured?.isBreak || false),
     });
     setShowSlotModal(true);
   };
@@ -275,6 +299,11 @@ export default function TimetablePage() {
               <input type="time" className="input-field" value={slotForm.endTime} onChange={(e) => setSlotForm({ ...slotForm, endTime: e.target.value })} />
             </div>
           </div>
+          {!getSlot(slotDay, slotPeriod) && configForPeriod(slotPeriod) && (
+            <p className="text-xs text-gray-400 -mt-2">
+              Pre-filled from Settings &gt; Period Schedule (Period {slotPeriod}) - change if this slot needs a different time.
+            </p>
+          )}
 
           <div className="flex justify-between items-center gap-3 pt-4 border-t">
             {getSlot(slotDay, slotPeriod) ? (
