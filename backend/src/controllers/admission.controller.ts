@@ -111,11 +111,28 @@ export const getAdmissionInquiries = async (req: AuthRequest, res: Response): Pr
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 25;
     const skip = (page - 1) * limit;
-    const branchId = resolveBranchId(req);
     const status = req.query.status as string | undefined;
     const classAppliedFor = req.query.classAppliedFor as string | undefined;
     const fromDate = req.query.fromDate as string | undefined;
     const toDate = req.query.toDate as string | undefined;
+
+    // BUG FIX: the public admission form (createAdmissionInquiry) lets
+    // an anonymous visitor pick ANY active branch from a dropdown, but
+    // resolveBranchId(req) for a SUPER_ADMIN always resolves to their
+    // own current session branch (set at login / last switch-branch
+    // call) - never "all branches", despite that being exactly what a
+    // Super Admin needs here. An inquiry submitted for a branch other
+    // than the admin's current session branch was silently filtered
+    // out of this list - not missing from the database, just invisible
+    // to that specific admin session. Fixed by treating admission
+    // inquiries as an org-wide lead feed for SUPER_ADMIN: only filter
+    // by branch when they explicitly pass `?branchId=` (a real branch
+    // filter, not the session default); a BRANCH_ADMIN is unaffected
+    // and still always locked to their own branch.
+    const branchId =
+      req.user?.role === "SUPER_ADMIN"
+        ? (req.query.branchId as string | undefined)
+        : resolveBranchId(req);
 
     const where: any = {};
     if (branchId) where.branchId = branchId;

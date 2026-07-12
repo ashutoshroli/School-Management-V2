@@ -9,6 +9,7 @@ import DataTable from "@/components/ui/DataTable";
 import ErrorBanner from "@/components/ui/ErrorBanner";
 import Modal from "@/components/ui/Modal";
 import { openPdfInNewTab } from "@/lib/pdf";
+import { useAuth } from "@/hooks/useAuth";
 
 const STATUS_COLORS: Record<string, string> = {
   NEW: "bg-blue-100 text-blue-700",
@@ -19,6 +20,8 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function AdmissionInquiriesPage() {
   const router = useRouter();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const [inquiries, setInquiries] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -30,6 +33,15 @@ export default function AdmissionInquiriesPage() {
   const [classAppliedForFilter, setClassAppliedForFilter] = useState("");
   const [fromDateFilter, setFromDateFilter] = useState("");
   const [toDateFilter, setToDateFilter] = useState("");
+  // Branch filter (Super Admin only) - the backend now shows inquiries
+  // across EVERY branch for a Super Admin by default (see
+  // getAdmissionInquiries's doc comment - a publicly-submitted inquiry
+  // for a branch other than the admin's current session branch used to
+  // be silently invisible), with this dropdown available to narrow
+  // back down to one branch if desired. Branch Admins never see this -
+  // they're always locked to their own branch server-side regardless.
+  const [branchFilter, setBranchFilter] = useState("");
+  const [branches, setBranches] = useState<any[]>([]);
 
   const fetchInquiries = async () => {
     setLoading(true);
@@ -40,6 +52,7 @@ export default function AdmissionInquiriesPage() {
       if (classAppliedForFilter) params.classAppliedFor = classAppliedForFilter;
       if (fromDateFilter) params.fromDate = fromDateFilter;
       if (toDateFilter) params.toDate = toDateFilter;
+      if (isSuperAdmin && branchFilter) params.branchId = branchFilter;
       const res = await api.get("/admission/inquiries", { params });
       setInquiries(res.data.data || []);
       setTotalPages(res.data.pagination?.totalPages || 1);
@@ -53,7 +66,14 @@ export default function AdmissionInquiriesPage() {
   useEffect(() => {
     fetchInquiries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, statusFilter, classAppliedForFilter, fromDateFilter, toDateFilter]);
+  }, [page, statusFilter, classAppliedForFilter, fromDateFilter, toDateFilter, branchFilter]);
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      api.get("/branches").then((res) => setBranches(res.data.data || [])).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin]);
 
   const updateStatus = async (id: string, status: string) => {
     try {
@@ -135,6 +155,18 @@ export default function AdmissionInquiriesPage() {
         </div>
       ),
     },
+    // Branch column - only meaningful (and only shown) for a Super
+    // Admin, since inquiries across every branch can now appear in the
+    // same list (see the branch-visibility fix above); a Branch Admin
+    // only ever sees their own single branch's inquiries, so a
+    // per-row branch label would be redundant noise for them.
+    ...(isSuperAdmin
+      ? [{
+          key: "branch",
+          label: "Branch",
+          render: (i: any) => <span className="text-xs text-gray-500">{i.branch?.name || "-"}</span>,
+        }]
+      : []),
     {
       key: "createdAt",
       label: "Submitted",
@@ -208,6 +240,12 @@ export default function AdmissionInquiriesPage() {
           <p className="text-gray-500 mt-1">Submissions from the public admission form</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {isSuperAdmin && (
+            <select className="input-field w-auto" value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setPage(1); }} title="Filter by branch">
+              <option value="">All branches</option>
+              {branches.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          )}
           <select className="input-field w-auto" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
             <option value="">All statuses</option>
             <option value="NEW">New</option>

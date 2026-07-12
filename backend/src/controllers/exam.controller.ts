@@ -129,6 +129,20 @@ export const getExamById = async (req: AuthRequest, res: Response): Promise<void
 
 /**
  * Get exams for a class/year
+ *
+ * SECURITY BUG FIX: this previously had NO branch scoping at all - any
+ * authenticated user (including a Branch Admin/Teacher from a
+ * completely different branch) could list every exam across every
+ * branch in the system just by calling this with no filters. Exam has
+ * no branchId of its own (see schema.prisma), so scoping goes through
+ * its Class relation, same convention as every other Exam endpoint in
+ * this controller (getExamById, deleteExam via markCount, etc) relies
+ * on. For a SUPER_ADMIN with no explicit classId filter, this now
+ * scopes to their own current session branch's classes by default
+ * (matching what every other list endpoint in this codebase does for
+ * a Super Admin) - pass an explicit `classId` (always branch-specific
+ * already, since classes belong to one branch) to target a class in a
+ * different branch.
  */
 export const getExams = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -136,12 +150,28 @@ export const getExams = async (req: AuthRequest, res: Response): Promise<void> =
     const academicYearId = req.query.academicYearId as string;
 
     const where: any = {};
-    if (classId) where.classId = classId;
+    if (classId) {
+      // A classId is always specific to one branch already - no
+      // additional branch filter needed (and a Super Admin targeting a
+      // different branch's class via an explicit classId is fine).
+      where.classId = classId;
+    } else if (req.user?.role !== "SUPER_ADMIN") {
+      // Branch Admin/Teacher: always locked to their own branch's exams.
+      where.class = { branchId: req.user?.branchId };
+    } else if (req.user?.branchId) {
+      // Super Admin with no explicit classId: default to their current
+      // session branch (matches every other unscoped list endpoint's
+      // Super Admin behavior in this codebase).
+      where.class = { branchId: req.user.branchId };
+    }
+    // Super Admin with no classId AND no session branchId (e.g. zero
+    // branches exist yet) falls through with an empty `where` - an
+    // empty exam list either way, harmless.
     if (academicYearId) where.academicYearId = academicYearId;
 
     const exams = await prisma.exam.findMany({
       where, orderBy: { createdAt: "desc" },
-      include: { class: { select: { name: true } }, academicYear: { select: { name: true } } },
+      include: { class: { select: { id: true, name: true, branchId: true } }, academicYear: { select: { name: true } } },
     });
     sendSuccess(res, exams, "Exams fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }

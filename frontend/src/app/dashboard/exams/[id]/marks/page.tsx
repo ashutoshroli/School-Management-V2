@@ -35,8 +35,11 @@ export default function EnterMarksPage() {
       try {
         setLoading(true);
         setError(null);
-        const examsRes = await api.get("/academics/exams");
-        const found = (examsRes.data.data || []).find((e: any) => e.id === examId);
+        // BUG FIX: was fetching the entire exam list and finding this
+        // exam client-side (fragile + slow) - getExamById is
+        // branch-scoped and fetches exactly this one exam directly.
+        const examRes = await api.get(`/academics/exams/${examId}`);
+        const found = examRes.data.data;
         if (!found) {
           setError("Exam not found");
           return;
