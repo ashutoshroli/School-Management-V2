@@ -123,9 +123,33 @@ export const navigation: NavItem[] = [
     roles: [...ADMIN_ROLES, "ACCOUNTANT"],
   },
   {
+    label: "Fee Reminders",
+    href: "/dashboard/fees/reminders",
+    icon: "Send",
+    roles: [...ADMIN_ROLES, "ACCOUNTANT"],
+  },
+  {
+    label: "Fee Refunds",
+    href: "/dashboard/fees/refunds",
+    icon: "RotateCcw",
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: "Waive Late Fee",
+    href: "/dashboard/fees/waive-late-fee",
+    icon: "MinusCircle",
+    roles: ADMIN_ROLES,
+  },
+  {
     label: "My Fees",
     href: "/dashboard/my-fees",
     icon: "IndianRupee",
+    roles: PARENT_PORTAL_ROLES,
+  },
+  {
+    label: "My Children",
+    href: "/dashboard/my-children",
+    icon: "Users",
     roles: PARENT_PORTAL_ROLES,
   },
   {
@@ -158,6 +182,24 @@ export const navigation: NavItem[] = [
     href: "/dashboard/exams",
     icon: "FileText",
     roles: [...ADMIN_ROLES, "TEACHER"],
+  },
+  {
+    label: "Question Papers",
+    href: "/dashboard/exams/question-papers",
+    icon: "FileUp",
+    roles: [...ADMIN_ROLES, "TEACHER"],
+  },
+  {
+    label: "Exam Seat Plan",
+    href: "/dashboard/exams/seat-plan",
+    icon: "LayoutGrid",
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: "Admit Cards",
+    href: "/dashboard/exams/admit-cards",
+    icon: "CreditCard",
+    roles: ADMIN_ROLES,
   },
   // Exam Attendance (per-sitting, room-wise) - dedicated page with
   // multi-filter (exam → subject) attendance marking grid.
@@ -240,6 +282,12 @@ export const navigation: NavItem[] = [
     roles: ALL_ROLES,
   },
   {
+    label: "Notifications",
+    href: "/dashboard/notifications",
+    icon: "BellRing",
+    roles: ALL_ROLES,
+  },
+  {
     label: "Messages",
     href: "/dashboard/messages",
     icon: "MessageSquare",
@@ -248,6 +296,12 @@ export const navigation: NavItem[] = [
   {
     label: "Certificates",
     href: "/dashboard/certificates",
+    icon: "Award",
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: "Bulk Certificates",
+    href: "/dashboard/certificates/bulk",
     icon: "Award",
     roles: ADMIN_ROLES,
   },
@@ -264,6 +318,12 @@ export const navigation: NavItem[] = [
     roles: ADMIN_ROLES,
   },
   {
+    label: "Multi-Branch",
+    href: "/dashboard/reports/multi-branch",
+    icon: "Building2",
+    roles: ["SUPER_ADMIN"],
+  },
+  {
     label: "Audit Log",
     href: "/dashboard/audit-log",
     icon: "History",
@@ -274,6 +334,30 @@ export const navigation: NavItem[] = [
     href: "/dashboard/settings",
     icon: "Settings",
     roles: ADMIN_ROLES,
+  },
+  {
+    label: "Period Config",
+    href: "/dashboard/period-config",
+    icon: "Clock",
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: "Grade System",
+    href: "/dashboard/grade-system",
+    icon: "Award",
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: "Holidays",
+    href: "/dashboard/holidays",
+    icon: "CalendarDays",
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: "Demo Data",
+    href: "/dashboard/demo-data",
+    icon: "Database",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN"],
   },
 ];
 
