@@ -40,7 +40,7 @@ export const useBranch = create<BranchState>((set) => ({
 
   switchBranch: async (branchId: string) => {
     const res = await api.post("/auth/switch-branch", { branchId });
-    const { token, branchId: newBranchId, branchName } = res.data.data;
+    const { accessToken, refreshToken, branchId: newBranchId, branchName } = res.data.data;
 
     // Re-issue the auth store's user/token with the new branchId baked
     // into the fresh JWT - every subsequent API call (via the
@@ -48,7 +48,11 @@ export const useBranch = create<BranchState>((set) => ({
     // new branch context automatically.
     const { user, setAuth } = useAuth.getState();
     if (user) {
-      setAuth({ ...user, branchId: newBranchId, branchName }, token);
+      setAuth({ ...user, branchId: newBranchId, branchName }, accessToken);
+    }
+    // Store refresh token for future use
+    if (refreshToken) {
+      localStorage.setItem("refreshToken", refreshToken);
     }
   },
 }));

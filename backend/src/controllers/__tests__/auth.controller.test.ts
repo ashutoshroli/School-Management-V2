@@ -2,6 +2,7 @@ import { UserRole } from "@prisma/client";
 
 jest.mock("../../utils/jwt", () => ({
   generateToken: jest.fn().mockReturnValue("new-jwt-token"),
+  generateTokenPair: jest.fn().mockReturnValue({ accessToken: "new-jwt-token", refreshToken: "refresh-token" }),
   verifyToken: jest.fn(),
 }));
 
@@ -13,7 +14,7 @@ jest.mock("../../config/database", () => ({
 }));
 
 import prisma from "../../config/database";
-import { generateToken } from "../../utils/jwt";
+import { generateToken, generateTokenPair } from "../../utils/jwt";
 import { switchBranch } from "../auth.controller";
 import { AuthRequest } from "../../types";
 
@@ -44,13 +45,13 @@ describe("auth.controller - switchBranch", () => {
 
     await switchBranch(req, res);
 
-    expect(generateToken).toHaveBeenCalledWith(
+    expect(generateTokenPair).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "super-1", branchId: "branch-2" })
     );
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
         success: true,
-        data: expect.objectContaining({ token: "new-jwt-token", branchId: "branch-2", branchName: "North Campus" }),
+        data: expect.objectContaining({ accessToken: "new-jwt-token", refreshToken: "refresh-token", branchId: "branch-2", branchName: "North Campus" }),
       })
     );
   });

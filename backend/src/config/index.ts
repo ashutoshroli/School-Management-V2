@@ -19,6 +19,12 @@ export const config = {
   jwt: {
     secret: process.env.JWT_SECRET || "change-this-secret",
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+    // Access token - short-lived (default 15 minutes)
+    accessTokenExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
+    // Refresh token - long-lived (default 7 days)
+    refreshTokenExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
+    // Optional separate secret for refresh tokens (recommended for production)
+    refreshSecret: process.env.JWT_REFRESH_SECRET,
   },
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID || "",

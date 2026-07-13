@@ -131,12 +131,13 @@ model User {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  organization Organization? @relation(fields: [organizationId], references: [id])
-  staff        Staff?
-  student      Student?
-  parent       Parent?
-  permissions  UserPermission[]
-  deviceTokens DeviceToken[]
+  organization   Organization?   @relation(fields: [organizationId], references: [id])
+  staff          Staff?
+  student        Student?
+  parent         Parent?
+  permissions    UserPermission[]
+  deviceTokens   DeviceToken[]
+  loginSessions  LoginSession[]  // Session tracking for token refresh
 }
 
 
@@ -1903,4 +1904,25 @@ model PasswordResetToken {
 
   @@index([userId])
   @@index([token])
+}
+
+// ============================================
+// SECTION 26: SESSION MANAGEMENT (Token Refresh)
+// ============================================
+
+model LoginSession {
+  id          String    @id @default(cuid())
+  userId      String
+  token       String    @unique
+  refreshToken String?  // Optional: store hashed refresh token
+  deviceInfo  String?   // User agent string
+  ipAddress   String?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
 }

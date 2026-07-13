@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { UserRole } from "@prisma/client";
 import prisma from "../config/database";
 import { config } from "../config";
-import { generateToken } from "../utils/jwt";
+import { generateTokenPair, verifyRefreshToken, generateAccessToken } from "../utils/jwt";
 import { sendSuccess, sendError } from "../utils/response";
 import { AuthRequest, JwtPayload } from "../types";
 
@@ -77,7 +77,19 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       branchId,
     };
 
-    const token = generateToken(payload);
+    // Generate both access and refresh tokens
+    const { accessToken, refreshToken } = generateTokenPair(payload);
+
+    // Store refresh token in database for session tracking
+    await prisma.loginSession.create({
+      data: {
+        userId: user.id,
+        token: refreshToken,
+        deviceInfo: req.headers["user-agent"]?.substring(0, 255) || null,
+        ipAddress: req.ip || req.socket.remoteAddress || null,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      },
+    });
 
     // Fetch the branch name for the frontend display
     let branchName: string | undefined;
@@ -87,7 +99,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     sendSuccess(res, {
-      token,
+      accessToken,
+      refreshToken,
+      expiresIn: config.jwt.accessTokenExpiresIn || "15m",
       user: {
         id: user.id,
         name: user.name,
@@ -151,10 +165,22 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
       branchId,
     };
 
-    const token = generateToken(payload);
+    // Generate both access and refresh tokens
+    const { accessToken, refreshToken } = generateTokenPair(payload);
 
-    // Redirect to frontend with token
-    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+    // Store refresh token in database for session tracking
+    await prisma.loginSession.create({
+      data: {
+        userId: user.id,
+        token: refreshToken,
+        deviceInfo: req.headers["user-agent"]?.substring(0, 255) || null,
+        ipAddress: req.ip || req.socket.remoteAddress || null,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    // Redirect to frontend with tokens
+    res.redirect(`${config.frontendUrl}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}`);
   } catch (error) {
     sendError(res, "Google auth failed", 500, (error as Error).message);
   }
@@ -252,9 +278,10 @@ export const switchBranch = async (req: AuthRequest, res: Response): Promise<voi
       branchId: branch.id,
     };
 
-    const token = generateToken(payload);
+    // Generate new token pair with updated branch
+    const { accessToken, refreshToken } = generateTokenPair(payload);
 
-    sendSuccess(res, { token, branchId: branch.id, branchName: branch.name }, "Active branch switched");
+    sendSuccess(res, { accessToken, refreshToken, branchId: branch.id, branchName: branch.name }, "Active branch switched");
   } catch (error) {
     sendError(res, "Failed to switch branch", 500, (error as Error).message);
   }
@@ -322,5 +349,157 @@ export const resetPasswordHandler = async (req: Request, res: Response): Promise
     sendSuccess(res, null, result.message);
   } catch (error) {
     sendError(res, "Failed to reset password", 500);
+  }
+};
+
+/**
+ * POST /api/auth/refresh
+ * Refresh access token using refresh token
+ */
+export const refreshToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { refreshToken: token } = req.body;
+
+    if (!token) {
+      sendError(res, "Refresh token is required", 400);
+      return;
+    }
+
+    // Verify refresh token
+    let payload: JwtPayload;
+    try {
+      payload = verifyRefreshToken(token);
+    } catch (error) {
+      sendError(res, "Invalid or expired refresh token", 401);
+      return;
+    }
+
+    // Check if refresh token exists in database and is not expired
+    const session = await prisma.loginSession.findFirst({
+      where: {
+        token: token,
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (!session) {
+      sendError(res, "Session expired or invalid", 401);
+      return;
+    }
+
+    // Get user to ensure they're still active
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      include: { staff: { select: { branchId: true } } },
+    });
+
+    if (!user || !user.isActive) {
+      sendError(res, "User account is deactivated", 403);
+      return;
+    }
+
+    // Generate new access token
+    const newAccessToken = generateAccessToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      organizationId: user.organizationId || undefined,
+      branchId: user.staff?.branchId,
+    });
+
+    sendSuccess(res, {
+      accessToken: newAccessToken,
+      expiresIn: config.jwt.accessTokenExpiresIn || "15m",
+    }, "Token refreshed");
+  } catch (error) {
+    sendError(res, "Failed to refresh token", 500, (error as Error).message);
+  }
+};
+
+/**
+ * POST /api/auth/logout
+ * Invalidate refresh token (session)
+ */
+export const logout = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (refreshToken) {
+      // Invalidate specific session
+      await prisma.loginSession.deleteMany({
+        where: { token: refreshToken },
+      });
+    } else if (req.user) {
+      // Invalidate all sessions for this user
+      await prisma.loginSession.deleteMany({
+        where: { userId: req.user.userId },
+      });
+    }
+
+    sendSuccess(res, null, "Logged out successfully");
+  } catch (error) {
+    sendError(res, "Failed to logout", 500, (error as Error).message);
+  }
+};
+
+/**
+ * GET /api/auth/sessions
+ * Get all active sessions for current user
+ */
+export const getSessions = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      sendError(res, "Not authenticated", 401);
+      return;
+    }
+
+    const sessions = await prisma.loginSession.findMany({
+      where: {
+        userId: req.user.userId,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        deviceInfo: true,
+        ipAddress: true,
+        createdAt: true,
+        expiresAt: true,
+      },
+    });
+
+    sendSuccess(res, sessions, "Sessions fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch sessions", 500, (error as Error).message);
+  }
+};
+
+/**
+ * DELETE /api/auth/sessions/:id
+ * Revoke a specific session
+ */
+export const revokeSession = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      sendError(res, "Not authenticated", 401);
+      return;
+    }
+
+    const { id } = req.params;
+
+    const session = await prisma.loginSession.findFirst({
+      where: { id, userId: req.user.userId },
+    });
+
+    if (!session) {
+      sendError(res, "Session not found", 404);
+      return;
+    }
+
+    await prisma.loginSession.delete({ where: { id } });
+
+    sendSuccess(res, null, "Session revoked");
+  } catch (error) {
+    sendError(res, "Failed to revoke session", 500, (error as Error).message);
   }
 };

@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import passport from "passport";
-import { login, googleCallback, getProfile, changePassword, switchBranch, forgotPassword, resetPasswordHandler } from "../controllers/auth.controller";
+import { login, googleCallback, getProfile, changePassword, switchBranch, forgotPassword, resetPasswordHandler, refreshToken, logout, getSessions, revokeSession } from "../controllers/auth.controller";
 import { uploadOwnAvatar } from "../controllers/upload.controller";
 import { authenticate } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -168,5 +168,29 @@ router.put("/change-password", authenticate, validate(changePasswordSchema), cha
  *         description: No file uploaded / invalid file type
  */
 router.post("/avatar", authenticate, handleUploadErrors(uploadAvatar), uploadOwnAvatar);
+
+/**
+ * POST /auth/refresh
+ * Refresh access token using refresh token (public, no auth required)
+ */
+router.post("/refresh", refreshToken);
+
+/**
+ * POST /auth/logout
+ * Logout and invalidate session
+ */
+router.post("/logout", authenticate, logout);
+
+/**
+ * GET /auth/sessions
+ * Get all active sessions for current user
+ */
+router.get("/sessions", authenticate, getSessions);
+
+/**
+ * DELETE /auth/sessions/:id
+ * Revoke a specific session
+ */
+router.delete("/sessions/:id", authenticate, revokeSession);
 
 export default router;
