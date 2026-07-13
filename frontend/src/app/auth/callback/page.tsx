@@ -11,19 +11,24 @@ function AuthCallbackInner() {
   const { setAuth } = useAuth();
 
   useEffect(() => {
-    const token = searchParams.get("token");
+    const accessToken = searchParams.get("accessToken");
+    const refreshToken = searchParams.get("refreshToken");
 
-    if (token) {
-      // Store token and fetch user profile
-      localStorage.setItem("token", token);
+    if (accessToken) {
+      // Store tokens
+      localStorage.setItem("token", accessToken);
+      if (refreshToken) {
+        localStorage.setItem("refreshToken", refreshToken);
+      }
 
+      // Fetch user profile and set auth
       api
         .get("/auth/profile", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${accessToken}` },
         })
         .then((res) => {
           const user = res.data.data;
-          setAuth(user, token);
+          setAuth(user, accessToken);
           router.push("/dashboard");
         })
         .catch(() => {

@@ -278,9 +278,10 @@ export const switchBranch = async (req: AuthRequest, res: Response): Promise<voi
       branchId: branch.id,
     };
 
-    const token = generateToken(payload);
+    // Generate new token pair with updated branch
+    const { accessToken, refreshToken } = generateTokenPair(payload);
 
-    sendSuccess(res, { token, branchId: branch.id, branchName: branch.name }, "Active branch switched");
+    sendSuccess(res, { accessToken, refreshToken, branchId: branch.id, branchName: branch.name }, "Active branch switched");
   } catch (error) {
     sendError(res, "Failed to switch branch", 500, (error as Error).message);
   }

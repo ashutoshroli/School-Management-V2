@@ -12,12 +12,15 @@ export const useAuth = create<AuthState>((set) => ({
 
   login: async (email: string, password: string) => {
     const response = await api.post("/auth/login", { email, password });
-    const { token, user } = response.data.data;
+    const { accessToken, refreshToken, user } = response.data.data;
 
-    localStorage.setItem("token", token);
+    localStorage.setItem("token", accessToken);
+    if (refreshToken) {
+      localStorage.setItem("refreshToken", refreshToken);
+    }
     localStorage.setItem("user", JSON.stringify(user));
 
-    set({ user, token, isAuthenticated: true, isLoading: false });
+    set({ user, token: accessToken, isAuthenticated: true, isLoading: false });
   },
 
   loginWithGoogle: () => {
@@ -25,8 +28,18 @@ export const useAuth = create<AuthState>((set) => ({
     window.location.href = `${apiUrl}/auth/google`;
   },
 
-  logout: () => {
+  logout: async () => {
+    const refreshToken = localStorage.getItem("refreshToken");
+    
+    // Try to invalidate session on server
+    try {
+      await api.post("/auth/logout", { refreshToken });
+    } catch (e) {
+      // Ignore errors - client-side logout should work regardless
+    }
+    
     localStorage.removeItem("token");
+    localStorage.removeItem("refreshToken");
     localStorage.removeItem("user");
     set({ user: null, token: null, isAuthenticated: false, isLoading: false });
     window.location.href = "/auth/login";
