@@ -4,7 +4,7 @@ import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAt
 import { getPeriodConfigs, upsertPeriodConfigs } from "../controllers/periodConfig.controller";
 import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } from "../controllers/timetable.controller";
 import { createExam, getExams, getExamById, updateExam, deleteExam, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
-import { bulkSetExamSchedule, getExamSchedule, updateExamScheduleEntry, deleteExamScheduleEntry } from "../controllers/examSchedule.controller";
+import { bulkSetExamSchedule, getExamSchedule, getExamScheduleList, updateExamScheduleEntry, deleteExamScheduleEntry } from "../controllers/examSchedule.controller";
 import { uploadExamQuestionPaper, getExamQuestionPapers, deleteExamQuestionPaper } from "../controllers/examQuestionPaper.controller";
 import { generateSeatPlan, getSeatPlan, clearSeatPlan, getStudentSeatSlipPdf } from "../controllers/examSeatPlan.controller";
 import { markExamAttendance, getExamAttendance, getExamAttendanceSummary } from "../controllers/examAttendance.controller";
@@ -51,7 +51,16 @@ router.post("/timetable/slot", authenticate, authorize(...ADMIN), validate(upser
 router.get("/timetable/teacher/:teacherId", authenticate, getTeacherTimetable);
 router.delete("/timetable/slot/:id", authenticate, authorize(...ADMIN), deleteSlot);
 
-// Exams
+// Exam Timetable ("date sheet") - per-subject date/time/room/maxMarks.
+// IMPORTANT: These MUST be defined BEFORE the /exams/:id routes to avoid route conflicts.
+// In Express, more specific routes should come before parameterized routes.
+router.put("/exams/schedule", authenticate, authorize(...ADMIN), validate(bulkSetExamScheduleSchema), bulkSetExamSchedule);
+router.get("/exams/schedule", authenticate, getExamScheduleList); // Get all schedules for exams user has access to
+router.get("/exams/:examId/schedule", authenticate, getExamSchedule);
+router.put("/exams/schedule/:id", authenticate, authorize(...ADMIN), validate(updateExamScheduleEntrySchema), updateExamScheduleEntry);
+router.delete("/exams/schedule/:id", authenticate, authorize(...ADMIN), deleteExamScheduleEntry);
+
+// Exams - CRUD operations (defined AFTER exam schedule routes to avoid route conflicts)
 router.post("/exams", authenticate, authorize(...ADMIN), validate(createExamSchema), createExam);
 router.get("/exams", authenticate, getExams);
 router.get("/exams/:id", authenticate, getExamById);
@@ -61,12 +70,6 @@ router.post("/exams/marks", authenticate, authorize(...TEACHERS), validate(enter
 router.get("/exams/:examId/results", authenticate, getExamResults);
 router.get("/exams/:examId/report-card/:studentId", authenticate, getReportCardPdf);
 router.patch("/exams/:id/publish", authenticate, authorize(...ADMIN), togglePublish);
-
-// Exam Timetable ("date sheet") - per-subject date/time/room/maxMarks.
-router.put("/exams/schedule", authenticate, authorize(...ADMIN), validate(bulkSetExamScheduleSchema), bulkSetExamSchedule);
-router.get("/exams/:examId/schedule", authenticate, getExamSchedule);
-router.put("/exams/schedule/:id", authenticate, authorize(...ADMIN), validate(updateExamScheduleEntrySchema), updateExamScheduleEntry);
-router.delete("/exams/schedule/:id", authenticate, authorize(...ADMIN), deleteExamScheduleEntry);
 
 // Exam Question Papers (PDF/DOCX, teacher-scoped to their own subject/class)
 router.post("/exams/question-papers", authenticate, authorize(...TEACHERS), handleUploadErrors(uploadExamPaper), uploadExamQuestionPaper);

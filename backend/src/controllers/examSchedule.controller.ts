@@ -55,11 +55,26 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    const classSubjects = await prisma.classSubject.count({ where: { classId: exam.classId, subjectId: { in: subjectIds } } });
-    if (classSubjects !== subjectIds.length) {
-      sendError(res, "One or more subjects are not assigned to this exam's class", 400);
-      return;
+    // Check if ClassSubject table has any records for this class - if not, skip validation
+    const totalClassSubjects = await prisma.classSubject.count({ where: { classId: exam.classId } });
+    
+    if (totalClassSubjects > 0) {
+      // Only validate if ClassSubject records exist for this class
+      const classSubjects = await prisma.classSubject.count({ where: { classId: exam.classId, subjectId: { in: subjectIds } } });
+      if (classSubjects !== subjectIds.length) {
+        // Find which subjects are not assigned
+        const assignedSubjects = await prisma.classSubject.findMany({ 
+          where: { classId: exam.classId }, 
+          select: { subjectId: true } 
+        });
+        const assignedIds = new Set(assignedSubjects.map(s => s.subjectId));
+        const unassigned = subjectIds.filter(id => !assignedIds.has(id));
+        
+        sendError(res, `Subject(s) not assigned to this class: ${unassigned.join(", ")}. Please assign subjects to the class first in Class Management.`, 400);
+        return;
+      }
     }
+    // If no ClassSubject records exist for this class, allow any subject to be scheduled
 
     // Overlap check: group by date, then compare every pair within
     // that date's entries.
@@ -128,6 +143,38 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
     });
     sendSuccess(res, result, "Exam schedule saved");
   } catch (error) { sendError(res, "Failed to save exam schedule", 500, (error as Error).message); }
+};
+
+/**
+ * Get all exam schedules for exams the user has access to (branch-scoped).
+ * This is used by the schedule list view and must be accessible without an examId.
+ */
+export const getExamScheduleList = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    // Get all exams the user has access to, then get their schedules
+    const where: any = {};
+    
+    // Branch scoping - same logic as getExams
+    if (req.user?.role !== "SUPER_ADMIN") {
+      where.exam = { class: { branchId: req.user?.branchId } };
+    } else if (req.user?.branchId) {
+      where.exam = { class: { branchId: req.user.branchId } };
+    }
+    // Super Admin with no session branchId gets all schedules
+
+    const schedules = await prisma.examSchedule.findMany({
+      where,
+      include: {
+        exam: { 
+          select: { id: true, name: true, class: { select: { id: true, name: true, branchId: true } } } 
+        },
+        subject: { select: { id: true, name: true, code: true } },
+        room: { select: { id: true, roomNo: true, name: true } }
+      },
+      orderBy: [{ exam: { name: "asc" } }, { examDate: "asc" }, { startTime: "asc" }],
+    });
+    sendSuccess(res, schedules, "Exam schedules fetched");
+  } catch (error) { sendError(res, "Failed to fetch exam schedules", 500, (error as Error).message); }
 };
 
 /**
