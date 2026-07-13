@@ -131,12 +131,13 @@ model User {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  organization Organization? @relation(fields: [organizationId], references: [id])
-  staff        Staff?
-  student      Student?
-  parent       Parent?
-  permissions  UserPermission[]
-  deviceTokens DeviceToken[]
+  organization   Organization?   @relation(fields: [organizationId], references: [id])
+  staff          Staff?
+  student        Student?
+  parent         Parent?
+  permissions    UserPermission[]
+  deviceTokens   DeviceToken[]
+  loginSessions  LoginSession[]  // Session tracking for token refresh
 }
 
 
