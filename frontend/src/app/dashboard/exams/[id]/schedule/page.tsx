@@ -103,6 +103,15 @@ export default function ExamSchedulePage() {
   const load = async () => {
     setLoading(true);
     setError(null);
+    
+    // FIX: If examId is "new" or empty, this is a create mode - don't try to fetch exam
+    if (examId === "new" || !examId) {
+      setLoading(false);
+      // In create mode, show a friendly message - user needs to select/create an exam first
+      // We don't set an error here because this is expected behavior, not an actual error
+      return;
+    }
+    
     // BUG FIX: Next.js App Router reuses this same page component
     // instance when navigating between two different exams' schedule
     // pages (only the `[id]` param changes, no remount) - without
@@ -134,7 +143,10 @@ export default function ExamSchedulePage() {
       // exactly this one exam directly.
       const examRes = await api.get(`/academics/exams/${examId}`);
       const found = examRes.data.data;
-      if (!found) { setError("Exam not found"); return; }
+      if (!found) { 
+        setError("Exam not found. Please go to the Exams page and select a valid exam.");
+        return; 
+      }
       setExam(found);
 
       // FIX: subjectsRes and scheduleRes previously had NO .catch()
@@ -497,7 +509,9 @@ export default function ExamSchedulePage() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <CalendarClock className="h-6 w-6 text-primary-600" /> Exam Timetable
           </h1>
-          <p className="text-gray-500 mt-1">{exam ? `${exam.name} - ${exam.class?.name}` : "Loading exam..."}</p>
+          <p className="text-gray-500 mt-1">
+            {loading ? "Loading..." : exam ? `${exam.name} - ${exam.class?.name}` : examId === "new" || !examId ? "Select an exam to create timetable" : "No exam selected"}
+          </p>
         </div>
       </div>
 
@@ -506,6 +520,17 @@ export default function ExamSchedulePage() {
       {loading ? (
         <div className="flex justify-center py-12">
           <div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" />
+        </div>
+      ) : !exam && (examId === "new" || !examId) ? (
+        <div className="card">
+          <div className="text-center py-8">
+            <CalendarClock className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-700 mb-2">No Exam Selected</h3>
+            <p className="text-gray-500 mb-4">Please select an exam from the Exams page to create or view its timetable.</p>
+            <a href="/dashboard/exams" className="btn-primary inline-flex items-center gap-2">
+              Go to Exams Page
+            </a>
+          </div>
         </div>
       ) : exam && !error ? (
         <>
