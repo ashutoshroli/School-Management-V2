@@ -18,7 +18,7 @@ export const generateRefreshToken = (payload: JwtPayload): string => {
   return jwt.sign(
     { ...payload, type: "refresh" },
     config.jwt.refreshSecret || config.jwt.secret,
-    { expiresIn: config.jwt.refreshTokenExpiresIn || "7d" }
+    { expiresIn: config.jwt.refreshTokenExpiresIn || "7d" } as jwt.SignOptions
   );
 };
 
