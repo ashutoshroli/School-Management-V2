@@ -165,10 +165,22 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
       branchId,
     };
 
-    const token = generateToken(payload);
+    // Generate both access and refresh tokens
+    const { accessToken, refreshToken } = generateTokenPair(payload);
 
-    // Redirect to frontend with token
-    res.redirect(`${config.frontendUrl}/auth/callback?token=${token}`);
+    // Store refresh token in database for session tracking
+    await prisma.loginSession.create({
+      data: {
+        userId: user.id,
+        token: refreshToken,
+        deviceInfo: req.headers["user-agent"]?.substring(0, 255) || null,
+        ipAddress: req.ip || req.socket.remoteAddress || null,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    // Redirect to frontend with tokens
+    res.redirect(`${config.frontendUrl}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}`);
   } catch (error) {
     sendError(res, "Google auth failed", 500, (error as Error).message);
   }
