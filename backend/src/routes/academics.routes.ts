@@ -60,30 +60,7 @@ router.get("/exams/:examId/schedule", authenticate, getExamSchedule);
 router.put("/exams/schedule/:id", authenticate, authorize(...ADMIN), validate(updateExamScheduleEntrySchema), updateExamScheduleEntry);
 router.delete("/exams/schedule/:id", authenticate, authorize(...ADMIN), deleteExamScheduleEntry);
 
-// Exam Question Papers (PDF/DOCX, teacher-scoped to their own subject/class).
-// BUG FIX: this block MUST be registered BEFORE the "/exams/:id" routes
-// below - "GET /exams/question-papers" and "GET /exams/:id" are the same
-// path shape ("/exams/<segment>"), and Express matches routes in
-// registration order. With this block previously registered AFTER
-// "/exams/:id", every "GET /academics/exams/question-papers" request
-// (used by both the standalone Question Papers page and the per-exam
-// Timetable page to list uploaded papers) was silently intercepted by
-// getExamById with req.params.id === "question-papers" - which always
-// 404'd ("Exam not found") since no exam has that id, and was never
-// even authorized via the intended authorize(...TEACHERS) check.
-// getExamById has no next() fallthrough, so getExamQuestionPapers was
-// completely unreachable dead code. The frontend's list-fetchers both
-// swallow that error silently (`catch { setPapers([]) }` /
-// `catch { return [s.id, []] }`), so the list permanently showed "No
-// question papers uploaded yet." even though POST (upload) itself
-// worked fine and rows were really being written to the database -
-// same convention already applied to "/exams/schedule" vs "/exams/:id"
-// above.
-router.post("/exams/question-papers", authenticate, authorize(...TEACHERS), handleUploadErrors(uploadExamPaper), uploadExamQuestionPaper);
-router.get("/exams/question-papers", authenticate, authorize(...TEACHERS), getExamQuestionPapers);
-router.delete("/exams/question-papers/:id", authenticate, authorize(...TEACHERS), deleteExamQuestionPaper);
-
-// Exams - CRUD operations (defined AFTER exam schedule + question-paper routes to avoid route conflicts)
+// Exams - CRUD operations (defined AFTER exam schedule routes to avoid route conflicts)
 router.post("/exams", authenticate, authorize(...ADMIN), validate(createExamSchema), createExam);
 router.get("/exams", authenticate, getExams);
 router.get("/exams/:id", authenticate, getExamById);
@@ -93,6 +70,11 @@ router.post("/exams/marks", authenticate, authorize(...TEACHERS), validate(enter
 router.get("/exams/:examId/results", authenticate, getExamResults);
 router.get("/exams/:examId/report-card/:studentId", authenticate, getReportCardPdf);
 router.patch("/exams/:id/publish", authenticate, authorize(...ADMIN), togglePublish);
+
+// Exam Question Papers (PDF/DOCX, teacher-scoped to their own subject/class)
+router.post("/exams/question-papers", authenticate, authorize(...TEACHERS), handleUploadErrors(uploadExamPaper), uploadExamQuestionPaper);
+router.get("/exams/question-papers", authenticate, authorize(...TEACHERS), getExamQuestionPapers);
+router.delete("/exams/question-papers/:id", authenticate, authorize(...TEACHERS), deleteExamQuestionPaper);
 
 // Exam Seat Plan (room-wise seating for one exam subject sitting)
 router.post("/exams/schedule/:examScheduleId/seat-plan", authenticate, authorize(...ADMIN), validate(generateSeatPlanSchema), generateSeatPlan);
