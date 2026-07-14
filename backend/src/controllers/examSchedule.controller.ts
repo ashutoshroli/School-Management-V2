@@ -26,6 +26,27 @@ const rangesOverlap = (aStart: number, aEnd: number, bStart: number, bEnd: numbe
   aStart < bEnd && bStart < aEnd;
 
 /**
+ * Best-effort subject name lookup for error messages only - a raw
+ * cuid subjectId in an error string (e.g. "Subject cmrhhr4jz00057uc...:
+ * endTime must be after startTime") tells an admin nothing about WHICH
+ * row on the timetable to fix, so error paths below show the actual
+ * subject name instead. Deliberately lazy (only called once an error
+ * is already being built, for just the one or two subjects involved)
+ * rather than bulk-fetched upfront for every request - this is a
+ * display nicety, not validation-critical, so any failure here (a
+ * missing subject row, a transient DB hiccup) falls back to the raw
+ * id rather than ever blocking or crashing the actual request.
+ */
+const getSubjectLabel = async (subjectId: string): Promise<string> => {
+  try {
+    const subject = await prisma.subject.findUnique({ where: { id: subjectId }, select: { name: true } });
+    return subject?.name || subjectId;
+  } catch {
+    return subjectId;
+  }
+};
+
+/**
  * Replaces the whole exam's subject-wise schedule in one call - same
  * "edit the whole list at once" convention as
  * upsertPeriodConfigs/bulkSetSchedule elsewhere in this codebase,
@@ -64,16 +85,6 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    // Subject names for error messages below - a raw cuid subjectId
-    // in an error string (e.g. "Subject cmrhhr4jz00057ucsdsyobvs6:
-    // endTime must be after startTime") tells an admin nothing about
-    // WHICH row on the timetable to fix; showing the actual subject
-    // name lets them find it immediately.
-    const subjectNames = new Map(
-      (await prisma.subject.findMany({ where: { id: { in: [...uniqueSubjectIds] } }, select: { id: true, name: true } })).map((s) => [s.id, s.name])
-    );
-    const subjectLabel = (subjectId: string) => subjectNames.get(subjectId) || subjectId;
-
     // Overlap check: group by date, then compare every pair within
     // that date's entries.
     const byDate: Record<string, { subjectId: string; start: number; end: number }[]> = {};
@@ -82,9 +93,10 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       const start = toMinutes(s.startTime);
       const end = toMinutes(s.endTime);
       if (end <= start) {
+        const label = await getSubjectLabel(s.subjectId);
         sendError(
           res,
-          `${subjectLabel(s.subjectId)}: End Time (${s.endTime}) must be after Start Time (${s.startTime}). If this was meant to be in the afternoon/evening, double-check the End Time's AM/PM.`,
+          `${label}: End Time (${s.endTime}) must be after Start Time (${s.startTime}). If this was meant to be in the afternoon/evening, double-check the End Time's AM/PM.`,
           400
         );
         return;
@@ -95,7 +107,8 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       for (let i = 0; i < entries.length; i++) {
         for (let j = i + 1; j < entries.length; j++) {
           if (rangesOverlap(entries[i].start, entries[i].end, entries[j].start, entries[j].end)) {
-            sendError(res, `Schedule conflict on ${dateKey}: ${subjectLabel(entries[i].subjectId)} and ${subjectLabel(entries[j].subjectId)} overlap in time`, 400);
+            const [labelA, labelB] = await Promise.all([getSubjectLabel(entries[i].subjectId), getSubjectLabel(entries[j].subjectId)]);
+            sendError(res, `Schedule conflict on ${dateKey}: ${labelA} and ${labelB} overlap in time`, 400);
             return;
           }
         }

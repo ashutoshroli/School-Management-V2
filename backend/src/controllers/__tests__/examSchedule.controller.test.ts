@@ -5,6 +5,7 @@ jest.mock("../../config/database", () => ({
   default: {
     exam: { findUnique: jest.fn() },
     classSubject: { count: jest.fn() },
+    subject: { findUnique: jest.fn() },
     schoolRoom: { findMany: jest.fn(), findUnique: jest.fn() },
     examSchedule: {
       deleteMany: jest.fn(),
@@ -55,6 +56,12 @@ describe("examSchedule.controller - bulkSetExamSchedule", () => {
     (prisma.classSubject.count as jest.Mock).mockResolvedValue(2);
     (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => fn(prisma));
     (prisma.examSchedule.findMany as jest.Mock).mockResolvedValue([]);
+    // Used only for naming the subject in error messages (see
+    // getSubjectLabel in examSchedule.controller.ts) - defaulted here
+    // so the "endTime not after startTime" / overlap error tests below
+    // exercise the real lookup path instead of just its catch-all
+    // fallback.
+    (prisma.subject.findUnique as jest.Mock).mockResolvedValue({ name: "Mathematics" });
   });
 
   const validSchedule = [
@@ -114,6 +121,34 @@ describe("examSchedule.controller - bulkSetExamSchedule", () => {
 
     await bulkSetExamSchedule(req, res);
 
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("names the subject (not its raw id) in the endTime-before-startTime error message", async () => {
+    const req = makeReq({
+      body: { examId: "exam-1", schedule: [{ ...validSchedule[0], startTime: "12:35", endTime: "01:35" }] },
+    });
+    const res = makeMockRes();
+
+    await bulkSetExamSchedule(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    const message = (res.json as jest.Mock).mock.calls[0][0].message;
+    expect(message).toContain("Mathematics");
+    expect(message).not.toContain(validSchedule[0].subjectId);
+  });
+
+  it("still rejects endTime-before-startTime even if the subject name lookup itself fails", async () => {
+    (prisma.subject.findUnique as jest.Mock).mockRejectedValue(new Error("db unreachable"));
+    const req = makeReq({
+      body: { examId: "exam-1", schedule: [{ ...validSchedule[0], startTime: "10:00", endTime: "09:00" }] },
+    });
+    const res = makeMockRes();
+
+    await bulkSetExamSchedule(req, res);
+
+    // getSubjectLabel's own try/catch means a failed lookup falls back
+    // to the raw id rather than ever crashing/500-ing the request.
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
