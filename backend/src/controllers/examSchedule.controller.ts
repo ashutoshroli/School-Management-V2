@@ -55,26 +55,14 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    // Check if ClassSubject table has any records for this class - if not, skip validation
-    const totalClassSubjects = await prisma.classSubject.count({ where: { classId: exam.classId } });
-    
-    if (totalClassSubjects > 0) {
-      // Only validate if ClassSubject records exist for this class
-      const classSubjects = await prisma.classSubject.count({ where: { classId: exam.classId, subjectId: { in: subjectIds } } });
-      if (classSubjects !== subjectIds.length) {
-        // Find which subjects are not assigned
-        const assignedSubjects = await prisma.classSubject.findMany({ 
-          where: { classId: exam.classId }, 
-          select: { subjectId: true } 
-        });
-        const assignedIds = new Set(assignedSubjects.map(s => s.subjectId));
-        const unassigned = subjectIds.filter(id => !assignedIds.has(id));
-        
-        sendError(res, `Subject(s) not assigned to this class: ${unassigned.join(", ")}. Please assign subjects to the class first in Class Management.`, 400);
-        return;
-      }
+    // Check if subjects are assigned to the class
+    const assignedCount = await prisma.classSubject.count({ 
+      where: { classId: exam.classId, subjectId: { in: [...uniqueSubjectIds] } } 
+    });
+    if (assignedCount !== uniqueSubjectIds.length) {
+      sendError(res, "One or more subjects are not assigned to this exam's class", 400);
+      return;
     }
-    // If no ClassSubject records exist for this class, allow any subject to be scheduled
 
     // Overlap check: group by date, then compare every pair within
     // that date's entries.
