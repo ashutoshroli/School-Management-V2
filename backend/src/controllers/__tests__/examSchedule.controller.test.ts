@@ -10,6 +10,7 @@ jest.mock("../../config/database", () => ({
     examSchedule: {
       deleteMany: jest.fn(),
       createMany: jest.fn(),
+      upsert: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
@@ -238,15 +239,107 @@ describe("examSchedule.controller - bulkSetExamSchedule", () => {
     expect(res.status).toHaveBeenCalledWith(404);
   });
 
-  it("saves the schedule (delete + createMany) when everything is valid", async () => {
+  it("saves the schedule via upsert (not delete + recreate) when everything is valid", async () => {
     const req = makeReq({ body: { examId: "exam-1", schedule: validSchedule } });
     const res = makeMockRes();
 
     await bulkSetExamSchedule(req, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(prisma.examSchedule.deleteMany).toHaveBeenCalledWith({ where: { examId: "exam-1" } });
-    expect(prisma.examSchedule.createMany).toHaveBeenCalled();
+    // BUG FIX regression test: this endpoint used to unconditionally
+    // deleteMany() every existing row for the exam before recreating
+    // it, which threw a foreign-key-constraint error (surfaced to the
+    // admin as a generic "Failed to save exam schedule") the instant
+    // any existing row already had a question paper/seat allocation/
+    // attendance record against it. It now upserts each submitted
+    // entry by its (examId, subjectId) key instead, so an existing
+    // row's id (and everything referencing it) is preserved.
+    expect(prisma.examSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.examSchedule.createMany).not.toHaveBeenCalled();
+    expect(prisma.examSchedule.upsert).toHaveBeenCalledTimes(validSchedule.length);
+    expect(prisma.examSchedule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { examId_subjectId: { examId: "exam-1", subjectId: "sub-1" } } })
+    );
+  });
+
+  it("regression: does NOT crash when an existing row already has a question paper/seat allocation/attendance and is resubmitted unchanged", async () => {
+    // The exact scenario that used to 500 in production: the exam
+    // already has a saved schedule (sub-1) with real workflow state
+    // attached, and the admin re-saves the SAME schedule (e.g. after
+    // only editing an unrelated row, or just re-clicking Save).
+    (prisma.classSubject.count as jest.Mock).mockResolvedValue(1); // schedule below has only 1 subject
+    (prisma.examSchedule.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "sch-1",
+        subjectId: "sub-1",
+        subject: { name: "Mathematics" },
+        _count: { questionPapers: 1, seatAllocations: 3, examAttendances: 40 },
+      },
+    ]);
+    const req = makeReq({ body: { examId: "exam-1", schedule: [validSchedule[0]] } }); // sub-1 still present, so nothing is being removed
+    const res = makeMockRes();
+
+    await bulkSetExamSchedule(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.examSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.examSchedule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { examId_subjectId: { examId: "exam-1", subjectId: "sub-1" } } })
+    );
+  });
+
+  it("blocks removing a subject from the schedule if it already has a question paper/seat allocation/attendance", async () => {
+    (prisma.classSubject.count as jest.Mock).mockResolvedValue(1); // schedule below has only 1 subject
+    (prisma.examSchedule.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "sch-1",
+        subjectId: "sub-1",
+        subject: { name: "Mathematics" },
+        _count: { questionPapers: 1, seatAllocations: 0, examAttendances: 0 },
+      },
+      {
+        id: "sch-2",
+        subjectId: "sub-2",
+        subject: { name: "Drawing" },
+        _count: { questionPapers: 0, seatAllocations: 0, examAttendances: 0 },
+      },
+    ]);
+    // Only sub-2 submitted this time - sub-1 (Mathematics, has a
+    // question paper) is being dropped from the schedule.
+    const req = makeReq({ body: { examId: "exam-1", schedule: [{ ...validSchedule[1], subjectId: "sub-2" }] } });
+    const res = makeMockRes();
+
+    await bulkSetExamSchedule(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    const message = (res.json as jest.Mock).mock.calls[0][0].message;
+    expect(message).toContain("Mathematics");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("removes a subject cleanly when it has no dependent question paper/seat allocation/attendance", async () => {
+    (prisma.classSubject.count as jest.Mock).mockResolvedValue(1); // schedule below has only 1 subject
+    (prisma.examSchedule.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "sch-1",
+        subjectId: "sub-1",
+        subject: { name: "Mathematics" },
+        _count: { questionPapers: 0, seatAllocations: 0, examAttendances: 0 },
+      },
+      {
+        id: "sch-2",
+        subjectId: "sub-2",
+        subject: { name: "Drawing" },
+        _count: { questionPapers: 0, seatAllocations: 0, examAttendances: 0 },
+      },
+    ]);
+    const req = makeReq({ body: { examId: "exam-1", schedule: [{ ...validSchedule[1], subjectId: "sub-2" }] } });
+    const res = makeMockRes();
+
+    await bulkSetExamSchedule(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.examSchedule.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["sch-1"] } } });
   });
 });
 

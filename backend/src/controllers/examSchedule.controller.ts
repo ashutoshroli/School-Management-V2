@@ -135,20 +135,78 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       }
     }
 
+    // BUG FIX: this previously did an unconditional deleteMany(all
+    // rows for this exam) + createMany(the submitted list) on EVERY
+    // save, even when nothing was actually being removed. But
+    // ExamQuestionPaper/ExamSeatAllocation/ExamAttendance all have a
+    // REQUIRED (non-nullable, non-cascading) foreign key to
+    // ExamSchedule - the instant ANY existing row already had a
+    // question paper uploaded, a seat plan generated, or attendance
+    // marked against it (all real, common workflow state - see
+    // deleteExamScheduleEntry's own guard against exactly this), that
+    // deleteMany threw a Postgres foreign-key-constraint violation.
+    // The generic catch block below caught it, and in production
+    // sendError strips the real detail for any 5xx response (see
+    // utils/response.ts), so admins only ever saw the unhelpful
+    // "Failed to save exam schedule" with zero indication of why -
+    // even for a save that only changed an unrelated field on one row.
+    //
+    // Fixed by upserting each submitted entry via its (examId,
+    // subjectId) unique key - updates an existing row in place
+    // (preserving its id, and therefore anything that references it)
+    // instead of deleting and recreating it - and only deleting rows
+    // for subjects that were REMOVED from the list, which is blocked
+    // with a clear message (rather than a raw DB error) if that
+    // specific row has dependent records.
+    const submittedSubjectIds = new Set(schedule.map((s: any) => s.subjectId));
+    const existingEntries = await prisma.examSchedule.findMany({
+      where: { examId },
+      include: {
+        subject: { select: { name: true } },
+        _count: { select: { questionPapers: true, seatAllocations: true, examAttendances: true } },
+      },
+    });
+    const removedEntries = existingEntries.filter((e) => !submittedSubjectIds.has(e.subjectId));
+    const blockedRemovals = removedEntries.filter(
+      (e) => e._count.questionPapers > 0 || e._count.seatAllocations > 0 || e._count.examAttendances > 0
+    );
+    if (blockedRemovals.length > 0) {
+      const names = blockedRemovals.map((e) => e.subject.name).join(", ");
+      sendError(
+        res,
+        `Cannot remove ${names} from the schedule - a question paper, seat allocation, or attendance record already exists for it. Delete those first, or keep this subject in the schedule.`,
+        400
+      );
+      return;
+    }
+
     await prisma.$transaction(async (tx) => {
-      await tx.examSchedule.deleteMany({ where: { examId } });
-      await tx.examSchedule.createMany({
-        data: schedule.map((s: any) => ({
-          examId,
-          subjectId: s.subjectId,
-          examDate: new Date(s.examDate),
-          startTime: s.startTime,
-          endTime: s.endTime,
-          durationMinutes: s.durationMinutes,
-          maxMarks: s.maxMarks,
-          roomId: s.roomId || null,
-        })),
-      });
+      if (removedEntries.length > 0) {
+        await tx.examSchedule.deleteMany({ where: { id: { in: removedEntries.map((e) => e.id) } } });
+      }
+      for (const s of schedule) {
+        await tx.examSchedule.upsert({
+          where: { examId_subjectId: { examId, subjectId: s.subjectId } },
+          update: {
+            examDate: new Date(s.examDate),
+            startTime: s.startTime,
+            endTime: s.endTime,
+            durationMinutes: s.durationMinutes,
+            maxMarks: s.maxMarks,
+            roomId: s.roomId || null,
+          },
+          create: {
+            examId,
+            subjectId: s.subjectId,
+            examDate: new Date(s.examDate),
+            startTime: s.startTime,
+            endTime: s.endTime,
+            durationMinutes: s.durationMinutes,
+            maxMarks: s.maxMarks,
+            roomId: s.roomId || null,
+          },
+        });
+      }
     });
 
     const result = await prisma.examSchedule.findMany({
