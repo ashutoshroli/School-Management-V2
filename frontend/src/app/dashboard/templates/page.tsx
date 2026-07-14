@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileStack, Upload, Trash2, FileDown, Loader2, Info, Copy, Check } from "lucide-react";
+import { FileStack, Upload, Trash2, FileDown, Loader2, Info, Copy, Check, CalendarClock } from "lucide-react";
 import api from "@/lib/api";
 import { resolveUploadUrl } from "@/lib/uploads";
 import { formatDate } from "@/lib/utils";
@@ -44,6 +44,24 @@ interface TemplateSlot {
    * scratch using only the guide's field list.
    */
   sampleFile: string;
+  /**
+   * True for document types that can ALSO have a separate template
+   * PER EXAM (REPORT_CARD, ADMIT_CARD - see DocumentTemplate.examId in
+   * schema.prisma), in addition to the one school-wide default slot
+   * every type has. These slots render an extra "Manage exam-specific
+   * templates" button that opens a dedicated picker: choose an exam
+   * first, then upload a template just for that exam - and any number
+   * of exams can each have their own uploaded template at once, listed
+   * together in that same picker.
+   */
+  examScoped?: boolean;
+}
+
+interface ExamOption {
+  id: string;
+  name: string;
+  class?: { name?: string } | null;
+  academicYear?: { name?: string } | null;
 }
 
 // Every DOCX "slot" the app can hold a template for. Matches
@@ -198,8 +216,9 @@ const TEMPLATE_SLOTS: TemplateSlot[] = [
     category: "document",
     type: "REPORT_CARD",
     label: "Report Card",
-    description: "Exam result summary for a student. This is the school-wide default used for every exam that doesn't have its own template - to use a DIFFERENT layout for one specific exam, upload it under that exam's \"Exam Templates\" section on its Timetable page instead.",
+    description: "Exam result summary for a student. This is the school-wide default used for every exam that doesn't have its own template - click \"Exam-specific templates\" below to upload a DIFFERENT layout for one or more individual exams instead.",
     sampleFile: "REPORT_CARD.docx",
+    examScoped: true,
     loopSyntaxNote:
       "The {{subjectName}}/{{maxMarks}}/{{obtainedMarks}}/{{grade}} placeholders below only fill in with the FIRST " +
       "subject's marks - fine for a simple one-line summary, but not enough for a real multi-subject table. To show " +
@@ -227,8 +246,9 @@ const TEMPLATE_SLOTS: TemplateSlot[] = [
     category: "document",
     type: "ADMIT_CARD",
     label: "Admit Card",
-    description: "Exam admit card / hall ticket, listing every subject a student is permitted to sit for (with date/time/room) - separate from the Report Card template above, which is for RESULTS, not exam entry permission. This is the school-wide default used for every exam that doesn't have its own template - to use a DIFFERENT layout for one specific exam (e.g. a distinct Annual Exam hall ticket), upload it under that exam's \"Exam Templates\" section on its Timetable page instead.",
+    description: "Exam admit card / hall ticket, listing every subject a student is permitted to sit for (with date/time/room) - separate from the Report Card template above, which is for RESULTS, not exam entry permission. This is the school-wide default used for every exam that doesn't have its own template - click \"Exam-specific templates\" below to upload a DIFFERENT layout for one or more individual exams instead (e.g. a distinct Annual Exam hall ticket).",
     sampleFile: "ADMIT_CARD.docx",
+    examScoped: true,
     loopSyntaxNote:
       "The {{subjects}} data is a per-subject list (date/time/room) - build a one-row table in Word, wrap that row in " +
       "{{#subjects}}...{{/subjects}} (double curly braces, same as every other placeholder here), and inside the row " +
@@ -286,6 +306,8 @@ interface TemplateRecord {
   templateUrl: string;
   isActive?: boolean;
   updatedAt: string;
+  /** Document templates only - set when this row is scoped to one specific exam (see schema.prisma). */
+  examId?: string | null;
 }
 
 export default function TemplatesPage() {
@@ -296,6 +318,18 @@ export default function TemplatesPage() {
   const [guideSlot, setGuideSlot] = useState<TemplateSlot | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  // Exam-specific templates (REPORT_CARD / ADMIT_CARD only - see
+  // TemplateSlot.examScoped). Every exam is uploaded/replaced/deleted
+  // independently, so instead of one TemplateRecord per slot this is
+  // the full list for the currently-open picker's type, keyed by examId.
+  const [examScopedSlot, setExamScopedSlot] = useState<TemplateSlot | null>(null);
+  const [exams, setExams] = useState<ExamOption[]>([]);
+  const [loadingExams, setLoadingExams] = useState(false);
+  const [examTemplates, setExamTemplates] = useState<TemplateRecord[]>([]);
+  const [selectedExamId, setSelectedExamId] = useState("");
+  const [uploadingExamId, setUploadingExamId] = useState<string | null>(null);
+  const examFileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const copyPlaceholder = async (key: string) => {
     const text = `{{${key}}}`;
@@ -366,6 +400,93 @@ export default function TemplatesPage() {
     try {
       await api.delete(`/templates/${template.id}`, { params: { category: slot.category } });
       await fetchTemplates();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to delete template");
+    }
+  };
+
+  // ---- Exam-specific templates picker (REPORT_CARD / ADMIT_CARD) ----
+  // Opening the picker loads BOTH the exam list (so the admin can pick
+  // "which exam") and every already-uploaded template for this slot's
+  // type across ALL exams (so more than one exam's template shows up
+  // together here, not just whichever one exam was picked last).
+  const openExamScopedPicker = async (slot: TemplateSlot) => {
+    setExamScopedSlot(slot);
+    setSelectedExamId("");
+    setLoadingExams(true);
+    try {
+      const [examsRes, templatesRes] = await Promise.all([
+        api.get("/academics/exams"),
+        api.get("/templates", { params: { category: "document" } }),
+      ]);
+      setExams(examsRes.data.data || []);
+      // Only THIS slot's type, and only rows that actually belong to
+      // an exam (examId set) - the school-wide default row (examId:
+      // null) for the same type is managed by the main card above,
+      // not this picker.
+      const allDocTemplates: TemplateRecord[] = templatesRes.data.data || [];
+      setExamTemplates(allDocTemplates.filter((t) => t.type === slot.type && t.examId));
+    } catch {
+      setExams([]);
+      setExamTemplates([]);
+    } finally {
+      setLoadingExams(false);
+    }
+  };
+
+  const closeExamScopedPicker = () => {
+    setExamScopedSlot(null);
+    setExams([]);
+    setExamTemplates([]);
+    setSelectedExamId("");
+  };
+
+  const findExamTemplate = (examId: string): TemplateRecord | undefined =>
+    examTemplates.find((t) => t.examId === examId);
+
+  const examLabel = (exam: ExamOption) =>
+    `${exam.name}${exam.class?.name ? ` - ${exam.class.name}` : ""}${exam.academicYear?.name ? ` (${exam.academicYear.name})` : ""}`;
+
+  const handleExamTemplateFileSelected = async (examId: string, file: File) => {
+    if (!examScopedSlot) return;
+    if (!file.name.toLowerCase().endsWith(".docx")) {
+      alert("Only .docx files are allowed");
+      return;
+    }
+    const exam = exams.find((e) => e.id === examId);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("category", "document");
+    formData.append("type", examScopedSlot.type);
+    formData.append("name", `${examScopedSlot.label} - ${exam ? examLabel(exam) : examId}`);
+    formData.append("examId", examId);
+
+    setUploadingExamId(examId);
+    try {
+      const res = await api.post("/templates/upload", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setExamTemplates((prev) => {
+        const withoutThisExam = prev.filter((t) => t.examId !== examId);
+        return [...withoutThisExam, res.data.data];
+      });
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Upload failed");
+    } finally {
+      setUploadingExamId(null);
+      const input = examFileInputs.current[examId];
+      if (input) input.value = "";
+    }
+  };
+
+  const handleExamTemplateDelete = async (examId: string, template: TemplateRecord) => {
+    if (!examScopedSlot) return;
+    const exam = exams.find((e) => e.id === examId);
+    if (!confirm(`Remove the "${examScopedSlot.label}" template uploaded for ${exam ? examLabel(exam) : "this exam"}? It will fall back to the school-wide default.`)) return;
+    try {
+      await api.delete(`/templates/${template.id}`, { params: { category: "document" } });
+      setExamTemplates((prev) => prev.filter((t) => t.examId !== examId));
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to delete template");
     }
@@ -454,6 +575,16 @@ export default function TemplatesPage() {
             }}
           />
         </div>
+
+        {slot.examScoped && (
+          <button
+            type="button"
+            onClick={() => openExamScopedPicker(slot)}
+            className="text-xs text-primary-600 hover:text-primary-700 hover:underline text-left flex items-center gap-1"
+          >
+            <CalendarClock className="h-3.5 w-3.5" /> Exam-specific templates
+          </button>
+        )}
       </div>
     );
   };
@@ -543,6 +674,144 @@ export default function TemplatesPage() {
                   )}
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={!!examScopedSlot}
+        onClose={closeExamScopedPicker}
+        title={examScopedSlot ? `${examScopedSlot.label} - Exam-specific Templates` : ""}
+        size="lg"
+      >
+        {examScopedSlot && (
+          <div>
+            <p className="text-sm text-gray-600 mb-4">
+              Select an exam below, then upload a .docx template just for that exam - it uses the same{" "}
+              placeholders as the school-wide {examScopedSlot.label} template above (click the <Info className="h-3.5 w-3.5 inline" />{" "}
+              icon on that card for the full placeholder list). Any number of exams can each have their own
+              template uploaded at once - every exam you've uploaded one for is listed below the picker.
+            </p>
+
+            {loadingExams ? (
+              <div className="flex justify-center py-6">
+                <Loader2 className="h-6 w-6 animate-spin text-primary-600" />
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-4">
+                  <select
+                    className="input-field flex-1"
+                    value={selectedExamId}
+                    onChange={(e) => setSelectedExamId(e.target.value)}
+                  >
+                    <option value="">Select an exam...</option>
+                    {exams
+                      .filter((exam) => !findExamTemplate(exam.id))
+                      .map((exam) => (
+                        <option key={exam.id} value={exam.id}>{examLabel(exam)}</option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => selectedExamId && examFileInputs.current[selectedExamId]?.click()}
+                    disabled={!selectedExamId || uploadingExamId === selectedExamId}
+                    className="btn-primary text-sm flex items-center gap-1.5 px-3 py-2 disabled:opacity-60 flex-shrink-0"
+                  >
+                    {uploadingExamId === selectedExamId ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="h-4 w-4" />
+                    )}
+                    Upload for this exam
+                  </button>
+                  {selectedExamId && (
+                    <input
+                      ref={(el) => { examFileInputs.current[selectedExamId] = el; }}
+                      type="file"
+                      accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleExamTemplateFileSelected(selectedExamId, file);
+                        setSelectedExamId("");
+                      }}
+                    />
+                  )}
+                </div>
+
+                {exams.length === 0 ? (
+                  <p className="text-sm text-gray-400">No exams found - create an exam first under the Exams page.</p>
+                ) : examTemplates.length === 0 ? (
+                  <p className="text-sm text-gray-400">
+                    No exam has its own {examScopedSlot.label} template yet - every exam is currently using the
+                    school-wide default.
+                  </p>
+                ) : (
+                  <div className="border rounded-lg divide-y">
+                    {examTemplates.map((t) => {
+                      const exam = exams.find((e) => e.id === t.examId);
+                      return (
+                        <div key={t.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{exam ? examLabel(exam) : t.name}</p>
+                            <p className="text-xs text-gray-500 mt-0.5">Uploaded {formatDate(t.updatedAt)}</p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <a
+                              href={resolveUploadUrl(t.templateUrl)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn-secondary text-xs flex items-center gap-1 px-2 py-1"
+                              title="Download this exam's template"
+                            >
+                              <FileDown className="h-3.5 w-3.5" /> Download
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => t.examId && examFileInputs.current[t.examId]?.click()}
+                              disabled={!!t.examId && uploadingExamId === t.examId}
+                              className="btn-secondary text-xs flex items-center gap-1 px-2 py-1 disabled:opacity-60"
+                            >
+                              {t.examId && uploadingExamId === t.examId ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Upload className="h-3.5 w-3.5" />
+                              )}
+                              Replace
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => t.examId && handleExamTemplateDelete(t.examId, t)}
+                              className="text-red-500 hover:text-red-700 p-1"
+                              title="Remove this exam's template"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                            {t.examId && (
+                              <input
+                                ref={(el) => { examFileInputs.current[t.examId as string] = el; }}
+                                type="file"
+                                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file && t.examId) handleExamTemplateFileSelected(t.examId, file);
+                                }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="flex justify-end pt-4 mt-4 border-t">
+              <button type="button" onClick={closeExamScopedPicker} className="btn-secondary">Close</button>
             </div>
           </div>
         )}
