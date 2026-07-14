@@ -302,7 +302,7 @@ export default function ExamSchedulePage() {
     }
     setSaving(true);
     try {
-      await api.put("/academics/exams/schedule", {
+      const payload = {
         examId,
         schedule: cleaned.map((r) => ({
           subjectId: r.subjectId,
@@ -313,11 +313,16 @@ export default function ExamSchedulePage() {
           maxMarks: parseFloat(r.maxMarks),
           roomId: r.roomId || undefined,
         })),
-      });
-      setMessage({ type: "success", text: "Exam schedule saved" });
+      };
+      console.log("Saving exam schedule:", payload);
+      const res = await api.put("/academics/exams/schedule", payload);
+      console.log("Save response:", res.data);
+      setMessage({ type: "success", text: res.data.message || "Exam schedule saved" });
       load();
     } catch (err: any) {
-      setMessage({ type: "error", text: err.response?.data?.message || "Failed to save exam schedule" });
+      console.error("Save failed:", err.response?.data);
+      const errorMsg = err.response?.data?.message || err.response?.data?.error || "Failed to save exam schedule";
+      setMessage({ type: "error", text: errorMsg });
     } finally {
       setSaving(false);
     }
