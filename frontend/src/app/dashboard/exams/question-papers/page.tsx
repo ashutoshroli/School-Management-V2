@@ -28,6 +28,23 @@ export default function QuestionPapersPage() {
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  // ROOT CAUSE FIX: this page's ONLY user-facing feedback for upload/
+  // delete was `alert()`. In practice `window.alert()`/`confirm()` are
+  // silently no-ops in several real environments this app runs in -
+  // a sandboxed preview iframe without "allow-modals", or a browser
+  // tab where the user has already dismissed a couple of alerts and
+  // ticked "Prevent this page from creating additional dialogs" (very
+  // easy to hit during a long QA session that hits several other
+  // alert()-based error dialogs first). When that happens the request
+  // still completes exactly as before (resolves or rejects normally -
+  // that's why the button correctly flips "Uploading..." -> "Upload",
+  // since `finally { setUploading(false) }` still runs) but NEITHER
+  // the success path nor the catch's alert() ever becomes visible, so
+  // it looks indistinguishable from total silent failure even when the
+  // backend actually returned a perfectly good 4xx/5xx error (or a
+  // 201!). Rendering the message inline instead guarantees it's always
+  // visible regardless of the browser/embedding context.
+  const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     api.get("/academics/exams").then((res) => setExams(res.data.data || [])).catch(() => {});
@@ -59,6 +76,7 @@ export default function QuestionPapersPage() {
     e.preventDefault();
     if (!file || !selectedScheduleId) return;
     setUploading(true);
+    setFeedback(null);
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -87,9 +105,25 @@ export default function QuestionPapersPage() {
         headers: { "Content-Type": undefined },
       });
       setFile(null);
+      setFeedback({ type: "success", text: "Question paper uploaded successfully." });
       fetchPapers();
     } catch (err: any) {
-      alert(err.response?.data?.message || "Upload failed");
+      // ROOT CAUSE FIX: previously this only called `alert(...)`. If the
+      // request is rejected by the backend (e.g. a TEACHER who isn't
+      // assigned to teach this subject/class gets a 403 here - see
+      // canTeacherTeachSubjectForClass in teacherAccess.ts - or any
+      // other 4xx/5xx), that rejection was completely invisible
+      // whenever `window.alert()` is suppressed by the browser/host
+      // environment (e.g. an embedded preview iframe without
+      // "allow-modals", or after a user has dismissed a few alerts and
+      // the browser auto-mutes further ones for the page) - the button
+      // still correctly flips back to "Upload" (the `finally` below
+      // still runs) but NEITHER a success nor an error message ever
+      // becomes visible, which is indistinguishable from the upload
+      // "just doing nothing". Rendering the message inline in the page
+      // guarantees the real reason (including the exact backend
+      // message) is always visible.
+      setFeedback({ type: "error", text: err.response?.data?.message || "Upload failed" });
     } finally { setUploading(false); }
   };
 
@@ -136,6 +170,11 @@ export default function QuestionPapersPage() {
             <FileUp className="h-4 w-4" /> {uploading ? "Uploading..." : "Upload"}
           </button>
         </form>
+        {feedback && (
+          <p className={`mt-3 text-sm ${feedback.type === "success" ? "text-green-600" : "text-red-600"}`}>
+            {feedback.text}
+          </p>
+        )}
       </div>
 
       {/* Papers List */}
