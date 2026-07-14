@@ -91,9 +91,32 @@ export default function CertificatesPage() {
   const [bulkResult, setBulkResult] = useState<{ generated: number; failed: number; total: number; failures: any[] } | null>(null);
   const bulkTemplate = templates.find((t) => t.id === bulkForm.templateId);
 
+  // Live preview of how many active students the chosen class actually
+  // has, BEFORE submitting - same "see the blast radius first" pattern
+  // already used by the other bulk-action modals in this app (Bulk
+  // Create Fee Structure, Bulk Assign Salary, etc), so the submit
+  // button here shows a real count instead of just "Generate for Class"
+  // with no indication of how many certificates that will actually
+  // produce. bulkGenerateCertificates itself targets the exact same
+  // set (active students in this classId), so this count matches what
+  // the backend will do.
+  const [bulkMatchCount, setBulkMatchCount] = useState<number | null>(null);
+  const [bulkMatchLoading, setBulkMatchLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showBulkModal || !bulkForm.classId) { setBulkMatchCount(null); return; }
+    setBulkMatchLoading(true);
+    api
+      .get("/students", { params: { classId: bulkForm.classId, limit: 1 } })
+      .then((res) => setBulkMatchCount(res.data.pagination?.total ?? null))
+      .catch(() => setBulkMatchCount(null))
+      .finally(() => setBulkMatchLoading(false));
+  }, [showBulkModal, bulkForm.classId]);
+
   const openBulkModal = () => {
     setBulkForm({ templateId: "", classId: "", purpose: "" });
     setBulkResult(null);
+    setBulkMatchCount(null);
     setShowBulkModal(true);
   };
 
@@ -306,6 +329,15 @@ export default function CertificatesPage() {
               <option value="">Select</option>
               {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+            {bulkForm.classId && (
+              <p className="text-xs text-gray-500 mt-1">
+                {bulkMatchLoading
+                  ? "Checking how many students match..."
+                  : bulkMatchCount !== null
+                  ? `${bulkMatchCount} active student(s) in this class will receive this certificate.`
+                  : "Unable to preview match count."}
+              </p>
+            )}
           </div>
           {bulkTemplate?.type === "BONAFIDE" && (
             <div>
@@ -315,7 +347,9 @@ export default function CertificatesPage() {
           )}
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowBulkModal(false)} className="btn-secondary">Close</button>
-            <button type="submit" disabled={bulkGenerating} className="btn-primary disabled:opacity-50">{bulkGenerating ? "Generating..." : "Generate for Class"}</button>
+            <button type="submit" disabled={bulkGenerating} className="btn-primary disabled:opacity-50">
+              {bulkGenerating ? "Generating..." : `Generate for Class${bulkMatchCount !== null ? ` (${bulkMatchCount})` : ""}`}
+            </button>
           </div>
         </form>
       </Modal>
