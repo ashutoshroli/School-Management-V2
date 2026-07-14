@@ -93,10 +93,33 @@ export default function FeeDiscountsPage() {
   const [bulkResult, setBulkResult] = useState<{ assigned: number; total: number } | null>(null);
   const bulkSections = classes.find((c) => c.id === bulkForm.classId)?.sections || [];
 
+  // Live preview of how many active students the chosen class/section
+  // filter actually matches, BEFORE submitting - same pattern already
+  // used by the other bulk-action modals in this app (Bulk Create Fee
+  // Structure, Bulk Assign Salary, etc), so the submit button here
+  // shows a real count instead of the generic "Assign to Matched
+  // Students" with no indication of how many students that is.
+  // bulkAssignDiscount itself targets the exact same set (active
+  // students matching classId/sectionId), so this count matches what
+  // the backend will do.
+  const [bulkMatchCount, setBulkMatchCount] = useState<number | null>(null);
+  const [bulkMatchLoading, setBulkMatchLoading] = useState(false);
+
+  useEffect(() => {
+    if (!showBulkModal || (!bulkForm.classId && !bulkForm.sectionId)) { setBulkMatchCount(null); return; }
+    setBulkMatchLoading(true);
+    api
+      .get("/students", { params: { classId: bulkForm.classId || undefined, sectionId: bulkForm.sectionId || undefined, limit: 1 } })
+      .then((res) => setBulkMatchCount(res.data.pagination?.total ?? null))
+      .catch(() => setBulkMatchCount(null))
+      .finally(() => setBulkMatchLoading(false));
+  }, [showBulkModal, bulkForm.classId, bulkForm.sectionId]);
+
   const openBulkModal = () => {
     setBulkForm({ classId: "", sectionId: "", type: "MERIT_SCHOLARSHIP", name: "", value: "", isPercent: true });
     setBulkError("");
     setBulkResult(null);
+    setBulkMatchCount(null);
     setShowBulkModal(true);
   };
 
@@ -314,6 +337,15 @@ export default function FeeDiscountsPage() {
               </select>
             </div>
           </div>
+          {(bulkForm.classId || bulkForm.sectionId) && (
+            <p className="text-xs text-gray-500">
+              {bulkMatchLoading
+                ? "Checking how many students match..."
+                : bulkMatchCount !== null
+                ? `${bulkMatchCount} active student(s) will receive this discount.`
+                : "Unable to preview match count."}
+            </p>
+          )}
           <div>
             <label className="block text-sm font-medium mb-1">Type *</label>
             <select className="input-field" value={bulkForm.type} onChange={(e) => setBulkForm({ ...bulkForm, type: e.target.value })}>
@@ -339,7 +371,7 @@ export default function FeeDiscountsPage() {
           <div className="flex justify-end gap-3 pt-2 border-t">
             <button type="button" onClick={() => setShowBulkModal(false)} className="btn-secondary">Close</button>
             <button type="submit" disabled={bulkSaving || (!bulkForm.classId && !bulkForm.sectionId)} className="btn-primary disabled:opacity-50">
-              {bulkSaving ? "Assigning..." : "Assign to Matched Students"}
+              {bulkSaving ? "Assigning..." : `Assign to Matched Students${bulkMatchCount !== null ? ` (${bulkMatchCount})` : ""}`}
             </button>
           </div>
         </form>
