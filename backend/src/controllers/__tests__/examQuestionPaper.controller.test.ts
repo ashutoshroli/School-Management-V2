@@ -37,7 +37,7 @@ const makeReq = (overrides: Partial<AuthRequest> = {}): AuthRequest =>
     params: {},
     query: {},
     user: { userId: "teacher-1", email: "t@test.com", role: UserRole.TEACHER, branchId: "branch-1" },
-    file: { buffer: Buffer.from("pdf-bytes"), originalname: "paper.pdf" },
+    file: { buffer: Buffer.from("pdf-bytes"), originalname: "paper.pdf", size: 9, mimetype: "application/pdf" },
     ...overrides,
   } as any);
 
@@ -134,6 +134,8 @@ describe("examQuestionPaper.controller - uploadExamQuestionPaper", () => {
         sectionId: null,
         fileUrl: "/uploads/exam-question-papers/sch-1/abc.pdf",
         fileName: "paper.pdf",
+        fileSize: 9,
+        mimeType: "application/pdf",
         uploadedBy: "teacher-1",
       },
     });

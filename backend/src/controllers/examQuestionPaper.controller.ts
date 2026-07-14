@@ -67,6 +67,8 @@ export const uploadExamQuestionPaper = async (req: AuthRequest, res: Response): 
         sectionId: sectionId || null,
         fileUrl: url,
         fileName: req.file.originalname,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
         uploadedBy: req.user!.userId,
       },
     });

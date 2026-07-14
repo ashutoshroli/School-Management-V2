@@ -215,12 +215,19 @@ enum StaffType {
 }
 
 model StaffDocument {
-  id        String   @id @default(cuid())
-  staffId   String
-  name      String
-  type      String   // resume, certificate, aadhar, pan, photo
-  fileUrl   String
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  staffId    String
+  name       String
+  type       String   // resume, certificate, aadhar, pan, photo
+  fileUrl    String
+  // File metadata (Cloudflare R2 migration) - the actual file bytes
+  // live in R2, never in this table; these three columns are the only
+  // extra bookkeeping needed alongside fileUrl. Nullable since rows
+  // created before this migration won't have them backfilled.
+  fileSize   Int?     // bytes
+  mimeType   String?
+  uploadedBy String?  // userId of whoever uploaded this document
+  createdAt  DateTime @default(now())
 
   staff Staff @relation(fields: [staffId], references: [id])
 }
@@ -288,12 +295,17 @@ enum Gender {
 }
 
 model StudentDocument {
-  id        String   @id @default(cuid())
-  studentId String
-  name      String
-  type      String   // photo, birth_cert, aadhar, tc, marksheet
-  fileUrl   String
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  studentId  String
+  name       String
+  type       String   // photo, birth_cert, aadhar, tc, marksheet
+  fileUrl    String
+  // File metadata (Cloudflare R2 migration) - see StaffDocument's
+  // identical comment above.
+  fileSize   Int?     // bytes
+  mimeType   String?
+  uploadedBy String?  // userId of whoever uploaded this document
+  createdAt  DateTime @default(now())
 
   student Student @relation(fields: [studentId], references: [id])
 }
@@ -1052,6 +1064,10 @@ model ExamQuestionPaper {
   sectionId      String?
   fileUrl        String
   fileName       String
+  // File metadata (Cloudflare R2 migration) - nullable since rows
+  // created before this migration won't have them backfilled.
+  fileSize       Int?     // bytes
+  mimeType       String?
   uploadedBy     String   // staff userId
   createdAt      DateTime @default(now())
 

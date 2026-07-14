@@ -47,7 +47,10 @@ export const config = {
     // storage.service.ts's getStorageProvider(). Any S3-API-compatible
     // service works (AWS S3, Cloudflare R2, MinIO, DigitalOcean
     // Spaces, Backblaze B2) - set S3_ENDPOINT for anything that isn't
-    // real AWS S3.
+    // real AWS S3. For Cloudflare R2 specifically, prefer setting
+    // STORAGE_PROVIDER=r2 and the dedicated R2_* variables below
+    // instead - keeps R2 credentials from being mixed up with a
+    // different S3-compatible provider's config.
     provider: process.env.STORAGE_PROVIDER || "local",
     bucket: process.env.S3_BUCKET || "",
     region: process.env.S3_REGION || "us-east-1",
@@ -60,6 +63,34 @@ export const config = {
     // the raw bucket URL (e.g. "https://cdn.myschool.com"). Falls back
     // to the bucket's own public URL when unset.
     publicUrl: process.env.S3_PUBLIC_URL || "",
+  },
+  // Cloudflare R2 (S3-compatible object storage) - a dedicated,
+  // R2-branded config block so its credentials are never confused
+  // with the generic `s3` block above (which is meant for real AWS S3
+  // or a different S3-compatible provider). Set
+  // STORAGE_PROVIDER="r2" to use this - see storage.service.ts's
+  // getStorageProvider() and config/r2.ts.
+  r2: {
+    accountId: process.env.R2_ACCOUNT_ID || "",
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || "",
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || "",
+    bucketName: process.env.R2_BUCKET_NAME || "",
+    // The bucket's public R2.dev URL, or a connected custom domain
+    // (e.g. "https://files.yourschool.com") - see the R2 dashboard's
+    // bucket Settings > Public Access. Required for uploaded files to
+    // actually be fetchable by a browser; without it, uploadToR2()
+    // falls back to the (non-public) S3-API endpoint URL.
+    publicUrl: process.env.R2_PUBLIC_URL || "",
+    // Both of these are OPTIONAL - the S3 API endpoint for an R2
+    // bucket is always `https://<accountId>.r2.cloudflarestorage.com`,
+    // and R2 ignores the region value entirely (the AWS SDK just
+    // requires one to be set) - config/r2.ts derives both
+    // automatically from accountId/"auto" when left blank. Only set
+    // these explicitly if you need to override the derived endpoint
+    // (e.g. a jurisdiction-specific R2 endpoint) or want the region
+    // value spelled out in your own .env for clarity.
+    endpoint: process.env.R2_ENDPOINT || "",
+    region: process.env.R2_REGION || "auto",
   },
   smtp: {
     host: process.env.SMTP_HOST || "",
