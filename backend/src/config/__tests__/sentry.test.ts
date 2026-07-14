@@ -18,7 +18,7 @@ jest.mock("../index", () => ({
 import * as Sentry from "@sentry/node";
 import { config } from "../index";
 import { logger } from "../logger";
-import { isSentryConfigured, initSentry, setupSentryErrorHandler, captureException } from "../sentry";
+import { isSentryConfigured, setupSentryErrorHandler, captureException } from "../sentry";
 
 describe("sentry config", () => {
   const fakeApp = {} as any;
@@ -39,38 +39,18 @@ describe("sentry config", () => {
     });
   });
 
-  describe("initSentry", () => {
-    it("does nothing and logs a warning when not configured", () => {
-      initSentry(fakeApp);
-      expect(Sentry.init).not.toHaveBeenCalled();
-      expect(logger.warn).toHaveBeenCalledWith(expect.stringMatching(/not configured/i));
-    });
-
-    it("initializes Sentry with dsn/environment/tracesSampleRate when configured", () => {
-      (config as any).sentry.dsn = "https://examplePublicKey@o0.ingest.sentry.io/0";
-      initSentry(fakeApp);
-
-      expect(Sentry.init).toHaveBeenCalledWith(
-        expect.objectContaining({
-          dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
-          environment: "test",
-          tracesSampleRate: 0.1,
-        })
-      );
-      expect(logger.info).toHaveBeenCalled();
-    });
-  });
-
   describe("setupSentryErrorHandler", () => {
-    it("does not register the error handler when not configured", () => {
+    it("does not register the error handler when not configured, and logs a warning", () => {
       setupSentryErrorHandler(fakeApp);
       expect(Sentry.setupExpressErrorHandler).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringMatching(/not configured/i));
     });
 
     it("registers the error handler on the app when configured", () => {
       (config as any).sentry.dsn = "https://examplePublicKey@o0.ingest.sentry.io/0";
       setupSentryErrorHandler(fakeApp);
       expect(Sentry.setupExpressErrorHandler).toHaveBeenCalledWith(fakeApp);
+      expect(logger.info).toHaveBeenCalled();
     });
   });
 

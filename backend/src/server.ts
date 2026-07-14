@@ -1,6 +1,12 @@
+// MUST be the very first import in this file - see instrument.ts's
+// doc comment for why Sentry.init() has to run before app.ts (and
+// therefore before express/cors/etc) is ever imported.
+import "./instrument";
+
 import app from "./app";
 import { config } from "./config";
 import { logger } from "./config/logger";
+import { captureException } from "./config/sentry";
 
 const PORT = config.port;
 
@@ -33,9 +39,11 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 process.on("unhandledRejection", (reason) => {
   logger.error("Unhandled promise rejection", { reason: reason instanceof Error ? reason.message : String(reason) });
+  captureException(reason);
 });
 
 process.on("uncaughtException", (error) => {
   logger.error("Uncaught exception", { errorMessage: error.message, stack: error.stack });
+  captureException(error);
   gracefulShutdown("uncaughtException");
 });
