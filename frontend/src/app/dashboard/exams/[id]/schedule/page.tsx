@@ -788,7 +788,14 @@ export default function ExamSchedulePage() {
                       <ul className="space-y-1">
                         {(papersByScheduleId[r.id!] || []).map((p: any) => (
                           <li key={p.id} className="flex items-center justify-between text-xs bg-gray-50 rounded px-2 py-1.5">
-                            <a href={p.fileUrl} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline">{p.fileName}</a>
+                            {/* ROOT CAUSE FIX: p.fileUrl is a backend-relative
+                                path - a raw relative href here resolves
+                                against the Next.js frontend's own origin
+                                (no matching route -> 404), not the backend
+                                that actually serves /uploads/*. See the same
+                                fix + full explanation in
+                                exams/question-papers/page.tsx. */}
+                            <a href={resolveUploadUrl(p.fileUrl)} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline">{p.fileName}</a>
                             <button onClick={() => handleDeletePaper(r.id!, p.id)} className="text-red-500 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>
                           </li>
                         ))}
