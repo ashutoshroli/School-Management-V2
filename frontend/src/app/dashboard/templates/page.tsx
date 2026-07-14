@@ -382,8 +382,12 @@ export default function TemplatesPage() {
 
     setUploadingSlot(slotKey(slot));
     try {
+      // BUG FIX: see exams/question-papers/page.tsx's handleUpload for
+      // the full explanation - a boundary-less manually-set multipart
+      // Content-Type header can leave the upload request stuck
+      // forever instead of resolving/rejecting.
       await api.post("/templates/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": undefined },
       });
       await fetchTemplates();
     } catch (err: any) {
@@ -464,8 +468,10 @@ export default function TemplatesPage() {
 
     setUploadingExamId(examId);
     try {
+      // BUG FIX: see exams/question-papers/page.tsx's handleUpload for
+      // the full explanation.
       const res = await api.post("/templates/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": undefined },
       });
       setExamTemplates((prev) => {
         const withoutThisExam = prev.filter((t) => t.examId !== examId);

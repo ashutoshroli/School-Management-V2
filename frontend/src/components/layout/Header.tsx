@@ -22,8 +22,12 @@ export default function Header() {
 
     setUploadingAvatar(true);
     try {
+      // BUG FIX: see the detailed explanation in
+      // exams/question-papers/page.tsx's handleUpload - a boundary-less
+      // manually-set multipart Content-Type header can leave the
+      // upload request stuck forever instead of resolving/rejecting.
       const res = await api.post("/auth/avatar", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": undefined },
       });
       setAuth({ ...user, avatar: res.data.data.avatar }, token);
     } catch (err: any) {

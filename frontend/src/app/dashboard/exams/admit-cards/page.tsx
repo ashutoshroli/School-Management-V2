@@ -12,6 +12,7 @@ export default function AdmitCardsPage() {
   const [admitCards, setAdmitCards] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   useEffect(() => {
     api.get("/academics/exams").then((res) => setExams(res.data.data || [])).catch(() => {});
@@ -36,7 +37,14 @@ export default function AdmitCardsPage() {
     try {
       const res = await api.post(`/academics/exams/${selectedExamId}/admit-cards/bulk-generate`, {});
       const data = res.data.data;
-      alert(`Generated: ${data?.generated || 0}, Skipped: ${data?.skipped || 0}, Denied: ${data?.denied || 0}`);
+      // BUG FIX: this read data.generated/data.skipped, but
+      // bulkGenerateAdmitCards actually responds with
+      // { total, eligible, provisional, denied, outcomes } (see
+      // admitCard.controller.ts) - those two fields never existed, so
+      // this always alerted "Generated: undefined, Skipped: undefined,
+      // Denied: undefined" even on a fully successful run, making it
+      // look like nothing had happened.
+      alert(`Processed ${data?.total ?? 0} student(s): ${data?.eligible ?? 0} eligible, ${data?.provisional ?? 0} provisional, ${data?.denied ?? 0} denied.`);
       fetchAdmitCards();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to generate admit cards");
@@ -49,6 +57,41 @@ export default function AdmitCardsPage() {
       await api.delete(`/academics/exams/${selectedExamId}/admit-cards/${studentId}`);
       fetchAdmitCards();
     } catch (err: any) { alert(err.response?.data?.message || "Failed"); }
+  };
+
+  // BUG FIX: this button used to be a plain <a href="/api/...">.
+  // GET /api/academics/exams/:examId/admit-cards/:studentId/pdf
+  // requires `authenticate` (see academics.routes.ts), which reads the
+  // JWT from either the Authorization header or a `token` cookie (see
+  // middleware/auth.ts) - but this app only ever stores the JWT in
+  // localStorage and attaches it via the axios `api` client's request
+  // interceptor (see lib/api.ts); no cookie named "token" is EVER set
+  // anywhere in this codebase. A raw <a href> browser navigation sends
+  // neither, so the backend always rejected it with 401 - opening a
+  // new tab that just showed a JSON error, which looks exactly like
+  // "Download doesn't do anything". Every other working PDF download
+  // in this app (e.g. the per-exam Timetable page's own
+  // downloadAdmitCard/downloadSeatSlip) goes through `api.get(...,
+  // { responseType: "blob" })` so the interceptor's Bearer header is
+  // actually sent - matched here for consistency.
+  const handleDownload = async (studentId: string, studentName: string) => {
+    setDownloadingId(studentId);
+    try {
+      const res = await api.get(`/academics/exams/${selectedExamId}/admit-cards/${studentId}/pdf`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.response?.data?.message || `Failed to download admit card for ${studentName} (it may have been denied)`);
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   const statusColors: Record<string, string> = {
@@ -122,9 +165,14 @@ export default function AdmitCardsPage() {
                   <td className="px-4 py-3 text-gray-500">{formatDate(ac.generatedAt)}</td>
                   <td className="px-4 py-3 text-center">
                     <div className="flex justify-center gap-2">
-                      <a href={`/api/academics/exams/${selectedExamId}/admit-cards/${ac.student?.id || ac.studentId}/pdf`} target="_blank" rel="noreferrer" className="p-1.5 text-primary-600 hover:bg-primary-50 rounded" title="Download PDF">
+                      <button
+                        onClick={() => handleDownload(ac.student?.id || ac.studentId, ac.student?.user?.name || "student")}
+                        disabled={downloadingId === (ac.student?.id || ac.studentId)}
+                        className="p-1.5 text-primary-600 hover:bg-primary-50 rounded disabled:opacity-50"
+                        title="Download PDF"
+                      >
                         <Download className="h-4 w-4" />
-                      </a>
+                      </button>
                       <button onClick={() => handleDelete(ac.student?.id || ac.studentId)} className="p-1.5 text-red-500 hover:bg-red-50 rounded" title="Delete">
                         <Trash2 className="h-4 w-4" />
                       </button>

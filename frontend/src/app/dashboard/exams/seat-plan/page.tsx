@@ -11,10 +11,24 @@ export default function ExamSeatPlanPage() {
   const [selectedExamId, setSelectedExamId] = useState("");
   const [schedules, setSchedules] = useState<any[]>([]);
   const [selectedScheduleId, setSelectedScheduleId] = useState("");
-  const [seatPlan, setSeatPlan] = useState<any[]>([]);
+  // BUG FIX: GET .../seat-plan actually responds with
+  // { totalSeated, rooms: [{ roomId, roomNo, seats: [...] }] } - a
+  // room-wise GROUPED structure (see examSeatPlan.controller.ts's
+  // getSeatPlan/byRoom), not a flat array of seats. This page used to
+  // do `setSeatPlan(res.data.data || [])` and then `seatPlan.map(...)`
+  // straight over it expecting each item to be one seat - since the
+  // response is an OBJECT (truthy, so the `|| []` fallback never
+  // kicked in), that .map call would throw "seatPlan.map is not a
+  // function" the moment any exam sitting that already had a
+  // generated seat plan was selected - another render-time crash on
+  // top of the formatDate one below. Now stored/rendered in the same
+  // room-grouped shape as the working reference implementation on the
+  // per-exam Timetable page's viewSeatPlan.
+  const [seatPlanView, setSeatPlanView] = useState<{ totalSeated: number; rooms: any[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [downloadingSlipFor, setDownloadingSlipFor] = useState<string | null>(null);
 
   useEffect(() => {
     api.get("/academics/exams").then((res) => setExams(res.data.data || [])).catch(() => {});
@@ -25,7 +39,7 @@ export default function ExamSeatPlanPage() {
       api.get(`/academics/exams/${selectedExamId}/schedule`).then((res) => setSchedules(res.data.data || [])).catch(() => setSchedules([]));
     } else { setSchedules([]); }
     setSelectedScheduleId("");
-    setSeatPlan([]);
+    setSeatPlanView(null);
   }, [selectedExamId]);
 
   const fetchSeatPlan = async () => {
@@ -33,8 +47,8 @@ export default function ExamSeatPlanPage() {
     setLoading(true);
     try {
       const res = await api.get(`/academics/exams/schedule/${selectedScheduleId}/seat-plan`);
-      setSeatPlan(res.data.data || []);
-    } catch { setSeatPlan([]); }
+      setSeatPlanView(res.data.data || { totalSeated: 0, rooms: [] });
+    } catch { setSeatPlanView({ totalSeated: 0, rooms: [] }); }
     finally { setLoading(false); }
   };
 
@@ -58,10 +72,41 @@ export default function ExamSeatPlanPage() {
     setClearing(true);
     try {
       await api.delete(`/academics/exams/schedule/${selectedScheduleId}/seat-plan`);
-      setSeatPlan([]);
+      setSeatPlanView({ totalSeated: 0, rooms: [] });
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to clear seat plan");
     } finally { setClearing(false); }
+  };
+
+  // BUG FIX: this was a plain <a href="/api/...">. GET .../slip
+  // requires `authenticate` (see academics.routes.ts), which only
+  // reads the JWT from an Authorization header or a "token" cookie
+  // (middleware/auth.ts) - this app stores the JWT in localStorage and
+  // only ever attaches it via the axios `api` client's interceptor
+  // (lib/api.ts), never as a cookie. A raw browser navigation sends
+  // neither, so the download always 401'd, opening a tab that just
+  // showed a JSON error - looking exactly like "Download does
+  // nothing". Switched to the same authenticated blob-download pattern
+  // already used successfully elsewhere in this app (e.g. the
+  // per-exam Timetable page's downloadSeatSlip).
+  const downloadSlip = async (studentId: string, studentName: string) => {
+    setDownloadingSlipFor(studentId);
+    try {
+      const res = await api.get(`/academics/exams/schedule/${selectedScheduleId}/seat-plan/student/${studentId}/slip`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch {
+      alert(`Failed to download seat slip for ${studentName}`);
+    } finally {
+      setDownloadingSlipFor(null);
+    }
   };
 
   return (
@@ -93,7 +138,7 @@ export default function ExamSeatPlanPage() {
             <button onClick={handleGenerate} disabled={!selectedScheduleId || generating} className="btn-primary flex items-center gap-1.5 disabled:opacity-50">
               <Play className="h-4 w-4" /> {generating ? "Generating..." : "Generate"}
             </button>
-            {seatPlan.length > 0 && (
+            {(seatPlanView?.totalSeated ?? 0) > 0 && (
               <button onClick={handleClear} disabled={clearing} className="btn-secondary flex items-center gap-1.5 text-red-600 disabled:opacity-50">
                 <Trash2 className="h-4 w-4" /> {clearing ? "Clearing..." : "Clear"}
               </button>
@@ -110,38 +155,53 @@ export default function ExamSeatPlanPage() {
         <div className="card text-center py-12">
           <p className="text-gray-500">Select an exam and subject to view or generate a seat plan.</p>
         </div>
-      ) : seatPlan.length === 0 ? (
+      ) : !seatPlanView || seatPlanView.totalSeated === 0 ? (
         <div className="card text-center py-12">
           <p className="text-gray-500">No seat plan generated yet. Click &quot;Generate&quot; to create one.</p>
         </div>
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-gray-50">
-                <th className="px-4 py-3 text-center">Seat #</th>
-                <th className="px-4 py-3 text-left">Student</th>
-                <th className="px-4 py-3 text-left">Admission No</th>
-                <th className="px-4 py-3 text-left">Room</th>
-                <th className="px-4 py-3 text-center">Slip</th>
-              </tr>
-            </thead>
-            <tbody>
-              {seatPlan.map((s: any) => (
-                <tr key={s.id} className="border-b">
-                  <td className="px-4 py-3 text-center font-bold">{s.seatNo}</td>
-                  <td className="px-4 py-3">{s.student?.user?.name || "-"}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{s.student?.admissionNo || "-"}</td>
-                  <td className="px-4 py-3">{s.room?.name || s.room?.roomNo || "-"}</td>
-                  <td className="px-4 py-3 text-center">
-                    <a href={`/api/academics/exams/schedule/${selectedScheduleId}/seat-plan/student/${s.studentId}/slip`} target="_blank" rel="noreferrer" className="text-primary-600 hover:text-primary-700">
-                      <Download className="h-4 w-4 inline" />
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-4">
+          {seatPlanView.rooms.map((room: any) => (
+            <div key={room.roomId} className="card overflow-x-auto">
+              <h3 className="font-semibold mb-3 flex items-center gap-2">
+                Room {room.roomNo}{room.roomName ? ` (${room.roomName})` : ""}
+                <span className="text-xs text-gray-400 font-normal">
+                  {room.seats.length} seated ({room.maleCount} boys / {room.femaleCount} girls{room.otherCount ? ` / ${room.otherCount} other` : ""})
+                </span>
+              </h3>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-gray-50">
+                    <th className="px-4 py-3 text-center">Seat #</th>
+                    <th className="px-4 py-3 text-left">Student</th>
+                    <th className="px-4 py-3 text-left">Admission No</th>
+                    <th className="px-4 py-3 text-left">Section</th>
+                    <th className="px-4 py-3 text-center">Slip</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {room.seats.map((s: any) => (
+                    <tr key={s.studentId} className="border-b">
+                      <td className="px-4 py-3 text-center font-bold">{s.seatNo}</td>
+                      <td className="px-4 py-3">{s.studentName || "-"}</td>
+                      <td className="px-4 py-3 font-mono text-xs">{s.admissionNo || "-"}</td>
+                      <td className="px-4 py-3">{s.sectionName || "-"}</td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => downloadSlip(s.studentId, s.studentName || "student")}
+                          disabled={downloadingSlipFor === s.studentId}
+                          className="text-primary-600 hover:text-primary-700 disabled:opacity-50"
+                          title="Download seat slip"
+                        >
+                          <Download className="h-4 w-4 inline" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
         </div>
       )}
     </div>

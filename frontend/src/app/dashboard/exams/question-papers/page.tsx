@@ -63,8 +63,28 @@ export default function QuestionPapersPage() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("examScheduleId", selectedScheduleId);
+      // BUG FIX: manually setting `Content-Type: multipart/form-data`
+      // here (with NO `boundary` parameter) is what caused the stuck-
+      // forever "Uploading..." state. A multipart body's Content-Type
+      // MUST include a boundary string (e.g.
+      // "multipart/form-data; boundary=----WebKitFormBoundary...") so
+      // the receiving parser knows where one field/file ends and the
+      // next begins - the browser normally generates this
+      // automatically from the FormData object as long as NO
+      // Content-Type header is explicitly present on the request.
+      // Explicitly setting `Content-Type: undefined` below (rather
+      // than just omitting the option) is needed because the shared
+      // `api` axios instance (see lib/api.ts) already sets a default
+      // "Content-Type": "application/json" header - simply not
+      // passing a `headers` option here would let that default leak
+      // through instead of a real multipart boundary. Either the
+      // boundary-less header or the wrong "application/json" header
+      // left the backend's multer middleware (middleware/upload.ts)
+      // unable to parse a body at all, so the request never cleanly
+      // resolved OR rejected - `finally { setUploading(false) }` never
+      // ran, and the button stayed stuck on "Uploading..." forever.
       await api.post("/academics/exams/question-papers", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": undefined },
       });
       setFile(null);
       fetchPapers();

@@ -13,12 +13,29 @@ export function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-export function formatDate(date: string | Date): string {
+/**
+ * BUG FIX: this previously did `new Intl.DateTimeFormat(...).format(new Date(date))`
+ * with no validity check at all - `Intl.DateTimeFormat.format()` THROWS
+ * a RangeError ("Invalid time value") when given an Invalid Date, and
+ * that throw happens DURING RENDER (this is almost always called
+ * straight inside JSX). An uncaught render-time exception crashes the
+ * entire page with Next.js's generic "Application error: a client-side
+ * exception has occurred" - with zero indication in the UI of which
+ * value or which page caused it. `date` being null/undefined/empty-
+ * string/malformed is a completely normal, expected case throughout
+ * this app (an optional field that was never filled in, a value not
+ * yet loaded, etc) - it should render as a harmless placeholder, never
+ * take down the whole page.
+ */
+export function formatDate(date: string | Date | null | undefined): string {
+  if (!date) return "-";
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return "-";
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-  }).format(new Date(date));
+  }).format(parsed);
 }
 
 /**

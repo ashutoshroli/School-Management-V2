@@ -298,7 +298,9 @@ export default function ExamSchedulePage() {
 
     setUploadingTemplateType(type);
     try {
-      await api.post("/templates/upload", formData, { headers: { "Content-Type": "multipart/form-data" } });
+      // BUG FIX: see exams/question-papers/page.tsx's handleUpload for
+      // the full explanation.
+      await api.post("/templates/upload", formData, { headers: { "Content-Type": undefined } });
       await fetchExamTemplates();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to upload template");
@@ -470,8 +472,12 @@ export default function ExamSchedulePage() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("examScheduleId", examScheduleId);
+      // BUG FIX: see exams/question-papers/page.tsx's handleUpload for
+      // the full explanation - a boundary-less manually-set multipart
+      // Content-Type header can leave the upload request stuck
+      // forever instead of resolving/rejecting.
       const res = await api.post("/academics/exams/question-papers", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": undefined },
       });
       setPapersByScheduleId((prev) => ({ ...prev, [examScheduleId]: [res.data.data, ...(prev[examScheduleId] || [])] }));
     } catch (err: any) {
