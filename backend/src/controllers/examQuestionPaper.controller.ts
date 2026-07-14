@@ -79,31 +79,69 @@ export const uploadExamQuestionPaper = async (req: AuthRequest, res: Response): 
 
 /**
  * GET /api/academics/exams/question-papers?examScheduleId=...
- * ADMIN roles see every paper for the schedule entry; a TEACHER only
- * sees their own uploads (papers set by other teachers for a different
+ * GET /api/academics/exams/question-papers?examId=...
+ *
+ * Accepts EITHER filter (at least one is required):
+ *  - examScheduleId: papers for one specific subject sitting (used by
+ *    the per-exam Timetable page, one card per scheduled subject).
+ *  - examId: every paper across ALL of that exam's scheduled subjects
+ *    (used by the standalone Exam Question Papers page's exam-wide
+ *    list/filter).
+ *
+ * BUG FIX: this previously ONLY accepted examScheduleId and 400'd on
+ * anything else - but the standalone Question Papers page's list view
+ * only ever sends `examId` (deliberately showing every subject's
+ * papers for the selected exam at once, not one subject at a time), so
+ * that page's fetchPapers() call always 400'd. The frontend swallowed
+ * that error silently (`catch { setPapers([]) }`), so uploads appeared
+ * to succeed (the POST itself uses examScheduleId and always worked)
+ * while the list underneath permanently showed "No question papers
+ * uploaded yet." regardless of how many papers actually existed.
+ *
+ * ADMIN roles see every paper matching the filter; a TEACHER only sees
+ * their own uploads (papers set by other teachers for a different
  * subject/section aren't relevant to - and shouldn't be browsable by -
  * a teacher who isn't assigned to that subject).
  */
 export const getExamQuestionPapers = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const examScheduleId = req.query.examScheduleId as string;
-    if (!examScheduleId) { sendError(res, "examScheduleId is required", 400); return; }
+    const examScheduleId = req.query.examScheduleId as string | undefined;
+    const examId = req.query.examId as string | undefined;
+    if (!examScheduleId && !examId) {
+      sendError(res, "examScheduleId or examId is required", 400);
+      return;
+    }
 
-    const schedule = await prisma.examSchedule.findUnique({
-      where: { id: examScheduleId },
-      include: { exam: { include: { class: { select: { branchId: true } } } } },
-    });
-    if (!schedule) { sendError(res, "Exam schedule entry not found", 404); return; }
-    if (!canAccessBranch(req, schedule.exam.class.branchId)) { sendError(res, "Exam schedule entry not found", 404); return; }
+    const where: any = {};
 
-    const where: any = { examScheduleId };
+    if (examScheduleId) {
+      const schedule = await prisma.examSchedule.findUnique({
+        where: { id: examScheduleId },
+        include: { exam: { include: { class: { select: { branchId: true } } } } },
+      });
+      if (!schedule) { sendError(res, "Exam schedule entry not found", 404); return; }
+      if (!canAccessBranch(req, schedule.exam.class.branchId)) { sendError(res, "Exam schedule entry not found", 404); return; }
+      where.examScheduleId = examScheduleId;
+    } else {
+      const exam = await prisma.exam.findUnique({
+        where: { id: examId },
+        include: { class: { select: { branchId: true } } },
+      });
+      if (!exam) { sendError(res, "Exam not found", 404); return; }
+      if (!canAccessBranch(req, exam.class.branchId)) { sendError(res, "Exam not found", 404); return; }
+      where.examSchedule = { examId };
+    }
+
     if (req.user!.role === "TEACHER") {
       where.uploadedBy = req.user!.userId;
     }
 
     const papers = await prisma.examQuestionPaper.findMany({
       where,
-      include: { section: { select: { id: true, name: true } } },
+      include: {
+        section: { select: { id: true, name: true } },
+        examSchedule: { select: { exam: { select: { name: true } }, subject: { select: { name: true } } } },
+      },
       orderBy: { createdAt: "desc" },
     });
     sendSuccess(res, papers, "Question papers fetched");
