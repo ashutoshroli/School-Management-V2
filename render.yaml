@@ -67,17 +67,18 @@ services:
       # incompatible with persisting files across restarts, no matter
       # what changes are made to the application code.
       #
-      # Fix: set STORAGE_PROVIDER to "s3" below and fill in real
-      # credentials for any S3-compatible bucket (Cloudflare R2, AWS S3,
-      # Backblaze B2, MinIO, DigitalOcean Spaces...) in the Render
-      # dashboard (Environment tab for this service) - storage.service.ts
-      # already picks this up automatically via its existing
-      # S3StorageProvider (backend/src/services/storage/s3Provider.ts),
-      # no code changes needed. Leaving these blank keeps today's exact
-      # behavior (falls back to local disk - see
-      # storage.service.ts's getStorageProvider()). Alternatively,
+      # Fix: set STORAGE_PROVIDER to "s3" (generic S3-compatible bucket)
+      # or "r2" (Cloudflare R2 specifically - see the R2_* block below)
+      # and fill in real credentials in the Render dashboard
+      # (Environment tab for this service) - storage.service.ts already
+      # picks this up automatically via its existing S3StorageProvider/
+      # R2StorageProvider (backend/src/services/storage/s3Provider.ts,
+      # r2Provider.ts), no further code changes needed. Leaving these
+      # blank keeps today's exact behavior (falls back to local disk -
+      # see storage.service.ts's getStorageProvider()). Alternatively,
       # upgrade this service to a paid Render plan and attach a
-      # persistent disk mounted at UPLOAD_DIR instead of using S3.
+      # persistent disk mounted at UPLOAD_DIR instead of using object
+      # storage.
       - key: STORAGE_PROVIDER
         value: local
       - key: S3_BUCKET
@@ -92,3 +93,22 @@ services:
         sync: false
       - key: S3_PUBLIC_URL
         sync: false
+      # Cloudflare R2 - use these instead of the generic S3_* block
+      # above when STORAGE_PROVIDER=r2 (keeps R2 credentials separate
+      # from a possibly-different S3-compatible provider's config) -
+      # see backend/src/config/r2.ts and .env.example for where to get
+      # each value from the Cloudflare dashboard.
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_PUBLIC_URL
+        sync: false
+      - key: R2_REGION
+        value: auto

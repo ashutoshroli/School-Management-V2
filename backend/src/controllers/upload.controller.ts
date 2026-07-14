@@ -41,7 +41,15 @@ export const uploadStudentDocument = async (req: AuthRequest, res: Response): Pr
     const { url } = await storage.save(req.file.buffer, req.file.originalname, `students/${studentId}`);
 
     const document = await prisma.studentDocument.create({
-      data: { studentId, name: req.file.originalname, type, fileUrl: url },
+      data: {
+        studentId,
+        name: req.file.originalname,
+        type,
+        fileUrl: url,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        uploadedBy: req.user!.userId,
+      },
     });
 
     sendSuccess(res, document, "Document uploaded", 201);
@@ -107,7 +115,15 @@ export const uploadStaffDocument = async (req: AuthRequest, res: Response): Prom
     const { url } = await storage.save(req.file.buffer, req.file.originalname, `staff/${staffId}`);
 
     const document = await prisma.staffDocument.create({
-      data: { staffId, name: req.file.originalname, type, fileUrl: url },
+      data: {
+        staffId,
+        name: req.file.originalname,
+        type,
+        fileUrl: url,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        uploadedBy: req.user!.userId,
+      },
     });
 
     sendSuccess(res, document, "Document uploaded", 201);

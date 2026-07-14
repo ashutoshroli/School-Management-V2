@@ -101,6 +101,24 @@ export const getStorageProvider = (): StorageProvider => {
     const { S3StorageProvider } = require("./storage/s3Provider");
     return new S3StorageProvider();
   }
+  // Cloudflare R2 - a dedicated provider option (rather than reusing
+  // STORAGE_PROVIDER=s3 with S3_ENDPOINT pointed at R2) so R2's own
+  // R2_* credentials (config/r2.ts) never get mixed up with the
+  // generic S3_* block above, which may be configured for a different
+  // provider at the same time.
+  if (config.s3.provider === "r2") {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { isR2Configured } = require("./storage/r2Provider");
+    if (!isR2Configured()) {
+      logger.warn(
+        "STORAGE_PROVIDER=r2 but R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET_NAME are not fully set - falling back to local disk storage."
+      );
+      return new LocalStorageProvider();
+    }
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { R2StorageProvider } = require("./storage/r2Provider");
+    return new R2StorageProvider();
+  }
   return new LocalStorageProvider();
 };
 
