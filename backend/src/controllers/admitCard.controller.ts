@@ -262,7 +262,10 @@ export const getAdmitCardPdf = async (req: AuthRequest, res: Response): Promise<
 
     const filename = `admit-card-${student.admissionNo}-${exam.name}.pdf`;
 
-    const admitCardTemplate = await getActiveDocumentTemplate("ADMIT_CARD");
+    // Exam-specific template first (if this exam has its own uploaded
+    // Admit Card layout), falling back to the school-wide default -
+    // see documentTemplateLookup.service.ts.
+    const admitCardTemplate = await getActiveDocumentTemplate("ADMIT_CARD", examId);
     const fromTemplate = await renderTemplateToPdf(admitCardTemplate?.templateUrl, {
       studentName: student.user.name,
       admissionNo: student.admissionNo,

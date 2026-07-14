@@ -27,9 +27,10 @@ interface TemplateSlot {
   placeholders: { key: string; description: string }[];
   /**
    * Optional note about docxtemplater's loop syntax
-   * ({#arrayKey}...{/arrayKey}) for templates that support a
-   * repeating table row (currently only REPORT_CARD's per-subject
-   * marks table) - shown as a separate callout in the guide modal
+   * ({{#arrayKey}}...{{/arrayKey}}) for templates that support a
+   * repeating table row (currently REPORT_CARD's per-subject marks
+   * table and ADMIT_CARD's per-subject schedule table) - shown as a
+   * separate callout in the guide modal
    * rather than in the placeholders list, since it isn't a single
    * {{tag}} that the "copy" button could meaningfully copy.
    */
@@ -197,16 +198,16 @@ const TEMPLATE_SLOTS: TemplateSlot[] = [
     category: "document",
     type: "REPORT_CARD",
     label: "Report Card",
-    description: "Exam result summary for a student.",
+    description: "Exam result summary for a student. This is the school-wide default used for every exam that doesn't have its own template - to use a DIFFERENT layout for one specific exam, upload it under that exam's \"Exam Templates\" section on its Timetable page instead.",
     sampleFile: "REPORT_CARD.docx",
     loopSyntaxNote:
       "The {{subjectName}}/{{maxMarks}}/{{obtainedMarks}}/{{grade}} placeholders below only fill in with the FIRST " +
       "subject's marks - fine for a simple one-line summary, but not enough for a real multi-subject table. To show " +
       "every subject as its own table row instead, build a one-row table in Word, then wrap that row in a loop: put " +
-      "{#marks} at the very start of the row's first cell and {/marks} at the very end of the row's last cell " +
-      "(single curly braces, NOT double), then inside that row use single-brace {subjectName}, {maxMarks}, " +
-      "{obtainedMarks}, {grade} in the individual cells. Everything between {#marks} and {/marks} repeats once per " +
-      "subject automatically. The downloadable sample below already has this set up correctly.",
+      "{{#marks}} at the very start of the row's first cell and {{/marks}} at the very end of the row's last cell " +
+      "(double curly braces, same as every other placeholder here), then inside that row use {{subjectName}}, " +
+      "{{maxMarks}}, {{obtainedMarks}}, {{grade}} in the individual cells. Everything between {{#marks}} and " +
+      "{{/marks}} repeats once per subject automatically. The downloadable sample below already has this set up correctly.",
     placeholders: [
       { key: "studentName", description: "Student's full name" },
       { key: "admissionNo", description: "Admission number" },
@@ -226,13 +227,13 @@ const TEMPLATE_SLOTS: TemplateSlot[] = [
     category: "document",
     type: "ADMIT_CARD",
     label: "Admit Card",
-    description: "Exam admit card / hall ticket, listing every subject a student is permitted to sit for (with date/time/room) - separate from the Report Card template above, which is for RESULTS, not exam entry permission.",
+    description: "Exam admit card / hall ticket, listing every subject a student is permitted to sit for (with date/time/room) - separate from the Report Card template above, which is for RESULTS, not exam entry permission. This is the school-wide default used for every exam that doesn't have its own template - to use a DIFFERENT layout for one specific exam (e.g. a distinct Annual Exam hall ticket), upload it under that exam's \"Exam Templates\" section on its Timetable page instead.",
     sampleFile: "ADMIT_CARD.docx",
     loopSyntaxNote:
       "The {{subjects}} data is a per-subject list (date/time/room) - build a one-row table in Word, wrap that row in " +
-      "{#subjects}...{/subjects} (single curly braces), and inside the row use single-brace {subjectName}, " +
-      "{examDate}, {startTime}, {endTime}, {roomNo}. Everything between the tags repeats once per subject the " +
-      "student is permitted to sit for.",
+      "{{#subjects}}...{{/subjects}} (double curly braces, same as every other placeholder here), and inside the row " +
+      "use {{subjectName}}, {{examDate}}, {{startTime}}, {{endTime}}, {{roomNo}}. Everything between the tags " +
+      "repeats once per subject the student is permitted to sit for.",
     placeholders: [
       { key: "studentName", description: "Student's full name" },
       { key: "admissionNo", description: "Admission number" },
