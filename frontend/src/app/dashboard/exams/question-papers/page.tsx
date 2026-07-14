@@ -5,6 +5,7 @@ import { FileUp, Trash2, Download, FileText } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { formatDate } from "@/lib/utils";
+import { resolveUploadUrl } from "@/lib/uploads";
 
 
 interface QuestionPaper {
@@ -207,7 +208,19 @@ export default function QuestionPapersPage() {
                   <td className="px-4 py-3 text-gray-500">{formatDate(p.createdAt)}</td>
                   <td className="px-4 py-3 text-center">
                     <div className="flex justify-center gap-2">
-                      <a href={p.fileUrl} target="_blank" rel="noreferrer" className="p-1.5 text-primary-600 hover:bg-primary-50 rounded" title="Download">
+                      {/* ROOT CAUSE FIX: p.fileUrl is a backend-relative path
+                          (e.g. "/uploads/exam-question-papers/..."), stored
+                          that way because the backend doesn't know its own
+                          public origin at write time (see
+                          storage.service.ts's LocalStorageProvider.save()).
+                          A relative href resolves against the CURRENT
+                          document's origin - the Next.js frontend - which
+                          has no route at that path, so it 404'd. Every other
+                          download/preview link in this app already resolves
+                          the URL against the backend's own origin via
+                          resolveUploadUrl() (see lib/uploads.ts); this link
+                          was the one place still using the raw relative URL. */}
+                      <a href={resolveUploadUrl(p.fileUrl)} target="_blank" rel="noreferrer" className="p-1.5 text-primary-600 hover:bg-primary-50 rounded" title="Download">
                         <Download className="h-4 w-4" />
                       </a>
                       <button onClick={() => handleDelete(p.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded" title="Delete">
