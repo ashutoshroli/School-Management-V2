@@ -23,6 +23,29 @@ interface ScheduleRow {
 
 const EMPTY_ROW: ScheduleRow = { subjectId: "", examDate: "", startTime: "", endTime: "", durationMinutes: "", maxMarks: "", roomId: "" };
 
+// Native <input type="time"> is the source of a very easy-to-make
+// mistake: on a 12-hour-locale browser, picking "1:35" for End Time
+// can resolve to 01:35 (1:35 AM) instead of 13:35 (1:35 PM) - which is
+// BEFORE a 12:35 PM start time, and the backend correctly rejects it,
+// but the resulting "endTime must be after startTime" error gives no
+// clue that AM/PM (not 24h math) was the actual mistake. Fix: derive
+// End Time from Start Time + Duration automatically (so End Time's
+// AM/PM never has to be picked by hand for the common case), and keep
+// Duration in sync if End Time is edited directly instead.
+const timeToMinutes = (t: string): number | null => {
+  if (!t) return null;
+  const [h, m] = t.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+};
+
+const minutesToTime = (totalMinutes: number): string => {
+  const wrapped = ((totalMinutes % 1440) + 1440) % 1440; // clamp into a single 24h day
+  const hh = Math.floor(wrapped / 60).toString().padStart(2, "0");
+  const mm = (wrapped % 60).toString().padStart(2, "0");
+  return `${hh}:${mm}`;
+};
+
 // Document types that can have a template scoped to THIS exam
 // specifically (see DocumentTemplate.examId in schema.prisma) -
 // matches EXAM_SCOPED_DOCUMENT_TYPES in template.controller.ts. Every
@@ -354,7 +377,34 @@ export default function ExamSchedulePage() {
   const addRow = () => setRows([...rows, { ...EMPTY_ROW }]);
   const removeRow = (index: number) => setRows(rows.filter((_, i) => i !== index));
   const updateRow = (index: number, field: keyof ScheduleRow, value: string) => {
-    setRows(rows.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
+    setRows(rows.map((r, i) => {
+      if (i !== index) return r;
+      const next = { ...r, [field]: value };
+
+      // Keep Start/End/Duration in sync so End Time's AM/PM basically
+      // never needs to be picked by hand (the easiest way to trigger
+      // the "endTime must be after startTime" mix-up):
+      //  - Start Time or Duration changed -> recompute End Time.
+      //  - End Time changed directly -> recompute Duration instead
+      //    (respects an admin who prefers setting the end time and
+      //    letting duration follow, e.g. copying a printed date sheet).
+      if (field === "startTime" || field === "durationMinutes") {
+        const startMin = timeToMinutes(next.startTime);
+        const duration = parseInt(next.durationMinutes, 10);
+        if (startMin !== null && Number.isFinite(duration) && duration > 0) {
+          next.endTime = minutesToTime(startMin + duration);
+        }
+      } else if (field === "endTime") {
+        const startMin = timeToMinutes(next.startTime);
+        const endMin = timeToMinutes(next.endTime);
+        if (startMin !== null && endMin !== null) {
+          const diff = endMin - startMin;
+          if (diff > 0) next.durationMinutes = String(diff);
+        }
+      }
+
+      return next;
+    }));
   };
 
   const handleSave = async () => {
@@ -367,6 +417,22 @@ export default function ExamSchedulePage() {
     for (const r of cleaned) {
       if (!r.examDate || !r.startTime || !r.endTime || !r.durationMinutes || !r.maxMarks) {
         setMessage({ type: "error", text: "Every subject needs a date, start/end time, duration, and max marks" });
+        return;
+      }
+    }
+    // Catch the AM/PM mix-up client-side with a message that actually
+    // names the subject and shows both times, instead of only finding
+    // out after a round trip to the backend with a raw subjectId in
+    // the error text (see examSchedule.controller.ts's toMinutes check).
+    for (const r of cleaned) {
+      const startMin = timeToMinutes(r.startTime);
+      const endMin = timeToMinutes(r.endTime);
+      if (startMin !== null && endMin !== null && endMin <= startMin) {
+        const name = subjects.find((s) => s.id === r.subjectId)?.name || "This subject";
+        setMessage({
+          type: "error",
+          text: `${name}: End Time (${r.endTime}) must be after Start Time (${r.startTime}). If you meant the afternoon, check the End Time's AM/PM.`,
+        });
         return;
       }
     }

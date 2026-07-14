@@ -64,6 +64,16 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
+    // Subject names for error messages below - a raw cuid subjectId
+    // in an error string (e.g. "Subject cmrhhr4jz00057ucsdsyobvs6:
+    // endTime must be after startTime") tells an admin nothing about
+    // WHICH row on the timetable to fix; showing the actual subject
+    // name lets them find it immediately.
+    const subjectNames = new Map(
+      (await prisma.subject.findMany({ where: { id: { in: [...uniqueSubjectIds] } }, select: { id: true, name: true } })).map((s) => [s.id, s.name])
+    );
+    const subjectLabel = (subjectId: string) => subjectNames.get(subjectId) || subjectId;
+
     // Overlap check: group by date, then compare every pair within
     // that date's entries.
     const byDate: Record<string, { subjectId: string; start: number; end: number }[]> = {};
@@ -72,7 +82,11 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       const start = toMinutes(s.startTime);
       const end = toMinutes(s.endTime);
       if (end <= start) {
-        sendError(res, `Subject ${s.subjectId}: endTime must be after startTime`, 400);
+        sendError(
+          res,
+          `${subjectLabel(s.subjectId)}: End Time (${s.endTime}) must be after Start Time (${s.startTime}). If this was meant to be in the afternoon/evening, double-check the End Time's AM/PM.`,
+          400
+        );
         return;
       }
       (byDate[dateKey] ||= []).push({ subjectId: s.subjectId, start, end });
@@ -81,7 +95,7 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       for (let i = 0; i < entries.length; i++) {
         for (let j = i + 1; j < entries.length; j++) {
           if (rangesOverlap(entries[i].start, entries[i].end, entries[j].start, entries[j].end)) {
-            sendError(res, `Schedule conflict on ${dateKey}: subjects ${entries[i].subjectId} and ${entries[j].subjectId} overlap in time`, 400);
+            sendError(res, `Schedule conflict on ${dateKey}: ${subjectLabel(entries[i].subjectId)} and ${subjectLabel(entries[j].subjectId)} overlap in time`, 400);
             return;
           }
         }
@@ -208,7 +222,11 @@ export const updateExamScheduleEntry = async (req: AuthRequest, res: Response): 
     const newStart = startTime !== undefined ? startTime : entry.startTime;
     const newEnd = endTime !== undefined ? endTime : entry.endTime;
     if (toMinutes(newEnd) <= toMinutes(newStart)) {
-      sendError(res, "endTime must be after startTime", 400);
+      sendError(
+        res,
+        `End Time (${newEnd}) must be after Start Time (${newStart}). If this was meant to be in the afternoon/evening, double-check the End Time's AM/PM.`,
+        400
+      );
       return;
     }
 
