@@ -941,6 +941,7 @@ model Exam {
   marks        Mark[]
   schedules    ExamSchedule[]
   admitCards   AdmitCard[]
+  documentTemplates DocumentTemplate[]
 }
 
 enum ExamType {
@@ -1717,8 +1718,33 @@ model DocumentTemplate {
   type        DocTemplateType
   templateUrl String   // DOCX file
   isDefault   Boolean  @default(false)
+  // null = the org-wide/school-wide default template for this `type`
+  // (the original behavior - one global DOCX per type). A non-null
+  // value scopes this row to ONE specific exam - e.g. a school that
+  // wants a different Admit Card or Report Card layout for its
+  // "Unit Test" exams vs. its "Annual" exam can upload a separate
+  // template per exam instead of being limited to a single shared
+  // one. Only meaningful for exam-related types (ADMIT_CARD,
+  // REPORT_CARD) - other types (FEE_RECEIPT, PAYSLIP, ADMISSION_FORM,
+  // CUSTOM) have no natural exam association and always leave this
+  // null. Lookup order (see documentTemplateLookup.service.ts) always
+  // tries the exam-specific row first, falling back to the type's
+  // global (examId: null) row when none exists for that exam.
+  examId      String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  exam Exam? @relation(fields: [examId], references: [id])
+
+  // Guards against uploading two templates for the same (type, exam)
+  // pair - matches the "one current DOCX per slot" convention the
+  // upload endpoint already enforces in application code for the
+  // global (examId: null) case. Postgres treats multiple NULLs as
+  // distinct for a unique index, so this does NOT by itself prevent
+  // more than one global row per type - that's still enforced by
+  // uploadTemplateFile's existing findFirst-then-update-or-create
+  // logic, same as before this field was added.
+  @@unique([type, examId])
 }
 
 enum DocTemplateType {
