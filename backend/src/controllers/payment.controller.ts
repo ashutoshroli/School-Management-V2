@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import crypto from "crypto";
 import prisma from "../config/database";
 import { config } from "../config";
+import { logger, logError } from "../config/logger";
 import { getRazorpayClient, isRazorpayConfigured } from "../config/razorpay";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
@@ -181,6 +182,105 @@ export const verifyRazorpayPayment = async (req: AuthRequest, res: Response): Pr
 };
 
 /**
+ * Shared handler for any webhook event whose payload carries a captured/
+ * successful `payment.entity` - both `payment.captured` and `order.paid`
+ * include one (per Razorpay's webhook payload reference), so this is
+ * called from both instead of duplicating the recording logic.
+ *
+ * Idempotent by design: webhooks can be retried/duplicated by Razorpay,
+ * AND `order.paid` fires for the same underlying payment that already
+ * triggered `payment.captured` (or vice versa, ordering isn't
+ * guaranteed) - the transactionId uniqueness check below means whichever
+ * event arrives second is a no-op.
+ */
+const handleCapturedPayment = async (rpPayment: any): Promise<void> => {
+  const paymentId = rpPayment.id as string;
+  const notes = rpPayment.notes || {};
+  const { branchId, studentId, feeAssignmentId } = notes;
+
+  const existing = await prisma.payment.findFirst({ where: { transactionId: paymentId } });
+  if (existing) return;
+
+  if (!branchId || !studentId || !feeAssignmentId) return;
+
+  const { assignment } = await getValidatedFeeAssignment(feeAssignmentId, studentId, branchId);
+  if (!assignment) return;
+
+  const amount = Number(rpPayment.amount) / 100;
+  const result = await prisma.$transaction((tx) =>
+    recordFeePayment(tx, assignment, {
+      branchId,
+      studentId,
+      feeAssignmentId,
+      amount,
+      paymentMode: "ONLINE_RAZORPAY",
+      transactionId: paymentId,
+      remarks: `Razorpay webhook - order ${rpPayment.order_id}`,
+    })
+  );
+
+  const studentRecord = await prisma.student.findUnique({ where: { id: studentId }, include: { user: { select: { name: true } } } });
+  if (studentRecord) {
+    notifyPaymentConfirmation(studentId, studentRecord.user.name, amount, result.payment.receiptNo);
+  }
+};
+
+/**
+ * Handler for `payment.failed` - no fee is actually paid here (the
+ * FeeAssignment/accounting ledger are deliberately left untouched), but
+ * we still record a lightweight FAILED Payment row for visibility/
+ * audit ("why does this student's dashboard show a failed attempt but
+ * no receipt"). Every fee-reports query (day book, collection trend,
+ * defaulters, etc - see feeReports.controller.ts) explicitly filters
+ * `status: "SUCCESS"`, so a FAILED row here can never inflate revenue
+ * totals or otherwise corrupt those reports.
+ */
+const handleFailedPayment = async (rpPayment: any): Promise<void> => {
+  const paymentId = rpPayment.id as string;
+  const notes = rpPayment.notes || {};
+  const { branchId, studentId, feeAssignmentId } = notes;
+
+  const existing = await prisma.payment.findFirst({ where: { transactionId: paymentId } });
+  if (existing) return;
+
+  if (!branchId || !studentId || !feeAssignmentId) {
+    logger.warn("Razorpay payment.failed webhook missing branchId/studentId/feeAssignmentId notes", { paymentId });
+    return;
+  }
+
+  const { assignment } = await getValidatedFeeAssignment(feeAssignmentId, studentId, branchId);
+  if (!assignment) return;
+
+  const amount = Number(rpPayment.amount) / 100;
+  const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { code: true } });
+  const count = await prisma.payment.count({ where: { branchId } });
+  const receiptNo = `RCP-${branch?.code || "STD"}-${String(count + 1).padStart(6, "0")}`;
+
+  await prisma.payment.create({
+    data: {
+      branchId,
+      studentId,
+      feeAssignmentId,
+      amount,
+      paymentMode: "ONLINE_RAZORPAY",
+      transactionId: paymentId,
+      receiptNo,
+      remarks: `Razorpay payment failed: ${rpPayment.error_description || rpPayment.error_code || "unknown reason"}`,
+      status: "FAILED",
+    },
+  });
+
+  logger.warn("Razorpay payment.failed", {
+    paymentId,
+    branchId,
+    studentId,
+    feeAssignmentId,
+    errorCode: rpPayment.error_code,
+    errorDescription: rpPayment.error_description,
+  });
+};
+
+/**
  * Razorpay webhook - server-to-server confirmation of payment events.
  * This is the authoritative confirmation path (independent of whether
  * the paying user's browser stayed open) and should be configured in
@@ -218,53 +318,37 @@ export const razorpayWebhook = async (req: Request, res: Response): Promise<void
 
     const event = req.body;
 
-    if (event.event === "payment.captured") {
-      const rpPayment = event.payload?.payment?.entity;
-      if (!rpPayment) {
-        res.status(200).json({ success: true, message: "No payment entity, ignored" });
-        return;
-      }
-
-      const paymentId = rpPayment.id as string;
-      const notes = rpPayment.notes || {};
-      const { branchId, studentId, feeAssignmentId } = notes;
-
-      // Idempotency - webhooks can be retried/duplicated by Razorpay.
-      const existing = await prisma.payment.findFirst({ where: { transactionId: paymentId } });
-      if (existing) {
-        res.status(200).json({ success: true, message: "Already recorded" });
-        return;
-      }
-
-      if (branchId && studentId && feeAssignmentId) {
-        const { assignment } = await getValidatedFeeAssignment(feeAssignmentId, studentId, branchId);
-        if (assignment) {
-          const amount = Number(rpPayment.amount) / 100;
-          const result = await prisma.$transaction((tx) =>
-            recordFeePayment(tx, assignment, {
-              branchId,
-              studentId,
-              feeAssignmentId,
-              amount,
-              paymentMode: "ONLINE_RAZORPAY",
-              transactionId: paymentId,
-              remarks: `Razorpay webhook - order ${rpPayment.order_id}`,
-            })
-          );
-
-          const studentRecord = await prisma.student.findUnique({ where: { id: studentId }, include: { user: { select: { name: true } } } });
-          if (studentRecord) {
-            notifyPaymentConfirmation(studentId, studentRecord.user.name, amount, result.payment.receiptNo);
-          }
+    switch (event.event) {
+      case "payment.captured":
+      case "order.paid": {
+        // Both event payloads carry a payment.entity (order.paid's is
+        // the payment that completed the order) - see
+        // handleCapturedPayment's doc comment for why one shared
+        // handler is safe/idempotent for both.
+        const rpPayment = event.payload?.payment?.entity;
+        if (rpPayment) {
+          await handleCapturedPayment(rpPayment);
         }
+        break;
       }
+      case "payment.failed": {
+        const rpPayment = event.payload?.payment?.entity;
+        if (rpPayment) {
+          await handleFailedPayment(rpPayment);
+        }
+        break;
+      }
+      default:
+        // Any other event type is intentionally ignored - still 200'd
+        // below so Razorpay doesn't keep retrying it.
+        break;
     }
 
     // Always 200 quickly so Razorpay doesn't keep retrying an event we
     // successfully received, even if we chose not to act on it above.
     res.status(200).json({ success: true, message: "Webhook processed" });
   } catch (error) {
-    console.error("Razorpay webhook error:", error);
+    logError("Razorpay webhook error", error);
     // Still ack with 200 to avoid endless gateway retries for an event
     // that has a permanent (non-transient) processing issue on our side;
     // the error is logged server-side for investigation.
