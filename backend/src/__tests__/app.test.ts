@@ -8,11 +8,25 @@ import app from "../app";
  * fail with 401 before any DB query happens).
  */
 describe("GET /api/health", () => {
-  it("returns a success payload", async () => {
+  it("returns a success payload, always with HTTP 200 regardless of dependency status", async () => {
     const res = await request(app).get("/api/health");
+    // Always 200 even if the database/redis checks below report
+    // "fail" - see routes/index.ts's comment on why this must never
+    // vary with dependency status (Render's own health monitor points
+    // at this exact route and would restart-loop the service otherwise).
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.message).toMatch(/running/i);
+  });
+
+  it("reports database and redis dependency status in the body", async () => {
+    const res = await request(app).get("/api/health");
+    // No real Postgres/Redis is running in this test environment, so
+    // these are expected to report "fail"/"not_configured" - the point
+    // of this test is only that the fields exist with one of the
+    // documented values, not a specific value.
+    expect(["ok", "fail"]).toContain(res.body.database);
+    expect(["ok", "fail", "not_configured"]).toContain(res.body.redis);
   });
 });
 
