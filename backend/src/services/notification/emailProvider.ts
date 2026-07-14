@@ -47,8 +47,14 @@ export const sendEmail = async ({ to, subject, body, html, attachments }: SendEm
     throw new Error("Email is not configured (missing SMTP_HOST/SMTP_USER/SMTP_PASS)");
   }
 
+  // SMTP_FROM_EMAIL lets the "From" display address differ from the
+  // SMTP auth user (e.g. a shared relay account authenticating as one
+  // address but sending "from" a different one) - config.smtp.fromEmail
+  // already falls back to config.smtp.user when SMTP_FROM_EMAIL is
+  // unset (see config/index.ts), so this is backward compatible with
+  // every deployment that only ever set SMTP_USER.
   await getTransporter().sendMail({
-    from: `"${config.smtp.fromName}" <${config.smtp.user}>`,
+    from: `"${config.smtp.fromName}" <${config.smtp.fromEmail}>`,
     to,
     subject,
     text: body,

@@ -98,6 +98,12 @@ export const config = {
     user: process.env.SMTP_USER || "",
     pass: process.env.SMTP_PASS || "",
     fromName: process.env.SMTP_FROM_NAME || "School ERP",
+    // Optional - the "From" display address, if it should be different
+    // from the SMTP auth user (e.g. a shared relay account authenticating
+    // as one address but sending "from" a different, nicer-looking one).
+    // Falls back to SMTP_USER when unset, matching the previous
+    // (SMTP_USER-only) behavior - see emailProvider.ts's sendEmail().
+    fromEmail: process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER || "",
   },
   sms: {
     // MSG91 Flow API (https://docs.msg91.com/reference/send-otp) - the
