@@ -37,6 +37,14 @@ describe("Unknown routes", () => {
   });
 });
 
+describe("GET /api/debug-sentry", () => {
+  it("throws and is converted into a 500 response by the error handler (confirms the route is wired up for Sentry verification)", async () => {
+    const res = await request(app).get("/api/debug-sentry");
+    expect(res.status).toBe(500);
+    expect(res.body.success).toBe(false);
+  });
+});
+
 // Phase 1 (Communication) - device registration and fee reminders both
 // require auth; these smoke tests confirm the routes are actually
 // mounted and reachable (would 404 if a route file typo'd the path)

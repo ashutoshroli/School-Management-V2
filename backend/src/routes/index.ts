@@ -30,6 +30,19 @@ router.get("/health", (_req, res) => {
   });
 });
 
+// TEMPORARY Sentry verification route - intentionally throws so you can
+// confirm SENTRY_DSN is wired up correctly end-to-end (hit
+// GET /api/debug-sentry, then check the Sentry dashboard for a new
+// event). This is deliberately unauthenticated/unguarded so it's easy
+// to test right after deploying, matching Sentry's own official Express
+// tutorial (https://docs.sentry.io/platforms/javascript/guides/express/)
+// - but it should be REMOVED once you've confirmed events are showing
+// up in Sentry, since a route that always throws is otherwise dead
+// weight (and needless noise/quota usage if anyone else finds it).
+router.get("/debug-sentry", () => {
+  throw new Error("Sentry test error - if you can see this in your Sentry dashboard, the setup works!");
+});
+
 // Mount routes
 router.use("/auth", authRoutes);
 router.use("/branches", branchRoutes);

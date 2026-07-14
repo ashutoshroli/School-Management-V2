@@ -13,7 +13,14 @@
  * for why callers fall back to inline/synchronous execution in that
  * case instead of relying on a worker that will never run).
  */
+// MUST be the very first import in this file too - this is a SEPARATE
+// process from server.ts, so it needs its own Sentry.init() call
+// (config/sentry.ts's captureException() is a no-op otherwise). See
+// instrument.ts's doc comment for why this has to be the first import.
+import "../instrument";
+
 import { config } from "../config";
+import { captureException } from "../config/sentry";
 import { isRedisConfigured } from "../config/redis";
 import { logger } from "../config/logger";
 import { startNotificationWorker } from "./notificationWorker";
@@ -33,8 +40,10 @@ process.on("unhandledRejection", (reason) => {
   logger.error("Unhandled promise rejection in worker process", {
     reason: reason instanceof Error ? reason.message : String(reason),
   });
+  captureException(reason);
 });
 
 process.on("uncaughtException", (error) => {
   logger.error("Uncaught exception in worker process", { errorMessage: error.message, stack: error.stack });
+  captureException(error);
 });

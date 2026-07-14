@@ -10,13 +10,10 @@ import routes from "./routes";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 import { requestId } from "./middleware/requestId";
 import { config } from "./config";
-import { initSentry, setupSentryErrorHandler } from "./config/sentry";
+import { setupSentryErrorHandler } from "./config/sentry";
 import { swaggerSpec, isDocsEnabled } from "./docs/swagger";
 
 const app = express();
-
-// Error tracking
-initSentry(app);
 
 // Request ID tracking (for log correlation + debugging)
 app.use(requestId);
