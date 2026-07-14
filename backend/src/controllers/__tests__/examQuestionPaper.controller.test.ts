@@ -4,6 +4,7 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     examSchedule: { findUnique: jest.fn() },
+    exam: { findUnique: jest.fn() },
     section: { findUnique: jest.fn() },
     examQuestionPaper: { create: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), delete: jest.fn() },
   },
@@ -156,10 +157,11 @@ describe("examQuestionPaper.controller - getExamQuestionPapers", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (prisma.examSchedule.findUnique as jest.Mock).mockResolvedValue(SCHEDULE);
+    (prisma.exam.findUnique as jest.Mock).mockResolvedValue({ id: "exam-1", class: { branchId: "branch-1" } });
     (prisma.examQuestionPaper.findMany as jest.Mock).mockResolvedValue([]);
   });
 
-  it("returns 400 when examScheduleId is missing", async () => {
+  it("returns 400 when NEITHER examScheduleId NOR examId is given", async () => {
     const req = makeReq({ query: {} });
     const res = makeMockRes();
 
@@ -168,7 +170,7 @@ describe("examQuestionPaper.controller - getExamQuestionPapers", () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
-  it("returns 404 when the schedule entry does not exist", async () => {
+  it("returns 404 when the schedule entry does not exist (examScheduleId filter)", async () => {
     (prisma.examSchedule.findUnique as jest.Mock).mockResolvedValue(null);
     const req = makeReq({ query: { examScheduleId: "sch-1" } });
     const res = makeMockRes();
@@ -178,7 +180,7 @@ describe("examQuestionPaper.controller - getExamQuestionPapers", () => {
     expect(res.status).toHaveBeenCalledWith(404);
   });
 
-  it("SECURITY: a TEACHER only sees their own uploads (uploadedBy filter applied)", async () => {
+  it("SECURITY: a TEACHER only sees their own uploads (uploadedBy filter applied) when filtering by examScheduleId", async () => {
     const req = makeReq({ query: { examScheduleId: "sch-1" } });
     const res = makeMockRes();
 
@@ -201,6 +203,59 @@ describe("examQuestionPaper.controller - getExamQuestionPapers", () => {
     await getExamQuestionPapers(req, res);
 
     expect((prisma.examQuestionPaper.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ examScheduleId: "sch-1" });
+  });
+
+  // BUG FIX regression tests: the standalone Exam Question Papers
+  // page's list view only ever sends `examId` (showing every
+  // scheduled subject's papers for the whole exam at once), which this
+  // endpoint used to reject outright with a 400 - the frontend
+  // swallowed that error silently, so the list always showed "No
+  // question papers uploaded yet." even right after a successful
+  // upload. See examQuestionPaper.controller.ts's updated doc comment.
+  it("REGRESSION: accepts examId alone (no examScheduleId) and filters via the examSchedule relation", async () => {
+    const req = makeReq({ query: { examId: "exam-1" } });
+    const res = makeMockRes();
+
+    await getExamQuestionPapers(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(prisma.exam.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "exam-1" } }));
+    expect((prisma.examQuestionPaper.findMany as jest.Mock).mock.calls[0][0].where).toEqual({
+      examSchedule: { examId: "exam-1" },
+      uploadedBy: "teacher-1",
+    });
+  });
+
+  it("returns 404 when filtering by an examId that doesn't exist", async () => {
+    (prisma.exam.findUnique as jest.Mock).mockResolvedValue(null);
+    const req = makeReq({ query: { examId: "exam-missing" } });
+    const res = makeMockRes();
+
+    await getExamQuestionPapers(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("SECURITY: rejects an examId belonging to a DIFFERENT branch", async () => {
+    (prisma.exam.findUnique as jest.Mock).mockResolvedValue({ id: "exam-1", class: { branchId: "branch-OTHER" } });
+    const req = makeReq({ query: { examId: "exam-1" } });
+    const res = makeMockRes();
+
+    await getExamQuestionPapers(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("ADMIN roles see every paper across the exam (no uploadedBy filter) when filtering by examId", async () => {
+    const req = makeReq({
+      query: { examId: "exam-1" },
+      user: { userId: "admin-1", email: "a@test.com", role: UserRole.BRANCH_ADMIN, branchId: "branch-1" },
+    });
+    const res = makeMockRes();
+
+    await getExamQuestionPapers(req, res);
+
+    expect((prisma.examQuestionPaper.findMany as jest.Mock).mock.calls[0][0].where).toEqual({ examSchedule: { examId: "exam-1" } });
   });
 });
 
