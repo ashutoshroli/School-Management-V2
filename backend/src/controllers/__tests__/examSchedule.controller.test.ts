@@ -125,6 +125,15 @@ describe("examSchedule.controller - bulkSetExamSchedule", () => {
   });
 
   it("names the subject (not its raw id) in the endTime-before-startTime error message", async () => {
+    // This schedule has only ONE subject ("sub-1"), so the class-subject
+    // assignment check (assignedCount !== uniqueSubjectIds.size) must be
+    // sized to match 1, not the default 2 set in beforeEach for the
+    // two-subject validSchedule fixture - otherwise THAT check trips
+    // first with an unrelated "not assigned to this exam's class" error
+    // before the endTime check is ever reached (same pattern already
+    // used below by "SECURITY: rejects a room belonging to a DIFFERENT
+    // branch").
+    (prisma.classSubject.count as jest.Mock).mockResolvedValue(1);
     const req = makeReq({
       body: { examId: "exam-1", schedule: [{ ...validSchedule[0], startTime: "12:35", endTime: "01:35" }] },
     });
@@ -139,6 +148,7 @@ describe("examSchedule.controller - bulkSetExamSchedule", () => {
   });
 
   it("still rejects endTime-before-startTime even if the subject name lookup itself fails", async () => {
+    (prisma.classSubject.count as jest.Mock).mockResolvedValue(1); // schedule below has only 1 subject - see comment above
     (prisma.subject.findUnique as jest.Mock).mockRejectedValue(new Error("db unreachable"));
     const req = makeReq({
       body: { examId: "exam-1", schedule: [{ ...validSchedule[0], startTime: "10:00", endTime: "09:00" }] },
