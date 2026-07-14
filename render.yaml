@@ -52,3 +52,43 @@ services:
         value: ./uploads
       - key: MAX_FILE_SIZE
         value: "10485760"
+      # ROOT CAUSE NOTE: on Render's FREE plan (this blueprint's `plan:
+      # free` above), the container has NO persistent disk - Render
+      # doesn't support attaching one on this plan at all. UPLOAD_DIR
+      # above is a plain path inside the container's own filesystem, so
+      # every uploaded file written there via storage.service.ts's
+      # LocalStorageProvider is WIPED the moment this service redeploys
+      # OR spins back up after its free-tier inactivity sleep (~15 min).
+      # The database row referencing that file (e.g.
+      # ExamQuestionPaper.fileUrl) survives fine in Postgres - only the
+      # file's actual bytes disappear - which is exactly why an upload
+      # can succeed and show up in a list, then 404 on download shortly
+      # after. Local disk storage on this plan is fundamentally
+      # incompatible with persisting files across restarts, no matter
+      # what changes are made to the application code.
+      #
+      # Fix: set STORAGE_PROVIDER to "s3" below and fill in real
+      # credentials for any S3-compatible bucket (Cloudflare R2, AWS S3,
+      # Backblaze B2, MinIO, DigitalOcean Spaces...) in the Render
+      # dashboard (Environment tab for this service) - storage.service.ts
+      # already picks this up automatically via its existing
+      # S3StorageProvider (backend/src/services/storage/s3Provider.ts),
+      # no code changes needed. Leaving these blank keeps today's exact
+      # behavior (falls back to local disk - see
+      # storage.service.ts's getStorageProvider()). Alternatively,
+      # upgrade this service to a paid Render plan and attach a
+      # persistent disk mounted at UPLOAD_DIR instead of using S3.
+      - key: STORAGE_PROVIDER
+        value: local
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: us-east-1
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_PUBLIC_URL
+        sync: false
