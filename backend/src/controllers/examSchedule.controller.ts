@@ -26,6 +26,27 @@ const rangesOverlap = (aStart: number, aEnd: number, bStart: number, bEnd: numbe
   aStart < bEnd && bStart < aEnd;
 
 /**
+ * Best-effort subject name lookup for error messages only - a raw
+ * cuid subjectId in an error string (e.g. "Subject cmrhhr4jz00057uc...:
+ * endTime must be after startTime") tells an admin nothing about WHICH
+ * row on the timetable to fix, so error paths below show the actual
+ * subject name instead. Deliberately lazy (only called once an error
+ * is already being built, for just the one or two subjects involved)
+ * rather than bulk-fetched upfront for every request - this is a
+ * display nicety, not validation-critical, so any failure here (a
+ * missing subject row, a transient DB hiccup) falls back to the raw
+ * id rather than ever blocking or crashing the actual request.
+ */
+const getSubjectLabel = async (subjectId: string): Promise<string> => {
+  try {
+    const subject = await prisma.subject.findUnique({ where: { id: subjectId }, select: { name: true } });
+    return subject?.name || subjectId;
+  } catch {
+    return subjectId;
+  }
+};
+
+/**
  * Replaces the whole exam's subject-wise schedule in one call - same
  * "edit the whole list at once" convention as
  * upsertPeriodConfigs/bulkSetSchedule elsewhere in this codebase,
@@ -72,7 +93,12 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       const start = toMinutes(s.startTime);
       const end = toMinutes(s.endTime);
       if (end <= start) {
-        sendError(res, `Subject ${s.subjectId}: endTime must be after startTime`, 400);
+        const label = await getSubjectLabel(s.subjectId);
+        sendError(
+          res,
+          `${label}: End Time (${s.endTime}) must be after Start Time (${s.startTime}). If this was meant to be in the afternoon/evening, double-check the End Time's AM/PM.`,
+          400
+        );
         return;
       }
       (byDate[dateKey] ||= []).push({ subjectId: s.subjectId, start, end });
@@ -81,7 +107,8 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
       for (let i = 0; i < entries.length; i++) {
         for (let j = i + 1; j < entries.length; j++) {
           if (rangesOverlap(entries[i].start, entries[i].end, entries[j].start, entries[j].end)) {
-            sendError(res, `Schedule conflict on ${dateKey}: subjects ${entries[i].subjectId} and ${entries[j].subjectId} overlap in time`, 400);
+            const [labelA, labelB] = await Promise.all([getSubjectLabel(entries[i].subjectId), getSubjectLabel(entries[j].subjectId)]);
+            sendError(res, `Schedule conflict on ${dateKey}: ${labelA} and ${labelB} overlap in time`, 400);
             return;
           }
         }
@@ -208,7 +235,11 @@ export const updateExamScheduleEntry = async (req: AuthRequest, res: Response): 
     const newStart = startTime !== undefined ? startTime : entry.startTime;
     const newEnd = endTime !== undefined ? endTime : entry.endTime;
     if (toMinutes(newEnd) <= toMinutes(newStart)) {
-      sendError(res, "endTime must be after startTime", 400);
+      sendError(
+        res,
+        `End Time (${newEnd}) must be after Start Time (${newStart}). If this was meant to be in the afternoon/evening, double-check the End Time's AM/PM.`,
+        400
+      );
       return;
     }
 
