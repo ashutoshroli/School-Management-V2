@@ -45,7 +45,7 @@ export default function FileUploadButton({
     setUploading(true);
     try {
       const res = await api.post(uploadPath, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": undefined },
       });
       onUploaded?.(res.data.data);
     } catch (err: any) {
