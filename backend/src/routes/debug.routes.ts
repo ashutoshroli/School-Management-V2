@@ -26,6 +26,7 @@ import { UserRole } from "@prisma/client";
 import { authenticate, authorize } from "../middleware/auth";
 import { sendSuccess, sendError } from "../utils/response";
 import { AuthRequest } from "../types";
+import { config } from "../config";
 import { isRazorpayConfigured, getRazorpayClient } from "../config/razorpay";
 import { isEmailConfigured, sendEmail } from "../services/notification/emailProvider";
 import { isPushConfigured, sendPush } from "../services/notification/pushProvider";
@@ -69,6 +70,21 @@ router.get("/razorpay", async (_req, res) => {
  * GET /api/debug/email?to=you@example.com
  * Sends a real test email via SMTP. `to` defaults to the calling
  * admin's own account email if not given.
+ *
+ * TEMPORARY DEBUG VISIBILITY: this route builds its OWN raw JSON error
+ * response below instead of using sendError() for the catch block.
+ * sendError() (utils/response.ts) deliberately STRIPS the `error`
+ * detail for any 5xx response when NODE_ENV=production (security
+ * measure - most controllers pass raw error.message here, which can
+ * leak Prisma/internal detail to arbitrary API clients) - that's
+ * exactly why this route's error kept showing only the generic
+ * "Email self-test failed" on Render (NODE_ENV=production there) even
+ * though the real nodemailer/SMTP error (e.g. "535 Authentication
+ * failed") was being thrown correctly underneath. Since this whole
+ * route is already SUPER_ADMIN-gated and meant to be deleted after
+ * verification, bypassing that stripping here is safe - remove this
+ * detailed-error block (and go back to a plain sendError() call, or
+ * just delete this route/file) once SMTP is confirmed working.
  */
 router.get("/email", async (req: AuthRequest, res) => {
   try {
@@ -84,7 +100,34 @@ router.get("/email", async (req: AuthRequest, res) => {
     });
     sendSuccess(res, { to }, "Test email sent successfully - check the inbox (and spam folder)");
   } catch (error) {
-    sendError(res, "Email self-test failed", 500, (error as Error).message);
+    const err = error as any;
+    res.status(500).json({
+      success: false,
+      message: "Email self-test failed",
+      // TEMPORARY: raw error detail, deliberately bypassing
+      // sendError()'s production stripping - see this route's header
+      // comment above. Never expose this shape on a real
+      // (non-debug/non-admin-gated) endpoint.
+      error: {
+        message: err?.message,
+        // nodemailer's SMTPTransport errors carry these on top of a
+        // plain Error - e.g. code: "EAUTH", responseCode: 535,
+        // response: "535 5.7.8 Authentication failed" (Brevo/most SMTP
+        // providers reject bad credentials with exactly this shape).
+        code: err?.code,
+        command: err?.command,
+        responseCode: err?.responseCode,
+        response: err?.response,
+      },
+      smtpConfig: {
+        // Non-secret diagnostic context only - never the password.
+        host: config.smtp.host,
+        port: config.smtp.port,
+        secure: config.smtp.port === 465,
+        user: config.smtp.user,
+        fromEmail: config.smtp.fromEmail,
+      },
+    });
   }
 });
 

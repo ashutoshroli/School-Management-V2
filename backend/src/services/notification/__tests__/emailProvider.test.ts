@@ -15,6 +15,11 @@ jest.mock("../../../config", () => ({
   },
 }));
 
+const mockLogError = jest.fn();
+jest.mock("../../../config/logger", () => ({
+  logError: mockLogError,
+}));
+
 import { config } from "../../../config";
 import { isEmailConfigured, sendEmail } from "../emailProvider";
 
@@ -101,6 +106,24 @@ describe("emailProvider", () => {
       await sendEmail({ to: "parent@example.com", subject: "Hi", body: "plain", html: "<strong>rich</strong>" });
 
       expect(mockSendMail).toHaveBeenCalledWith(expect.objectContaining({ html: "<strong>rich</strong>" }));
+    });
+
+    it("BUG FIX: logs the full SMTP error (via logError) before re-throwing, instead of the failure being silently invisible in server logs", async () => {
+      (config as any).smtp = { host: "smtp.brevo.com", port: 587, user: "auth@brevo.com", pass: "wrong-pass", fromName: "School ERP", fromEmail: "noreply@school.com" };
+      const smtpError: any = new Error("Invalid login: 535 5.7.8 Authentication failed");
+      smtpError.code = "EAUTH";
+      smtpError.responseCode = 535;
+      mockSendMail.mockRejectedValue(smtpError);
+
+      await expect(sendEmail({ to: "parent@example.com", subject: "Hi", body: "Test" })).rejects.toThrow(
+        "Invalid login: 535 5.7.8 Authentication failed"
+      );
+
+      expect(mockLogError).toHaveBeenCalledWith(
+        "sendEmail: SMTP send failed",
+        smtpError,
+        expect.objectContaining({ to: "parent@example.com", host: "smtp.brevo.com", port: 587, smtpUser: "auth@brevo.com" })
+      );
     });
   });
 });

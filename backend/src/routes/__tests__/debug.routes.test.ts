@@ -73,6 +73,33 @@ describe("debug.routes (TEMPORARY - delete alongside debug.routes.ts)", () => {
     expect(res.status).toBe(503);
   });
 
+  it("BUG FIX: GET /api/debug/email includes the raw SMTP error detail in the response even when NODE_ENV=production, instead of only a generic message", async () => {
+    const { isEmailConfigured, sendEmail } = require("../../services/notification/emailProvider");
+    isEmailConfigured.mockReturnValue(true);
+    const smtpError: any = new Error("Invalid login: 535 5.7.8 Authentication failed");
+    smtpError.code = "EAUTH";
+    smtpError.command = "AUTH LOGIN";
+    smtpError.responseCode = 535;
+    smtpError.response = "535 5.7.8 Authentication failed";
+    sendEmail.mockRejectedValue(smtpError);
+
+    const res = await request(app).get("/api/debug/email").set("Authorization", `Bearer ${superAdminToken}`);
+
+    expect(res.status).toBe(500);
+    expect(res.body.success).toBe(false);
+    // This is the exact bug being fixed: sendError() strips `error` for
+    // 5xx responses outside development, so a plain sendError() call
+    // here would only ever show "Email self-test failed" on Render
+    // (NODE_ENV=production) - this route deliberately bypasses that.
+    expect(res.body.error.message).toBe("Invalid login: 535 5.7.8 Authentication failed");
+    expect(res.body.error.code).toBe("EAUTH");
+    expect(res.body.error.responseCode).toBe(535);
+    expect(res.body.smtpConfig).toBeDefined();
+    expect(res.body.smtpConfig.host).toBeDefined();
+
+    isEmailConfigured.mockReturnValue(false); // reset for other tests in this file
+  });
+
   it("GET /api/debug/push returns 503 when FCM is not configured", async () => {
     const res = await request(app).get("/api/debug/push").set("Authorization", `Bearer ${superAdminToken}`);
     expect(res.status).toBe(503);
