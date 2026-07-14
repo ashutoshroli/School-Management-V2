@@ -59,7 +59,7 @@ export const bulkSetExamSchedule = async (req: AuthRequest, res: Response): Prom
     const assignedCount = await prisma.classSubject.count({ 
       where: { classId: exam.classId, subjectId: { in: [...uniqueSubjectIds] } } 
     });
-    if (assignedCount !== uniqueSubjectIds.length) {
+    if (assignedCount !== uniqueSubjectIds.size) {
       sendError(res, "One or more subjects are not assigned to this exam's class", 400);
       return;
     }
