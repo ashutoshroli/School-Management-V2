@@ -1,5 +1,6 @@
 import nodemailer, { Transporter } from "nodemailer";
 import { config } from "../../config";
+import { logError } from "../../config/logger";
 
 /**
  * Whether SMTP is actually configured. Callers should check this before
@@ -53,12 +54,35 @@ export const sendEmail = async ({ to, subject, body, html, attachments }: SendEm
   // already falls back to config.smtp.user when SMTP_FROM_EMAIL is
   // unset (see config/index.ts), so this is backward compatible with
   // every deployment that only ever set SMTP_USER.
-  await getTransporter().sendMail({
-    from: `"${config.smtp.fromName}" <${config.smtp.fromEmail}>`,
-    to,
-    subject,
-    text: body,
-    html: html || `<p>${body.replace(/\n/g, "<br/>")}</p>`,
-    attachments,
-  });
+  try {
+    await getTransporter().sendMail({
+      from: `"${config.smtp.fromName}" <${config.smtp.fromEmail}>`,
+      to,
+      subject,
+      text: body,
+      html: html || `<p>${body.replace(/\n/g, "<br/>")}</p>`,
+      attachments,
+    });
+  } catch (error) {
+    // ROOT CAUSE VISIBILITY: previously this error was only re-thrown -
+    // never logged anywhere - so a real SMTP failure (wrong
+    // credentials, auth rejected, connection refused, etc) was
+    // completely invisible in Render's logs/Sentry. nodemailer's
+    // SMTPTransport errors carry extra fields (responseCode, command,
+    // e.g. "535 5.7.8 Authentication failed" for a bad password) that
+    // a plain `error.message` alone can lose - logging the full error
+    // object (via logError's `stack`) preserves those. This log call
+    // is always safe/production-appropriate - it never reaches the
+    // HTTP response, only server-side logs/Sentry.
+    logError("sendEmail: SMTP send failed", error, {
+      to,
+      host: config.smtp.host,
+      port: config.smtp.port,
+      // Deliberately logging only WHICH user was used to authenticate,
+      // never the password - see the equivalent care taken with the
+      // razorpay/R2 config elsewhere in this codebase.
+      smtpUser: config.smtp.user,
+    });
+    throw error;
+  }
 };
