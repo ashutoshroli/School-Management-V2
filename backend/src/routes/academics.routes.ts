@@ -60,7 +60,22 @@ router.get("/exams/:examId/schedule", authenticate, getExamSchedule);
 router.put("/exams/schedule/:id", authenticate, authorize(...ADMIN), validate(updateExamScheduleEntrySchema), updateExamScheduleEntry);
 router.delete("/exams/schedule/:id", authenticate, authorize(...ADMIN), deleteExamScheduleEntry);
 
-// Exams - CRUD operations (defined AFTER exam schedule routes to avoid route conflicts)
+// Exam Question Papers (PDF/DOCX, teacher-scoped to their own subject/class)
+// IMPORTANT: "/exams/question-papers" MUST be defined BEFORE "/exams/:id"
+// below. Both share the same path shape ("/exams/<one segment>"), and
+// Express matches routes in REGISTRATION ORDER, not "literal beats
+// param" - if "/exams/:id" were registered first, every request to
+// GET /exams/question-papers would be silently intercepted by
+// getExamById with id="question-papers" (always 404s, never calls
+// next()), making getExamQuestionPapers permanently unreachable and
+// bypassing its authorize(...TEACHERS) check. Same ordering convention
+// already used above for "/exams/schedule" vs "/exams/:id".
+router.post("/exams/question-papers", authenticate, authorize(...TEACHERS), handleUploadErrors(uploadExamPaper), uploadExamQuestionPaper);
+router.get("/exams/question-papers", authenticate, authorize(...TEACHERS), getExamQuestionPapers);
+router.delete("/exams/question-papers/:id", authenticate, authorize(...TEACHERS), deleteExamQuestionPaper);
+
+// Exams - CRUD operations (defined AFTER exam schedule + question-paper
+// routes to avoid route conflicts - see comments above)
 router.post("/exams", authenticate, authorize(...ADMIN), validate(createExamSchema), createExam);
 router.get("/exams", authenticate, getExams);
 router.get("/exams/:id", authenticate, getExamById);
@@ -70,11 +85,6 @@ router.post("/exams/marks", authenticate, authorize(...TEACHERS), validate(enter
 router.get("/exams/:examId/results", authenticate, getExamResults);
 router.get("/exams/:examId/report-card/:studentId", authenticate, getReportCardPdf);
 router.patch("/exams/:id/publish", authenticate, authorize(...ADMIN), togglePublish);
-
-// Exam Question Papers (PDF/DOCX, teacher-scoped to their own subject/class)
-router.post("/exams/question-papers", authenticate, authorize(...TEACHERS), handleUploadErrors(uploadExamPaper), uploadExamQuestionPaper);
-router.get("/exams/question-papers", authenticate, authorize(...TEACHERS), getExamQuestionPapers);
-router.delete("/exams/question-papers/:id", authenticate, authorize(...TEACHERS), deleteExamQuestionPaper);
 
 // Exam Seat Plan (room-wise seating for one exam subject sitting)
 router.post("/exams/schedule/:examScheduleId/seat-plan", authenticate, authorize(...ADMIN), validate(generateSeatPlanSchema), generateSeatPlan);
