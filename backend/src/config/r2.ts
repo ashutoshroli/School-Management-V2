@@ -1,7 +1,6 @@
 import crypto from "crypto";
 import path from "path";
-import { S3Client, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { Upload } from "@aws-sdk/lib-storage";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { config } from "./index";
 import { logger } from "./logger";
 
@@ -133,22 +132,20 @@ export const uploadToR2 = async (
   const safeName = `${crypto.randomUUID()}${ext}`;
   const key = path.posix.join(subDir, safeName);
 
-  // Uses @aws-sdk/lib-storage's Upload helper (rather than a raw
-  // PutObjectCommand) so this scales automatically from a small
-  // document up through a large multi-part upload without any code
-  // change here if MAX_FILE_SIZE is ever raised - Upload transparently
-  // switches to R2's multipart API above its internal size threshold
-  // and handles part retries itself.
-  const uploader = new Upload({
-    client: getR2Client(),
-    params: {
+  // A single PutObjectCommand call (same pattern as the existing
+  // s3Provider.ts) is sufficient here - S3/R2's PutObject supports
+  // objects up to 5GB in one request, well above this app's
+  // MAX_FILE_SIZE cap (10MB by default, see config/index.ts's
+  // upload.maxSize), so there's no real multipart-upload need to
+  // justify the extra @aws-sdk/lib-storage dependency.
+  await getR2Client().send(
+    new PutObjectCommand({
       Bucket: config.r2.bucketName,
       Key: key,
       Body: fileBuffer,
       ContentType: mimeType || guessContentType(fileName),
-    },
-  });
-  await uploader.done();
+    })
+  );
 
   return { url: buildPublicUrl(key), key };
 };

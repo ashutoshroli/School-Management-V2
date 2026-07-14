@@ -1,20 +1,13 @@
 const mockSend = jest.fn();
-const mockUploadDone = jest.fn();
 
 jest.mock("@aws-sdk/client-s3", () => {
   return {
     S3Client: jest.fn().mockImplementation(() => ({ send: mockSend })),
+    PutObjectCommand: jest.fn().mockImplementation((input) => ({ __type: "PutObjectCommand", input })),
     DeleteObjectCommand: jest.fn().mockImplementation((input) => ({ __type: "DeleteObjectCommand", input })),
     GetObjectCommand: jest.fn().mockImplementation((input) => ({ __type: "GetObjectCommand", input })),
   };
 });
-
-jest.mock("@aws-sdk/lib-storage", () => ({
-  Upload: jest.fn().mockImplementation((opts) => ({
-    __opts: opts,
-    done: mockUploadDone,
-  })),
-}));
 
 jest.mock("../index", () => ({
   config: {
@@ -34,8 +27,7 @@ jest.mock("../logger", () => ({
   logger: { warn: jest.fn(), info: jest.fn(), error: jest.fn() },
 }));
 
-import { Upload } from "@aws-sdk/lib-storage";
-import { DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import {
   isR2Configured,
   uploadToR2,
@@ -72,22 +64,20 @@ describe("r2 config (Cloudflare R2 client + reusable helpers)", () => {
   });
 
   describe("uploadToR2", () => {
-    it("uploads via @aws-sdk/lib-storage's Upload and returns a public URL + key under the given subDir", async () => {
-      mockUploadDone.mockResolvedValue({});
+    it("uploads via PutObjectCommand and returns a public URL + key under the given subDir", async () => {
+      mockSend.mockResolvedValue({});
 
       const result = await uploadToR2(Buffer.from("file contents"), "photo.png", undefined, "students/s1");
 
-      expect(Upload).toHaveBeenCalledWith(
+      expect(PutObjectCommand).toHaveBeenCalledWith(
         expect.objectContaining({
-          params: expect.objectContaining({
-            Bucket: "test-bucket",
-            Key: expect.stringMatching(/^students\/s1\/[0-9a-f-]+\.png$/),
-            Body: Buffer.from("file contents"),
-            ContentType: "image/png",
-          }),
+          Bucket: "test-bucket",
+          Key: expect.stringMatching(/^students\/s1\/[0-9a-f-]+\.png$/),
+          Body: Buffer.from("file contents"),
+          ContentType: "image/png",
         })
       );
-      expect(mockUploadDone).toHaveBeenCalledTimes(1);
+      expect(mockSend).toHaveBeenCalledTimes(1);
       // No R2_PUBLIC_URL configured - falls back to the raw R2 endpoint URL.
       expect(result.url).toMatch(
         /^https:\/\/test-account\.r2\.cloudflarestorage\.com\/test-bucket\/students\/s1\/[0-9a-f-]+\.png$/
@@ -97,7 +87,7 @@ describe("r2 config (Cloudflare R2 client + reusable helpers)", () => {
 
     it("uses R2_PUBLIC_URL for the returned URL when configured", async () => {
       (config as any).r2 = { ...config.r2, publicUrl: "https://files.myschool.com" };
-      mockUploadDone.mockResolvedValue({});
+      mockSend.mockResolvedValue({});
 
       const result = await uploadToR2(Buffer.from("x"), "doc.pdf", undefined, "misc");
 
@@ -107,7 +97,7 @@ describe("r2 config (Cloudflare R2 client + reusable helpers)", () => {
     it("uses an explicit R2_ENDPOINT override instead of the derived accountId-based endpoint", async () => {
       (config as any).r2 = { ...config.r2, endpoint: "https://custom-r2-endpoint.example.com" };
       __resetR2ClientForTests();
-      mockUploadDone.mockResolvedValue({});
+      mockSend.mockResolvedValue({});
 
       const result = await uploadToR2(Buffer.from("x"), "doc.pdf", undefined, "misc");
 
@@ -115,18 +105,16 @@ describe("r2 config (Cloudflare R2 client + reusable helpers)", () => {
     });
 
     it("uses an explicit mimeType over the guessed content type", async () => {
-      mockUploadDone.mockResolvedValue({});
+      mockSend.mockResolvedValue({});
       await uploadToR2(Buffer.from("x"), "file.bin", "application/pdf", "misc");
-      expect(Upload).toHaveBeenCalledWith(
-        expect.objectContaining({ params: expect.objectContaining({ ContentType: "application/pdf" }) })
-      );
+      expect(PutObjectCommand).toHaveBeenCalledWith(expect.objectContaining({ ContentType: "application/pdf" }));
     });
 
     it("guesses a generic content type for an unknown extension with no mimeType given", async () => {
-      mockUploadDone.mockResolvedValue({});
+      mockSend.mockResolvedValue({});
       await uploadToR2(Buffer.from("x"), "file.xyz", undefined, "misc");
-      expect(Upload).toHaveBeenCalledWith(
-        expect.objectContaining({ params: expect.objectContaining({ ContentType: "application/octet-stream" }) })
+      expect(PutObjectCommand).toHaveBeenCalledWith(
+        expect.objectContaining({ ContentType: "application/octet-stream" })
       );
     });
   });
