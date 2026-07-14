@@ -21,10 +21,15 @@ import { convertDocxToPdf } from "./docxToPdf.service";
 /**
  * Flat key/value data for simple {{tag}} placeholders, PLUS optionally
  * an array value for docxtemplater's loop syntax
- * ({#arrayKey}...{/arrayKey}) - e.g. a report card's per-subject rows.
- * Most callers only ever populate the flat string/number fields; the
- * array shape only matters to a school that has customized their
- * uploaded template to include a repeating table.
+ * ({{#arrayKey}}...{{/arrayKey}}) - e.g. a report card's per-subject
+ * rows. Because the delimiters below are overridden to double curly
+ * braces, the loop tags MUST also use double curly braces (docxtemplater
+ * uses one lexer/delimiter pair for every tag type, including loops) -
+ * single-brace loop tags like {#arrayKey} are NOT recognized and are
+ * left as literal text in the output. Most callers only ever populate
+ * the flat string/number fields; the array shape only matters to a
+ * school that has customized their uploaded template to include a
+ * repeating table.
  */
 export type TemplateData = Record<string, string | number | Record<string, string | number>[]>;
 

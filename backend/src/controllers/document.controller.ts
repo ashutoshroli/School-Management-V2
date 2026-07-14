@@ -515,13 +515,18 @@ export const getReportCardPdf = async (req: AuthRequest, res: Response): Promise
 
     // Report cards have one row per subject, which a flat placeholder
     // map (a single {{subjectName}}) can't represent for more than one
-    // subject. docxtemplater's loop syntax ({#marks}...{/marks}) lets a
-    // school's template repeat a table row per subject - `marks` (an
+    // subject. docxtemplater's loop syntax ({{#marks}}...{{/marks}},
+    // double braces since that's how the delimiters are configured in
+    // templateRenderer.service.ts) lets a school's template repeat a
+    // table row per subject - `marks` (an
     // array) is passed alongside the flat top-level fields so a
     // template can use either depending on how it was authored (a
     // simple template with just {{subjectName}} for a single row, or a
     // real per-subject table via the loop).
-    const reportCardTemplate = await getActiveDocumentTemplate("REPORT_CARD");
+    // Exam-specific template first (if this exam has its own uploaded
+    // Report Card layout), falling back to the school-wide default -
+    // see documentTemplateLookup.service.ts.
+    const reportCardTemplate = await getActiveDocumentTemplate("REPORT_CARD", examId);
     const fromTemplate = await renderTemplateToPdf(reportCardTemplate?.templateUrl, {
       studentName: student.user.name,
       admissionNo: student.admissionNo,
