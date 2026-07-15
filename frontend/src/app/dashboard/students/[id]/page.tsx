@@ -11,6 +11,7 @@ import { resolveUploadUrl } from "@/lib/uploads";
 import FileUploadButton from "@/components/ui/FileUploadButton";
 import Modal from "@/components/ui/Modal";
 import { useAuth } from "@/hooks/useAuth";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const ATTENDANCE_STATUS_COLORS: Record<string, string> = {
   PRESENT: "bg-green-100 text-green-700",
@@ -35,6 +36,7 @@ export default function StudentProfilePage() {
   // not reverse them, so the Refund button is hidden for everyone else
   // rather than showing an action that would just 403.
   const isAdmin = user?.role === "SUPER_ADMIN" || user?.role === "BRANCH_ADMIN";
+  const { canEdit, canDelete } = usePermissions();
   const [student, setStudent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<any[]>([]);
@@ -343,9 +345,11 @@ export default function StudentProfilePage() {
         <button onClick={() => setShowResetConfirm(true)} className="btn-secondary flex items-center gap-2">
           <KeyRound className="h-4 w-4" /> Reset Password
         </button>
-        <button onClick={openEditModal} className="btn-primary flex items-center gap-2">
-          <Edit className="h-4 w-4" /> Edit
-        </button>
+        {canEdit && (
+          <button onClick={openEditModal} className="btn-primary flex items-center gap-2">
+            <Edit className="h-4 w-4" /> Edit
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -603,9 +607,11 @@ export default function StudentProfilePage() {
                     </a>
                     <p className="text-xs text-gray-500">{doc.type.replace("_", " ")} &bull; {formatDate(doc.createdAt)}</p>
                   </div>
-                  <button onClick={() => handleDeleteDocument(doc.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canDelete && (
+                    <button onClick={() => handleDeleteDocument(doc.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               ))}
               {(!student.documents || student.documents.length === 0) && (
@@ -654,9 +660,11 @@ export default function StudentProfilePage() {
                       <button onClick={() => toggleDiscount(d.id)} title={d.isActive ? "Deactivate" : "Activate"} className="text-gray-500 hover:text-gray-700">
                         {d.isActive ? <ToggleRight className="h-4 w-4 text-green-600" /> : <ToggleLeft className="h-4 w-4" />}
                       </button>
-                      <button onClick={() => deleteDiscount(d.id)} title="Remove" className="text-red-500 hover:text-red-700">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {canDelete && (
+                        <button onClick={() => deleteDiscount(d.id)} title="Remove" className="text-red-500 hover:text-red-700">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

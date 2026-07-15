@@ -7,6 +7,7 @@ import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import ErrorBanner from "@/components/ui/ErrorBanner";
 import { formatDate } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface AcademicYear {
   id: string;
@@ -18,6 +19,7 @@ interface AcademicYear {
 
 export default function AcademicYearsPage() {
   const router = useRouter();
+  const { canDelete } = usePermissions();
   const [years, setYears] = useState<AcademicYear[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -156,9 +158,11 @@ export default function AcademicYearsPage() {
                   {year.isActive && (
                     <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">Active</span>
                   )}
-                  <button onClick={() => deleteYear(year.id, year.name)} title="Delete" className="text-red-400 hover:text-red-600">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canDelete && (
+                    <button onClick={() => deleteYear(year.id, year.name)} title="Delete" className="text-red-400 hover:text-red-600">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               </div>
               <p className="text-sm text-gray-500">

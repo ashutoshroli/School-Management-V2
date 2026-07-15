@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { GraduationCap, Plus, Search, Eye, Filter, BadgeCheck, Trash2 } from "lucide-react";
+import { GraduationCap, Plus, Search, Eye, BadgeCheck, Trash2 } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api";
 import DataTable from "@/components/ui/DataTable";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import MultiFilterBar, { MultiFilterValue } from "@/components/ui/MultiFilterBar";
 import { openPdfInNewTab } from "@/lib/pdf";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface Student {
   id: string;
@@ -19,13 +21,18 @@ interface Student {
 }
 
 export default function StudentsPage() {
+  const { canDelete } = usePermissions();
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [classFilter, setClassFilter] = useState("");
-  const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
+  // Point 1 (Multi-Filter): Class + Section + Teacher + Subject,
+  // combined in one filter bar instead of the previous single Class
+  // dropdown - a teacher/subject filter narrows the roster to
+  // students in a class/section that teacher/subject actually applies
+  // to (see getStudents' teacherId/subjectId handling).
+  const [filters, setFilters] = useState<MultiFilterValue>({});
   const [error, setError] = useState<string | null>(null);
 
   const fetchStudents = async () => {
@@ -34,7 +41,10 @@ export default function StudentsPage() {
       setError(null);
       const params: any = { page, limit: 25 };
       if (search) params.search = search;
-      if (classFilter) params.classId = classFilter;
+      if (filters.classId) params.classId = filters.classId;
+      if (filters.sectionId) params.sectionId = filters.sectionId;
+      if (filters.teacherId) params.teacherId = filters.teacherId;
+      if (filters.subjectId) params.subjectId = filters.subjectId;
       const res = await api.get("/students", { params });
       setStudents(res.data.data || []);
       setTotalPages(res.data.pagination?.totalPages || 1);
@@ -46,15 +56,7 @@ export default function StudentsPage() {
     }
   };
 
-  const fetchClasses = async () => {
-    try {
-      const res = await api.get("/classes");
-      setClasses(res.data.data || []);
-    } catch (err) {}
-  };
-
-  useEffect(() => { fetchClasses(); }, []);
-  useEffect(() => { fetchStudents(); }, [page, search, classFilter]);
+  useEffect(() => { fetchStudents(); }, [page, search, filters]);
 
   const deleteStudentRecord = async (id: string, name: string) => {
     if (!confirm(`Delete student "${name}"? This cannot be undone.`)) return;
@@ -87,9 +89,11 @@ export default function StudentsPage() {
           <Link href={`/dashboard/students/${s.id}`} className="p-1 rounded hover:bg-gray-100 inline-block">
             <Eye className="h-4 w-4 text-primary-600" />
           </Link>
-          <button onClick={() => deleteStudentRecord(s.id, s.user.name)} title="Delete Student" className="p-1 rounded hover:bg-gray-100">
-            <Trash2 className="h-4 w-4 text-red-500" />
-          </button>
+          {canDelete && (
+            <button onClick={() => deleteStudentRecord(s.id, s.user.name)} title="Delete Student" className="p-1 rounded hover:bg-gray-100">
+              <Trash2 className="h-4 w-4 text-red-500" />
+            </button>
+          )}
         </div>
       ),
     },
@@ -109,7 +113,7 @@ export default function StudentsPage() {
         </Link>
       </div>
 
-      {/* Filters */}
+      {/* Search */}
       <div className="card mb-4">
         <div className="flex flex-wrap gap-4">
           <div className="relative flex-1 min-w-[200px]">
@@ -121,19 +125,9 @@ export default function StudentsPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
-          <select
-            className="input-field w-auto"
-            value={classFilter}
-            onChange={(e) => { setClassFilter(e.target.value); setPage(1); }}
-          >
-            <option value="">All Classes</option>
-            {classes.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          {classFilter && (
+          {filters.classId && (
             <button
-              onClick={() => openPdfInNewTab(`/students/id-cards/batch?classId=${classFilter}`)}
+              onClick={() => openPdfInNewTab(`/students/id-cards/batch?classId=${filters.classId}`)}
               className="btn-secondary flex items-center gap-2"
               title="Download ID cards for every active student in this class"
             >
@@ -142,6 +136,9 @@ export default function StudentsPage() {
           )}
         </div>
       </div>
+
+      {/* Point 1: combined Class + Section + Teacher + Subject filter bar */}
+      <MultiFilterBar value={filters} onChange={(next) => { setFilters(next); setPage(1); }} />
 
       {error && <ErrorBanner message={error} onRetry={fetchStudents} />}
 

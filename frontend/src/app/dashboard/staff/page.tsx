@@ -8,6 +8,7 @@ import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
 import ErrorBanner from "@/components/ui/ErrorBanner";
 import { openPdfInNewTab } from "@/lib/pdf";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface StaffMember {
   id: string;
@@ -21,6 +22,7 @@ interface StaffMember {
 }
 
 export default function StaffPage() {
+  const { canDelete } = usePermissions();
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -36,6 +38,13 @@ export default function StaffPage() {
     designation: "", department: "", type: "TEACHING",
     qualification: "", joiningDate: "",
     panNumber: "", aadharNumber: "", cardId: "", role: "",
+    // Point 10: only sent to the backend when role === "STAFF" and
+    // this is non-empty - the admin's own free-text label for a staff
+    // type not covered by the fixed role list below.
+    customStaffType: "",
+    // Point 3a: optional per-teacher daily period cap (blank = no
+    // limit configured).
+    maxPeriodsPerDay: "",
   });
 
   const [error, setError] = useState<string | null>(null);
@@ -61,17 +70,28 @@ export default function StaffPage() {
 
   useEffect(() => { fetchStaff(); }, [page, search, typeFilter, designationFilter]);
 
+  const EMPTY_FORM = {
+    name: "", email: "", phone: "", password: "Staff@123",
+    designation: "", department: "", type: "TEACHING",
+    qualification: "", joiningDate: "",
+    panNumber: "", aadharNumber: "", cardId: "", role: "",
+    customStaffType: "", maxPeriodsPerDay: "",
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.post("/staff", form);
+      // "Others" is a UI-only sentinel (form.role === "STAFF" with a
+      // non-empty customStaffType) - the backend has no "OTHERS"
+      // UserRole, so the actual role sent is always STAFF for this case.
+      const payload = {
+        ...form,
+        customStaffType: form.role === "STAFF" ? form.customStaffType.trim() : "",
+        maxPeriodsPerDay: form.maxPeriodsPerDay ? parseInt(form.maxPeriodsPerDay, 10) : undefined,
+      };
+      await api.post("/staff", payload);
       setShowModal(false);
-      setForm({
-        name: "", email: "", phone: "", password: "Staff@123",
-        designation: "", department: "", type: "TEACHING",
-        qualification: "", joiningDate: "",
-        panNumber: "", aadharNumber: "", cardId: "", role: "",
-      });
+      setForm(EMPTY_FORM);
       fetchStaff();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to create staff");
@@ -126,13 +146,15 @@ export default function StaffPage() {
           >
             <BadgeCheck className="h-4 w-4 text-primary-600" />
           </button>
-          <button
-            onClick={() => deleteStaffMember(s.id, s.user.name)}
-            title="Delete Staff"
-            className="p-1 rounded hover:bg-gray-100"
-          >
-            <Trash2 className="h-4 w-4 text-red-500" />
-          </button>
+          {canDelete && (
+            <button
+              onClick={() => deleteStaffMember(s.id, s.user.name)}
+              title="Delete Staff"
+              className="p-1 rounded hover:bg-gray-100"
+            >
+              <Trash2 className="h-4 w-4 text-red-500" />
+            </button>
+          )}
         </div>
       ),
     },
@@ -211,21 +233,52 @@ export default function StaffPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">System Role</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Staff Type / System Role</label>
               <select className="input-field" value={form.role} onChange={(e) => setField("role", e.target.value)}>
                 <option value="">Auto (based on type)</option>
+                <option value="PRINCIPAL">Principal</option>
                 <option value="TEACHER">Teacher</option>
                 <option value="ACCOUNTANT">Accountant</option>
                 <option value="LIBRARIAN">Librarian</option>
                 <option value="TRANSPORT_MANAGER">Transport Manager</option>
                 <option value="WARDEN">Warden</option>
-                <option value="STAFF">Staff (Other)</option>
+                <option value="STAFF">Others</option>
               </select>
             </div>
+            {/* Point 10: "Others" selected -> free-text custom staff
+                type input appears, saved verbatim on the Staff record. */}
+            {form.role === "STAFF" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Custom Staff Type *</label>
+                <input
+                  className="input-field"
+                  placeholder="e.g., Lab Assistant, Sports Coach"
+                  value={form.customStaffType}
+                  onChange={(e) => setField("customStaffType", e.target.value)}
+                  required
+                />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Joining Date *</label>
               <input type="date" className="input-field" value={form.joiningDate} onChange={(e) => setField("joiningDate", e.target.value)} required />
             </div>
+            {/* Point 3a: only relevant for teaching staff - caps how
+                many periods this teacher can be assigned per day in
+                the Timetable module. */}
+            {form.type === "TEACHING" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Periods / Day</label>
+                <input
+                  type="number"
+                  min={0}
+                  className="input-field"
+                  placeholder="0 = no limit"
+                  value={form.maxPeriodsPerDay}
+                  onChange={(e) => setField("maxPeriodsPerDay", e.target.value)}
+                />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Qualification</label>
               <input className="input-field" placeholder="M.Sc, B.Ed" value={form.qualification} onChange={(e) => setField("qualification", e.target.value)} />

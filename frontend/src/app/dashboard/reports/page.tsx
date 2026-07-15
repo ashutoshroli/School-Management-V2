@@ -4,27 +4,33 @@ import { useState, useEffect } from "react";
 import { BarChart3, Users, GraduationCap, IndianRupee, ClipboardCheck, Building2, AlertTriangle, Download } from "lucide-react";
 import api from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
+import MultiFilterBar, { MultiFilterValue } from "@/components/ui/MultiFilterBar";
 
 export default function ReportsPage() {
   const [tab, setTab] = useState<"dashboard" | "attendance" | "academic" | "hr" | "branches" | "attendanceDefaulters">("dashboard");
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [threshold, setThreshold] = useState(75);
+  // Point 1 (Multi-Filter): Class + Section + Subject filter for the
+  // Attendance and Academic tabs (Teacher isn't meaningful for either
+  // of these class-wise-aggregate reports, so it's left disabled for
+  // this page - see MultiFilterBar's `enable` prop).
+  const [filters, setFilters] = useState<MultiFilterValue>({});
 
   const fetchData = async () => {
     setLoading(true);
     try {
       let res;
       if (tab === "dashboard") res = await api.get("/reports/dashboard");
-      else if (tab === "attendance") res = await api.get("/reports/attendance-analytics");
-      else if (tab === "attendanceDefaulters") res = await api.get("/reports/attendance-defaulters", { params: { threshold } });
-      else if (tab === "academic") res = await api.get("/reports/academic-analytics");
+      else if (tab === "attendance") res = await api.get("/reports/attendance-analytics", { params: { classId: filters.classId, sectionId: filters.sectionId } });
+      else if (tab === "attendanceDefaulters") res = await api.get("/reports/attendance-defaulters", { params: { threshold, classId: filters.classId } });
+      else if (tab === "academic") res = await api.get("/reports/academic-analytics", { params: { classId: filters.classId, subjectId: filters.subjectId } });
       else if (tab === "hr") res = await api.get("/reports/hr-analytics");
       else res = await api.get("/reports/multi-branch");
       setData(res.data.data);
     } catch {} finally { setLoading(false); }
   };
-  useEffect(() => { fetchData(); }, [tab, threshold]);
+  useEffect(() => { fetchData(); }, [tab, threshold, filters]);
 
   // Switching tabs updates `tab` synchronously, but the new tab's data
   // only arrives after the async fetchData() call above resolves.
@@ -40,6 +46,11 @@ export default function ReportsPage() {
     setData(null);
     setLoading(true);
     setTab(key);
+    // Filters are only meaningful on Attendance/Academic/At-Risk -
+    // reset them when leaving those tabs so switching to e.g. HR or
+    // Multi-Branch doesn't silently carry over a stale class/section/
+    // subject selection that tab has no use for.
+    if (key !== "attendance" && key !== "academic" && key !== "attendanceDefaulters") setFilters({});
   };
 
   const downloadAttendanceDefaultersCsv = async () => {
@@ -88,6 +99,10 @@ export default function ReportsPage() {
           );
         })}
       </div>
+
+      {tab === "attendance" && <MultiFilterBar value={filters} onChange={setFilters} enable={["class", "section"]} />}
+      {tab === "academic" && <MultiFilterBar value={filters} onChange={setFilters} enable={["class", "subject"]} />}
+      {tab === "attendanceDefaulters" && <MultiFilterBar value={filters} onChange={setFilters} enable={["class"]} />}
 
       {loading ? (
         <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div>

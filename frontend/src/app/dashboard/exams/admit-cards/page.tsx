@@ -4,9 +4,11 @@ import { useState, useEffect } from "react";
 import { CreditCard, Download, Trash2, Play } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 
 export default function AdmitCardsPage() {
+  const { canDelete } = usePermissions();
   const [exams, setExams] = useState<any[]>([]);
   const [selectedExamId, setSelectedExamId] = useState("");
   const [admitCards, setAdmitCards] = useState<any[]>([]);
@@ -173,9 +175,11 @@ export default function AdmitCardsPage() {
                       >
                         <Download className="h-4 w-4" />
                       </button>
-                      <button onClick={() => handleDelete(ac.student?.id || ac.studentId)} className="p-1.5 text-red-500 hover:bg-red-50 rounded" title="Delete">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {canDelete && (
+                        <button onClick={() => handleDelete(ac.student?.id || ac.studentId)} className="p-1.5 text-red-500 hover:bg-red-50 rounded" title="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

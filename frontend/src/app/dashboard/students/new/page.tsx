@@ -29,7 +29,7 @@ export default function NewAdmissionPage() {
     address: searchParams.get("address") || "", city: "",
     state: "", pincode: "",
     previousSchool: searchParams.get("previousSchool") || "", cardId: "",
-    classId: "", sectionId: "",
+    classId: "", sectionId: "", rollNo: "",
     fatherName: searchParams.get("fatherName") || "",
     fatherEmail: searchParams.get("fatherEmail") || "",
     fatherPhone: searchParams.get("fatherPhone") || "",
@@ -52,7 +52,12 @@ export default function NewAdmissionPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post("/students", form);
+      // Point 6: only send rollNo when the admin actually chose Manual
+      // entry AND typed something - "Auto" mode always sends a blank
+      // value so the backend auto-generates the next roll number for
+      // this section.
+      const payload = { ...form, rollNo: rollNoMode === "manual" ? form.rollNo.trim() : "" };
+      await api.post("/students", payload);
       // If this admission was converted from an inquiry, mark the
       // inquiry ADMITTED so it drops off the "New"/"Contacted"
       // worklist on the Admissions page. Best-effort - the student
@@ -71,6 +76,14 @@ export default function NewAdmissionPage() {
   };
 
   const setField = (field: string, value: string) => setForm((p) => ({ ...p, [field]: value }));
+
+  // Point 6 (Manual Roll No. Generation): "Auto-generate" (the
+  // default, and pre-existing behavior) leaves rollNo blank so the
+  // backend picks the next available number in that section;
+  // switching to "Manual" reveals a text input so the admin can set
+  // their own value. Purely a UI convenience - the backend already
+  // accepts either an explicit rollNo or none at all.
+  const [rollNoMode, setRollNoMode] = useState<"auto" | "manual">("auto");
 
   return (
     <div className="max-w-4xl">
@@ -160,6 +173,35 @@ export default function NewAdmissionPage() {
                 <option value="">Select Section</option>
                 {sections.map((s: any) => <option key={s.id} value={s.id}>Section {s.name}</option>)}
               </select>
+            </div>
+            {/* Point 6: Auto-generate (default) vs Manual roll number entry */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Roll No.</label>
+              <div className="flex items-center gap-2">
+                <select
+                  className="input-field w-auto"
+                  value={rollNoMode}
+                  onChange={(e) => {
+                    const mode = e.target.value as "auto" | "manual";
+                    setRollNoMode(mode);
+                    if (mode === "auto") setField("rollNo", "");
+                  }}
+                >
+                  <option value="auto">Auto-generate</option>
+                  <option value="manual">Manual</option>
+                </select>
+                {rollNoMode === "manual" && (
+                  <input
+                    className="input-field flex-1"
+                    placeholder="Enter roll number"
+                    value={form.rollNo}
+                    onChange={(e) => setField("rollNo", e.target.value)}
+                  />
+                )}
+              </div>
+              {rollNoMode === "auto" && (
+                <p className="text-xs text-gray-400 mt-1">Next available roll number in this section will be assigned automatically.</p>
+              )}
             </div>
           </div>
         </div>

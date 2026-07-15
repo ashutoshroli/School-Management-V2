@@ -6,6 +6,7 @@ import Link from "next/link";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const DISCOUNT_TYPES = ["SIBLING", "MERIT_SCHOLARSHIP", "RTE", "STAFF_WARD", "CUSTOM"];
 
@@ -19,6 +20,7 @@ const DISCOUNT_TYPES = ["SIBLING", "MERIT_SCHOLARSHIP", "RTE", "STAFF_WARD", "CU
  * toggle/delete.
  */
 export default function FeeDiscountsPage() {
+  const { canDelete } = usePermissions();
   const [discounts, setDiscounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState("");
@@ -286,14 +288,16 @@ export default function FeeDiscountsPage() {
                       >
                         {d.isActive ? <ToggleRight className="h-4 w-4 text-green-600" /> : <ToggleLeft className="h-4 w-4" />}
                       </button>
-                      <button
-                        onClick={() => remove(d.id, d.student.user.name)}
-                        disabled={deletingId === d.id}
-                        title="Remove"
-                        className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {canDelete && (
+                        <button
+                          onClick={() => remove(d.id, d.student.user.name)}
+                          disabled={deletingId === d.id}
+                          title="Remove"
+                          className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

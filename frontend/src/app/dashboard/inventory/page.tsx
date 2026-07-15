@@ -4,8 +4,10 @@ import { useState, useEffect } from "react";
 import { Package, Plus, AlertTriangle, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import { usePermissions } from "@/hooks/usePermissions";
 
 export default function InventoryPage() {
+  const { canDelete } = usePermissions();
   const [items, setItems] = useState<any[]>([]);
   const [lowStock, setLowStock] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -129,7 +131,9 @@ export default function InventoryPage() {
               <td className="px-4 py-3 text-center">{i.currentStock <= i.minStock ? <span className="text-red-600 flex items-center justify-center gap-1"><AlertTriangle className="h-3 w-3" /> Low</span> : <span className="text-green-600">OK</span>}</td>
               <td className="px-4 py-3 text-center">
                 <button onClick={() => openDetail(i.id)} title="View Details" className="text-gray-500 hover:text-gray-700 mr-3"><Eye className="h-4 w-4 inline" /></button>
-                <button onClick={() => deleteItem(i.id, i.name)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button>
+                {canDelete && (
+                  <button onClick={() => deleteItem(i.id, i.name)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button>
+                )}
               </td>
             </tr>))}
           </tbody></table>

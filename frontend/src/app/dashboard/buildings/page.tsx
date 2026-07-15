@@ -4,9 +4,10 @@ import { useState, useEffect } from "react";
 import { Building, Plus, Trash2, Layers, DoorOpen, BarChart3, Edit, Users, X } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const ROOM_TYPES = [
-  "CLASSROOM", "LAB", "OFFICE", "CHAMBER", "STAFF_ROOM", "LIBRARY",
+  "CLASSROOM", "LAB", "OFFICE", "CHAMBER", "TEACHER_CHAMBER", "STAFF_ROOM", "LIBRARY",
   "AUDITORIUM", "SPORTS_ROOM", "TOILET", "STORE", "CANTEEN", "MEDICAL_ROOM", "OTHER",
 ];
 
@@ -15,6 +16,7 @@ const ROOM_TYPES = [
 // page's exact UX shape (see /dashboard/hostel/page.tsx) since the
 // backend models/endpoints follow the same pattern.
 export default function SchoolBuildingsPage() {
+  const { canEdit, canDelete } = usePermissions();
   const [buildings, setBuildings] = useState<any[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -329,9 +331,11 @@ export default function SchoolBuildingsPage() {
                   >
                     <Layers className="h-3.5 w-3.5" /> Add Multiple Floors
                   </button>
-                  <button onClick={() => deleteBuilding(b.id, b.name)} title="Delete Building" className="text-red-400 hover:text-red-600">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canDelete && (
+                    <button onClick={() => deleteBuilding(b.id, b.name)} title="Delete Building" className="text-red-400 hover:text-red-600">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -359,22 +363,26 @@ export default function SchoolBuildingsPage() {
                       const occupied = (r.sections || []).reduce((sum: number, s: any) => sum + (s._count?.students || 0), 0);
                       return (
                         <div key={r.id} className={`p-2 rounded-lg text-center text-xs border relative group ${roomColor(r)}`}>
-                          <button onClick={() => openEditRoom(b.name, f, r)} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-700">
-                            <Edit className="h-3 w-3" />
-                          </button>
+                          {canEdit && (
+                            <button onClick={() => openEditRoom(b.name, f, r)} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-700">
+                              <Edit className="h-3 w-3" />
+                            </button>
+                          )}
                           <p className="font-bold">{r.roomNo}</p>
                           {r.name && <p className="text-gray-500 truncate">{r.name}</p>}
                           {r.type === "CLASSROOM" && r.capacity > 0 && <p className="text-gray-500">{occupied}/{r.capacity}</p>}
                           {r.type === "CHAMBER" && r.assignedStaff && <p className="text-gray-500 truncate">{r.assignedStaff.user?.name}</p>}
                           <p className="text-[10px] text-gray-400">{r.type.replace(/_/g, " ")}</p>
-                          {(r.type === "CHAMBER" || r.type === "OFFICE" || r.type === "STAFF_ROOM") && (
+                          {(r.type === "CHAMBER" || r.type === "OFFICE" || r.type === "STAFF_ROOM" || r.type === "TEACHER_CHAMBER") && (
                             <button onClick={() => openCabins(r)} title="Manage cabins (multiple teachers sharing this room)" className="text-primary-500 hover:text-primary-700 text-[10px] mt-1 flex items-center justify-center gap-0.5 w-full">
                               <Users className="h-3 w-3" /> Cabins
                             </button>
                           )}
-                          <button onClick={() => deleteRoom(r.id, r.roomNo)} className="text-red-400 hover:text-red-600 text-[10px] mt-1 block w-full">
-                            <Trash2 className="h-3 w-3 inline" />
-                          </button>
+                          {canDelete && (
+                            <button onClick={() => deleteRoom(r.id, r.roomNo)} className="text-red-400 hover:text-red-600 text-[10px] mt-1 block w-full">
+                              <Trash2 className="h-3 w-3 inline" />
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -497,7 +505,9 @@ export default function SchoolBuildingsPage() {
                     <option value="">Vacant</option>
                     {staffList.map((s: any) => <option key={s.id} value={s.id}>{s.user?.name} ({s.designation})</option>)}
                   </select>
-                  <button onClick={() => handleDeleteCabin(c.id)} className="text-red-400 hover:text-red-600"><X className="h-4 w-4" /></button>
+                  {canDelete && (
+                    <button onClick={() => handleDeleteCabin(c.id)} className="text-red-400 hover:text-red-600"><X className="h-4 w-4" /></button>
+                  )}
                 </div>
               ))}
               {cabins.length === 0 && <p className="text-sm text-gray-400 text-center py-4">No cabins yet - add one below</p>}
@@ -558,7 +568,13 @@ export default function SchoolBuildingsPage() {
               </select>
             </div>
           )}
-          {roomForm.type === "STAFF_ROOM" && (
+          {roomForm.type === "TEACHER_CHAMBER" && (
+            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              A Teacher Chamber is meant to be shared by multiple teachers at once. After saving this room, use its
+              &quot;Cabins&quot; button on the room card below to add each teacher&apos;s own named cabin.
+            </p>
+          )}
+          {(roomForm.type === "STAFF_ROOM" || roomForm.type === "TEACHER_CHAMBER") && (
             <div>
               <label className="block text-sm font-medium mb-1">Department</label>
               <input className="input-field" value={roomForm.department} onChange={(e) => setRoomForm({ ...roomForm, department: e.target.value })} placeholder="e.g. Science Department" />

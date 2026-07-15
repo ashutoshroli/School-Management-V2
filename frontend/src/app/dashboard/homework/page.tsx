@@ -5,10 +5,12 @@ import { BookOpen, Plus, Edit, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const EMPTY_FORM = { title: "", description: "", subjectId: "", classId: "", sectionId: "", dueDate: "" };
 
 export default function HomeworkPage() {
+  const { canEdit, canDelete } = usePermissions();
   const [homeworks, setHomeworks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -16,6 +18,13 @@ export default function HomeworkPage() {
   const [subjects, setSubjects] = useState<any[]>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [form, setForm] = useState(EMPTY_FORM);
+  // Point 11 (Class-wise Subject Selection): once a class is picked,
+  // the Subject dropdown is narrowed to ONLY that class's assigned
+  // subjects (ClassSubject) instead of every subject in the branch -
+  // a teacher can no longer accidentally assign homework for a
+  // subject this class doesn't even teach.
+  const [classSubjects, setClassSubjects] = useState<any[]>([]);
+  const [classSubjectsLoading, setClassSubjectsLoading] = useState(false);
 
   // View Details - drills into one homework's full submission list via
   // the new getHomeworkById endpoint (the list view only shows a
@@ -51,6 +60,26 @@ export default function HomeworkPage() {
     } catch {} finally { setLoading(false); }
   };
   useEffect(() => { fetch(); }, []);
+
+  // Re-fetch this class's assigned subjects whenever the selected
+  // class changes - falls back to the full unfiltered `subjects` list
+  // (see the Subject <select> below) while classId is still empty or
+  // this class genuinely has no subjects assigned yet.
+  useEffect(() => {
+    if (!form.classId) { setClassSubjects([]); return; }
+    setClassSubjectsLoading(true);
+    api.get(`/classes/${form.classId}/subjects`)
+      .then((res) => setClassSubjects((res.data.data || []).map((cs: any) => cs.subject)))
+      .catch(() => setClassSubjects([]))
+      .finally(() => setClassSubjectsLoading(false));
+  }, [form.classId]);
+
+  // The actual options shown in the Subject dropdown - class-specific
+  // once a class is chosen (and that class has assigned subjects),
+  // otherwise the full branch subject list (e.g. before any class is
+  // picked, or editing an existing homework where the class field is
+  // locked/disabled anyway).
+  const subjectOptions = form.classId && classSubjects.length > 0 ? classSubjects : subjects;
 
   const openCreateModal = () => {
     setEditingId(null);
@@ -118,12 +147,16 @@ export default function HomeworkPage() {
               </div>
               <div className="flex items-center gap-3">
                 <button onClick={() => openDetail(h.id)} className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200">{h.submissionCount || 0} submitted</button>
-                <button onClick={() => openEditModal(h)} title="Edit" className="text-gray-500 hover:text-gray-700">
-                  <Edit className="h-4 w-4" />
-                </button>
-                <button onClick={() => handleDelete(h.id, h.title)} title="Delete" className="text-red-500 hover:text-red-700">
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                {canEdit && (
+                  <button onClick={() => openEditModal(h)} title="Edit" className="text-gray-500 hover:text-gray-700">
+                    <Edit className="h-4 w-4" />
+                  </button>
+                )}
+                {canDelete && (
+                  <button onClick={() => handleDelete(h.id, h.title)} title="Delete" className="text-red-500 hover:text-red-700">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -139,13 +172,24 @@ export default function HomeworkPage() {
             <textarea className="input-field" rows={3} value={form.description} onChange={e => setForm({...form, description: e.target.value})} /></div>
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-sm font-medium mb-1">Class *</label>
-              <select className="input-field" value={form.classId} onChange={e => setForm({...form, classId: e.target.value})} required disabled={!!editingId}>
+              <select
+                className="input-field"
+                value={form.classId}
+                onChange={e => setForm({ ...form, classId: e.target.value, subjectId: "" })}
+                required
+                disabled={!!editingId}
+              >
                 <option value="">Select</option>{classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select></div>
             <div><label className="block text-sm font-medium mb-1">Subject *</label>
-              <select className="input-field" value={form.subjectId} onChange={e => setForm({...form, subjectId: e.target.value})} required disabled={!!editingId}>
-                <option value="">Select</option>{subjects.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select></div>
+              <select className="input-field" value={form.subjectId} onChange={e => setForm({...form, subjectId: e.target.value})} required disabled={!!editingId || classSubjectsLoading}>
+                <option value="">{classSubjectsLoading ? "Loading..." : "Select"}</option>
+                {subjectOptions.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              {form.classId && classSubjects.length === 0 && !classSubjectsLoading && (
+                <p className="text-xs text-amber-600 mt-1">No subjects assigned to this class yet - showing all subjects.</p>
+              )}
+              </div>
             <div><label className="block text-sm font-medium mb-1">Due Date *</label>
               <input type="date" className="input-field" value={form.dueDate} onChange={e => setForm({...form, dueDate: e.target.value})} required /></div>
           </div>

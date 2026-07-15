@@ -15,6 +15,7 @@ import { logAuditFromRequest } from "../services/auditLog.service";
  * admin (privilege escalation) via this endpoint.
  */
 const BRANCH_ADMIN_ASSIGNABLE_ROLES: UserRole[] = [
+  UserRole.PRINCIPAL,
   UserRole.TEACHER,
   UserRole.ACCOUNTANT,
   UserRole.LIBRARIAN,
@@ -42,6 +43,17 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
       designation, department, type, qualification, experience,
       joiningDate, bankAccount, bankName, ifscCode, panNumber,
       aadharNumber, address, city, state, pincode, cardId, role,
+      // Point 10: when the "Staff Type"/System Role picker is set to
+      // "Others", the frontend also sends this free-text label the
+      // admin typed in (e.g. "Lab Assistant", "Sports Coach") - stored
+      // verbatim, purely for display, and never used for
+      // authorization (the actual UserRole enum value still governs
+      // permissions).
+      customStaffType,
+      // Point 3a: optional per-teacher daily period cap, set at
+      // creation time if the admin already knows it (also editable
+      // later via updateStaff).
+      maxPeriodsPerDay,
     } = req.body;
     // BUG FIX: the "Add Staff" form has no branch-picker, so
     // req.body.branchId always arrived as "" - see
@@ -160,6 +172,10 @@ export const createStaff = async (req: AuthRequest, res: Response): Promise<void
         pincode,
         cardId: normalizedCardId,
         isActive: true,
+        // Only meaningful when userRole/System Role is "Others" (STAFF
+        // + a custom label) - blank/undefined for every normal role.
+        customStaffType: customStaffType && customStaffType.trim() !== "" ? customStaffType.trim() : undefined,
+        maxPeriodsPerDay: Number.isFinite(Number(maxPeriodsPerDay)) ? Number(maxPeriodsPerDay) : undefined,
       },
     });
 
@@ -270,6 +286,7 @@ export const updateStaff = async (req: AuthRequest, res: Response): Promise<void
       name, phone, designation, department, type, qualification, experience,
       bankAccount, bankName, ifscCode, panNumber, aadharNumber,
       address, city, state, pincode, cardId, isActive, leavingDate,
+      customStaffType, maxPeriodsPerDay,
     } = req.body;
 
     const staff = await prisma.staff.findUnique({ where: { id } });
@@ -308,6 +325,11 @@ export const updateStaff = async (req: AuthRequest, res: Response): Promise<void
         ...(cardId !== undefined && { cardId: cardId && cardId.trim() !== "" ? cardId : null }),
         ...(isActive !== undefined && { isActive }),
         ...(leavingDate && { leavingDate: new Date(leavingDate) }),
+        // Point 10: cleared back to null (not just left as-is) when the
+        // admin switches AWAY from "Others" back to a normal role - an
+        // explicit empty string means "no longer using a custom label".
+        ...(customStaffType !== undefined && { customStaffType: customStaffType && customStaffType.trim() !== "" ? customStaffType.trim() : null }),
+        ...(maxPeriodsPerDay !== undefined && { maxPeriodsPerDay: Number.isFinite(Number(maxPeriodsPerDay)) ? Number(maxPeriodsPerDay) : null }),
       },
     });
 

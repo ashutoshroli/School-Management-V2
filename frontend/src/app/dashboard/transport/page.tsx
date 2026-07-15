@@ -5,8 +5,10 @@ import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, Us
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 export default function TransportPage() {
+  const { canDelete } = usePermissions();
   const [routes, setRoutes] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [years, setYears] = useState<any[]>([]);
@@ -275,9 +277,11 @@ export default function TransportPage() {
               <div key={r.id} className="card">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-semibold text-gray-900">{r.name}</h3>
-                  <button onClick={() => deleteRoute(r.id, r.name)} title="Delete Route" className="text-red-400 hover:text-red-600">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canDelete && (
+                    <button onClick={() => deleteRoute(r.id, r.name)} title="Delete Route" className="text-red-400 hover:text-red-600">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 text-sm text-gray-500 mb-2"><MapPin className="h-4 w-4" /> {r.startPoint} → {r.endPoint}</div>
                 <div className="flex justify-between text-sm">
@@ -326,9 +330,11 @@ export default function TransportPage() {
                         <p className="text-xs text-gray-500">{v.type} | Capacity: {v.capacity}</p>
                         {v.driverName && <p className="text-xs text-gray-400">Driver: {v.driverName}</p>}
                       </div>
-                      <button onClick={() => deleteVehicle(v.id, v.vehicleNo)} title="Delete Vehicle" className="text-red-400 hover:text-red-600">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {canDelete && (
+                        <button onClick={() => deleteVehicle(v.id, v.vehicleNo)} title="Delete Vehicle" className="text-red-400 hover:text-red-600">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                     {v.routes?.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
@@ -388,14 +394,16 @@ export default function TransportPage() {
                         {a.stopName ? ` \u2022 Stop: ${a.stopName}` : ""}
                       </p>
                     </div>
-                    <button
-                      onClick={() => removeFromRoute(a.student.id, a.student.user.name)}
-                      disabled={removingId === a.student.id}
-                      title="Remove from route"
-                      className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
-                    >
-                      <UserMinus className="h-4 w-4" />
-                    </button>
+                    {canDelete && (
+                      <button
+                        onClick={() => removeFromRoute(a.student.id, a.student.user.name)}
+                        disabled={removingId === a.student.id}
+                        title="Remove from route"
+                        className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
+                      >
+                        <UserMinus className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -517,14 +525,16 @@ export default function TransportPage() {
                 {routeVehicle.routes.map((vr: any) => (
                   <div key={vr.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
                     <span className="font-medium">{vr.route.name}</span>
-                    <button
-                      onClick={() => handleUnassignRoute(vr.route.id)}
-                      disabled={unassigningRouteId === vr.route.id}
-                      title="Unassign this route"
-                      className="p-1 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
-                    >
-                      <Link2Off className="h-4 w-4" />
-                    </button>
+                    {canDelete && (
+                      <button
+                        onClick={() => handleUnassignRoute(vr.route.id)}
+                        disabled={unassigningRouteId === vr.route.id}
+                        title="Unassign this route"
+                        className="p-1 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
+                      >
+                        <Link2Off className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

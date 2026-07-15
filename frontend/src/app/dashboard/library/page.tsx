@@ -5,8 +5,10 @@ import { BookOpen, Plus, Search, RotateCcw, Trash2, Eye, Users, X } from "lucide
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
+import { usePermissions } from "@/hooks/usePermissions";
 
 export default function LibraryPage() {
+  const { canDelete } = usePermissions();
   const [tab, setTab] = useState<"books" | "issued">("books");
   const [books, setBooks] = useState<any[]>([]);
   const [issued, setIssued] = useState<any[]>([]);
@@ -177,7 +179,9 @@ export default function LibraryPage() {
                 <td className="px-4 py-3 text-center">
                   <button onClick={() => openDetail(b.id)} title="View Details" className="text-gray-500 hover:text-gray-700 mr-3"><Eye className="h-4 w-4 inline" /></button>
                   <button onClick={() => openBulkIssue(b)} title="Bulk Issue to multiple students" className="text-primary-600 hover:text-primary-700 mr-3" disabled={b.availableCopies === 0}><Users className="h-4 w-4 inline" /></button>
-                  <button onClick={() => deleteBook(b.id, b.title)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button>
+                  {canDelete && (
+                    <button onClick={() => deleteBook(b.id, b.title)} className="text-red-500 hover:text-red-700"><Trash2 className="h-4 w-4 inline" /></button>
+                  )}
                 </td></tr>))}
             </tbody></table>
           </div>

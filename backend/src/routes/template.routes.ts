@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { getTemplatesByCategory, uploadTemplateFile, deleteTemplateFile } from "../controllers/template.controller";
+import { getTemplatesByCategory, uploadTemplateFile, deleteTemplateFile, setActiveTemplate } from "../controllers/template.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { uploadTemplate, handleUploadErrors } from "../middleware/upload";
 
@@ -15,6 +15,9 @@ router.use(authenticate, authorize(...ADMIN));
 
 router.get("/", getTemplatesByCategory);
 router.post("/upload", handleUploadErrors(uploadTemplate), uploadTemplateFile);
+// Point 5 (Multiple Template Upload): select which of several
+// uploaded templates for the same slot is the active/default one.
+router.patch("/:id/activate", setActiveTemplate);
 router.delete("/:id", deleteTemplateFile);
 
 export default router;

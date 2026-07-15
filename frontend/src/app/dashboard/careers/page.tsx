@@ -5,6 +5,7 @@ import { Briefcase, Plus, Trash2, Users, Power } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const EMPTY_FORM = { title: "", department: "", description: "", qualifications: "", closingDate: "" };
 
@@ -16,6 +17,7 @@ const EMPTY_FORM = { title: "", department: "", description: "", qualifications:
  * shape.
  */
 export default function CareersManagementPage() {
+  const { canDelete } = usePermissions();
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -137,9 +139,11 @@ export default function CareersManagementPage() {
                       <button onClick={() => toggleActive(j)} title={j.isActive ? "Close vacancy" : "Reopen vacancy"} className="text-gray-500 hover:text-gray-700">
                         <Power className="h-3.5 w-3.5" />
                       </button>
-                      <button onClick={() => handleDelete(j)} title="Delete" className="text-red-500 hover:text-red-700">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {canDelete && (
+                        <button onClick={() => handleDelete(j)} title="Delete" className="text-red-500 hover:text-red-700">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

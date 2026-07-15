@@ -159,6 +159,22 @@ export const createSection = async (req: AuthRequest, res: Response): Promise<vo
       }
     }
 
+    // RULE (Point 3b): a staff member may be the class teacher of AT
+    // MOST ONE section at a time (also enforced at the DB level via
+    // Section.classTeacherId's @unique) - checked here first so the
+    // caller gets a clear, actionable message naming the conflicting
+    // class/section instead of a raw unique-constraint error.
+    if (classTeacherId) {
+      const conflict = await prisma.section.findUnique({
+        where: { classTeacherId },
+        include: { class: { select: { name: true } } },
+      });
+      if (conflict) {
+        sendError(res, `This staff member is already the class teacher of ${conflict.class.name} - Section ${conflict.name}. Unassign them there first.`, 400);
+        return;
+      }
+    }
+
     const section = await prisma.section.create({
       data: { branchId, classId, name, capacity: capacity || 40, classTeacherId, roomId },
     });
@@ -210,6 +226,21 @@ export const updateSection = async (req: AuthRequest, res: Response): Promise<vo
       const room = await prisma.schoolRoom.findUnique({ where: { id: roomId }, include: { floor: { include: { building: true } } } });
       if (!room || room.floor.building.branchId !== existingSection.branchId) {
         sendError(res, "Room not found in this branch", 404);
+        return;
+      }
+    }
+
+    // RULE (Point 3b): same one-section-per-class-teacher rule as
+    // createSection above - exclude THIS section itself from the
+    // conflict search (re-saving the same section with its own current
+    // class teacher, or simply re-submitting the form, must not fail).
+    if (classTeacherId) {
+      const conflict = await prisma.section.findFirst({
+        where: { classTeacherId, id: { not: id } },
+        include: { class: { select: { name: true } } },
+      });
+      if (conflict) {
+        sendError(res, `This staff member is already the class teacher of ${conflict.class.name} - Section ${conflict.name}. Unassign them there first.`, 400);
         return;
       }
     }
@@ -679,5 +710,308 @@ export const removeSubjectFromClass = async (req: AuthRequest, res: Response): P
     sendSuccess(res, null, "Subject removed from class");
   } catch (error) {
     sendError(res, "Failed to remove subject", 500, (error as Error).message);
+  }
+};
+
+// ==================== MULTI ROOM / MULTI CLASS ASSIGN (Point 7) ====================
+// The "Class Assign" module's bulk multi-select workflow: assign
+// several rooms to several sections at once via the SectionRoom
+// many-to-many join table. Section.roomId (the single "primary
+// classroom") is untouched by this - these are ADDITIONAL rooms a
+// section also uses (e.g. a shared Lab/Library slot), and one room can
+// likewise be linked to several different sections.
+
+/**
+ * POST /classes/section-rooms/bulk
+ * body: { sectionIds: string[], roomIds: string[] }
+ * Links every sectionId to every roomId (the full cross-product) in
+ * one call - e.g. "Sections A, B, C all also use Lab 1 and Library
+ * Hall". Already-existing links are silently skipped (idempotent),
+ * matching bulkAssignSubjectToClass's own "skip what's already there"
+ * convention above.
+ */
+export const bulkAssignSectionRooms = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { sectionIds, roomIds } = req.body;
+
+    if (!Array.isArray(sectionIds) || sectionIds.length === 0) {
+      sendError(res, "sectionIds must be a non-empty array", 400);
+      return;
+    }
+    if (!Array.isArray(roomIds) || roomIds.length === 0) {
+      sendError(res, "roomIds must be a non-empty array", 400);
+      return;
+    }
+
+    const sections = await prisma.section.findMany({ where: { id: { in: sectionIds } }, select: { id: true, branchId: true } });
+    const rooms = await prisma.schoolRoom.findMany({
+      where: { id: { in: roomIds } },
+      select: { id: true, floor: { select: { building: { select: { branchId: true } } } } },
+    });
+
+    if (sections.length !== sectionIds.length) {
+      sendError(res, "One or more sections were not found", 404);
+      return;
+    }
+    if (rooms.length !== roomIds.length) {
+      sendError(res, "One or more rooms were not found", 404);
+      return;
+    }
+
+    // SECURITY: every section AND every room must belong to the SAME
+    // branch as the caller can access - otherwise a Branch Admin could
+    // link their sections to another branch's rooms (or vice versa),
+    // the same IDOR class already guarded against elsewhere in this
+    // file (createSection/updateSection's roomId branch check).
+    const branchIds = new Set([
+      ...sections.map((s) => s.branchId),
+      ...rooms.map((r) => r.floor.building.branchId),
+    ]);
+    if (branchIds.size > 1 || !canAccessBranch(req, sections[0].branchId)) {
+      sendError(res, "All sections and rooms must belong to the same branch you have access to", 403);
+      return;
+    }
+
+    const existing = await prisma.sectionRoom.findMany({
+      where: { sectionId: { in: sectionIds }, roomId: { in: roomIds } },
+      select: { sectionId: true, roomId: true },
+    });
+    const existingKeys = new Set(existing.map((e) => `${e.sectionId}:${e.roomId}`));
+
+    const toCreate: { sectionId: string; roomId: string }[] = [];
+    for (const sectionId of sectionIds) {
+      for (const roomId of roomIds) {
+        if (!existingKeys.has(`${sectionId}:${roomId}`)) {
+          toCreate.push({ sectionId, roomId });
+        }
+      }
+    }
+
+    if (toCreate.length > 0) {
+      await prisma.sectionRoom.createMany({ data: toCreate });
+    }
+
+    await invalidateClassesCache(sections[0].branchId);
+
+    sendSuccess(
+      res,
+      { created: toCreate.length, skipped: existingKeys.size, total: sectionIds.length * roomIds.length },
+      `Linked ${toCreate.length} section-room pair(s)` + (existingKeys.size > 0 ? ` (${existingKeys.size} already linked)` : "")
+    );
+  } catch (error) {
+    sendError(res, "Failed to bulk-assign rooms to sections", 500, (error as Error).message);
+  }
+};
+
+/**
+ * GET /classes/section-rooms?sectionId=... | ?roomId=...
+ * Lists SectionRoom links, optionally filtered to one section or one
+ * room - powers both "which extra rooms does this section use" and
+ * "which sections share this room" views.
+ */
+export const getSectionRooms = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const sectionId = req.query.sectionId as string | undefined;
+    const roomId = req.query.roomId as string | undefined;
+
+    const where: any = {};
+    if (sectionId) where.sectionId = sectionId;
+    if (roomId) where.roomId = roomId;
+
+    const links = await prisma.sectionRoom.findMany({
+      where,
+      include: {
+        section: { select: { id: true, name: true, class: { select: { id: true, name: true } } } },
+        room: { select: { id: true, roomNo: true, name: true, type: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    sendSuccess(res, links, "Section-room links fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch section-room links", 500, (error as Error).message);
+  }
+};
+
+/**
+ * DELETE /classes/section-rooms/:id
+ * Removes a single section-room link (unassign one extra room from
+ * one section) - no dependent data hangs off SectionRoom itself, so a
+ * plain delete is safe.
+ */
+export const removeSectionRoom = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const link = await prisma.sectionRoom.findUnique({
+      where: { id },
+      include: { section: { select: { branchId: true } } },
+    });
+    if (!link) { sendError(res, "Link not found", 404); return; }
+    if (!canAccessBranch(req, link.section.branchId)) { sendError(res, "Link not found", 404); return; }
+
+    await prisma.sectionRoom.delete({ where: { id } });
+    sendSuccess(res, null, "Room unlinked from section");
+  } catch (error) {
+    sendError(res, "Failed to remove section-room link", 500, (error as Error).message);
+  }
+};
+
+// ==================== CLASS TEACHER CONFLICT CHECK/RESOLVE (Point 3b migration helper) ====================
+// Section.classTeacherId is now @unique (one staff member = class
+// teacher of at most one section). On any DEPLOYMENT where existing
+// data already has one staff member set as classTeacherId on MORE
+// THAN ONE section, applying that constraint via `prisma db push`
+// (this repo's deploy convention - see backend/scripts/build.sh) fails
+// with a unique-constraint violation. These two endpoints let a Super
+// Admin detect and fix that entirely through the app/API - no direct
+// DB/SQL access needed before merging or deploying this change.
+
+/**
+ * GET /classes/sections/class-teacher-conflicts
+ * Super Admin only, and deliberately branch-agnostic (scans EVERY
+ * branch) - this is a one-time pre-migration health check, not a
+ * regular data-entry read. Returns every staff member who is
+ * currently classTeacherId on more than one Section, grouped by staff,
+ * with enough detail (class/section names, branch) to decide which
+ * one assignment should be KEPT.
+ */
+export const getClassTeacherConflicts = async (_req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const sections = await prisma.section.findMany({
+      where: { classTeacherId: { not: null } },
+      select: {
+        id: true,
+        name: true,
+        classTeacherId: true,
+        updatedAt: true,
+        class: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    const byStaffId = new Map<string, typeof sections>();
+    for (const s of sections) {
+      const key = s.classTeacherId as string;
+      byStaffId.set(key, [...(byStaffId.get(key) || []), s]);
+    }
+
+    const conflictingStaffIds = [...byStaffId.entries()].filter(([, list]) => list.length > 1).map(([staffId]) => staffId);
+    if (conflictingStaffIds.length === 0) {
+      sendSuccess(res, { hasConflicts: false, conflicts: [] }, "No class-teacher conflicts found - safe to apply the unique constraint");
+      return;
+    }
+
+    const staffRecords = await prisma.staff.findMany({
+      where: { id: { in: conflictingStaffIds } },
+      select: { id: true, employeeId: true, user: { select: { name: true } } },
+    });
+    const staffById = new Map(staffRecords.map((s) => [s.id, s]));
+
+    const conflicts = conflictingStaffIds.map((staffId) => ({
+      staffId,
+      staffName: staffById.get(staffId)?.user.name || "Unknown",
+      employeeId: staffById.get(staffId)?.employeeId || null,
+      sections: (byStaffId.get(staffId) || []).map((s) => ({
+        sectionId: s.id,
+        sectionName: s.name,
+        className: s.class.name,
+        branchName: s.branch.name,
+        updatedAt: s.updatedAt,
+      })),
+    }));
+
+    sendSuccess(
+      res,
+      { hasConflicts: true, conflicts },
+      `${conflicts.length} staff member(s) are currently class teacher of more than one section - resolve via POST /classes/sections/class-teacher-conflicts/resolve before this constraint can be applied`
+    );
+  } catch (error) {
+    sendError(res, "Failed to check class-teacher conflicts", 500, (error as Error).message);
+  }
+};
+
+/**
+ * POST /classes/sections/class-teacher-conflicts/resolve
+ * Super Admin only. Fixes every conflict reported by the GET above
+ * WITHOUT any direct DB/SQL step - purely through this API call.
+ *
+ * body (optional): { keepSectionIds?: string[] }
+ *   - For each conflicting staff member, if one of their conflicting
+ *     sectionIds is present in keepSectionIds, that section keeps the
+ *     classTeacherId and every other conflicting section for that
+ *     staff member is cleared (classTeacherId set to null).
+ *   - If none of a given staff member's conflicting sections appear in
+ *     keepSectionIds (or the body/array is omitted entirely), the
+ *     MOST RECENTLY UPDATED section is kept automatically and the rest
+ *     are cleared - a sensible default so this can be called with no
+ *     body at all for a fully automatic one-shot cleanup.
+ * Every cleared section's classTeacherId becomes null (not deleted) -
+ * the section itself, its students, room, etc. are all untouched; it
+ * simply needs a new class teacher assigned afterwards via the normal
+ * Teacher Assign page/PUT /classes/sections/:id.
+ */
+export const resolveClassTeacherConflicts = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const keepSectionIds: string[] = Array.isArray(req.body?.keepSectionIds) ? req.body.keepSectionIds : [];
+    const keepSet = new Set(keepSectionIds);
+
+    const sections = await prisma.section.findMany({
+      where: { classTeacherId: { not: null } },
+      select: { id: true, classTeacherId: true, updatedAt: true },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    const byStaffId = new Map<string, typeof sections>();
+    for (const s of sections) {
+      const key = s.classTeacherId as string;
+      byStaffId.set(key, [...(byStaffId.get(key) || []), s]);
+    }
+
+    const toClear: string[] = [];
+    const resolutions: { staffId: string; keptSectionId: string; clearedSectionIds: string[] }[] = [];
+
+    for (const [staffId, list] of byStaffId.entries()) {
+      if (list.length <= 1) continue;
+
+      const explicitKeep = list.find((s) => keepSet.has(s.id));
+      // list is already ordered by updatedAt desc (from the query
+      // above), so list[0] is the most-recently-updated fallback.
+      const kept = explicitKeep || list[0];
+      const cleared = list.filter((s) => s.id !== kept.id).map((s) => s.id);
+
+      toClear.push(...cleared);
+      resolutions.push({ staffId, keptSectionId: kept.id, clearedSectionIds: cleared });
+    }
+
+    if (toClear.length === 0) {
+      sendSuccess(res, { resolved: 0, resolutions: [] }, "No class-teacher conflicts found - nothing to resolve");
+      return;
+    }
+
+    await prisma.section.updateMany({
+      where: { id: { in: toClear } },
+      data: { classTeacherId: null },
+    });
+
+    // Every affected section's branch may have a cached class list
+    // (getClasses) embedding its classTeacherId - invalidate all of
+    // them so the app reflects this cleanup immediately rather than
+    // waiting out the cache TTL.
+    const affectedBranches = await prisma.section.findMany({
+      where: { id: { in: toClear } },
+      select: { branchId: true },
+      distinct: ["branchId"],
+    });
+    await Promise.all(affectedBranches.map((b) => invalidateClassesCache(b.branchId)));
+
+    sendSuccess(
+      res,
+      { resolved: resolutions.length, clearedSections: toClear.length, resolutions },
+      `Resolved ${resolutions.length} conflict(s): kept one class-teacher assignment per staff member and cleared ${toClear.length} duplicate section assignment(s). Assign new class teachers to the cleared sections via the Teacher Assign page.`
+    );
+  } catch (error) {
+    sendError(res, "Failed to resolve class-teacher conflicts", 500, (error as Error).message);
   }
 };

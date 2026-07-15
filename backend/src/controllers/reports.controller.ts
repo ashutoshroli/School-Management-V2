@@ -115,19 +115,33 @@ export const getAttendanceAnalytics = async (req: AuthRequest, res: Response): P
     const branchId = resolveBranchId(req);
     const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
     const year = parseInt(req.query.year as string) || new Date().getFullYear();
+    // Point 1 (Multi-Filter): optionally narrow the class-wise
+    // breakdown to one class and/or one section - omitting both keeps
+    // the original "every class in the branch" behavior.
+    const classId = req.query.classId as string | undefined;
+    const sectionId = req.query.sectionId as string | undefined;
 
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59);
 
-    const classes = await prisma.class.findMany({ where: { branchId }, orderBy: { numericOrder: "asc" } });
+    const classes = await prisma.class.findMany({
+      where: { branchId, ...(classId ? { id: classId } : {}) },
+      orderBy: { numericOrder: "asc" },
+    });
 
     const analytics = await Promise.all(classes.map(async (cls) => {
-      const students = await prisma.student.count({ where: { classId: cls.id, isActive: true } });
+      const studentWhere: any = { classId: cls.id, isActive: true };
+      const attendanceStudentWhere: any = { classId: cls.id };
+      if (sectionId) {
+        studentWhere.sectionId = sectionId;
+        attendanceStudentWhere.sectionId = sectionId;
+      }
+      const students = await prisma.student.count({ where: studentWhere });
       const totalRecords = await prisma.studentAttendance.count({
-        where: { student: { classId: cls.id }, date: { gte: startDate, lte: endDate } },
+        where: { student: attendanceStudentWhere, date: { gte: startDate, lte: endDate } },
       });
       const presentRecords = await prisma.studentAttendance.count({
-        where: { student: { classId: cls.id }, date: { gte: startDate, lte: endDate }, status: { in: ["PRESENT", "LATE"] } },
+        where: { student: attendanceStudentWhere, date: { gte: startDate, lte: endDate }, status: { in: ["PRESENT", "LATE"] } },
       });
       const percentage = totalRecords > 0 ? Math.round((presentRecords / totalRecords) * 100) : 0;
 
@@ -280,12 +294,20 @@ export const exportAttendanceDefaultersCsv = async (req: AuthRequest, res: Respo
 export const getAcademicAnalytics = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const branchId = resolveBranchId(req);
+    // Point 1 (Multi-Filter): optionally narrow to one class and/or
+    // one subject - omitting both keeps the original "every class,
+    // every subject combined" behavior.
+    const classId = req.query.classId as string | undefined;
+    const subjectId = req.query.subjectId as string | undefined;
 
-    const classes = await prisma.class.findMany({ where: { branchId }, orderBy: { numericOrder: "asc" } });
+    const classes = await prisma.class.findMany({
+      where: { branchId, ...(classId ? { id: classId } : {}) },
+      orderBy: { numericOrder: "asc" },
+    });
 
     const analytics = await Promise.all(classes.map(async (cls) => {
       const marks = await prisma.mark.findMany({
-        where: { exam: { classId: cls.id } },
+        where: { exam: { classId: cls.id }, ...(subjectId ? { subjectId } : {}) },
       });
 
       if (marks.length === 0) return { className: cls.name, avgPercent: 0, passPercent: 0, totalStudents: 0 };

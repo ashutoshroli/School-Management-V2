@@ -20,7 +20,11 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     branch: { findUnique: jest.fn() },
-    student: { count: jest.fn(), findUnique: jest.fn() },
+    // findMany backs generateNextRollNo's auto roll-number lookup
+    // (Point 6 - Manual Roll No. Generation) - defaults to an empty
+    // roster so auto-generated roll numbers start at "1" unless a
+    // test overrides it.
+    student: { count: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
     user: { update: jest.fn() },
     $transaction: jest.fn(),
   },
@@ -61,6 +65,7 @@ describe("student.controller - createStudent", () => {
     jest.clearAllMocks();
     (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ code: "MAIN" });
     (prisma.student.count as jest.Mock).mockResolvedValue(0);
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.student.findUnique as jest.Mock).mockResolvedValue({
       id: "student-1",
       user: { name: "Ravi Kumar", email: "ravi@test.com", phone: null },
@@ -77,6 +82,7 @@ describe("student.controller - createStudent", () => {
         branch: prisma.branch,
         student: {
           ...prisma.student,
+          findMany: jest.fn().mockResolvedValue([]),
           create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: "student-1", ...data })),
         },
         user: {
