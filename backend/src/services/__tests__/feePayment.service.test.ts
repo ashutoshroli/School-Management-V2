@@ -1,4 +1,4 @@
-import { recordFeePayment } from "../feePayment.service";
+import { recordFeePayment, recalculateFeeAssignmentDiscount } from "../feePayment.service";
 
 /**
  * These tests exercise recordFeePayment()'s pure calculation logic
@@ -219,5 +219,96 @@ describe("recordFeePayment", () => {
     expect(resultA.payment.receiptNo).toBe("RCP-MAIN-000001");
     expect(resultB.payment.receiptNo).toBe("RCP-NORTH-000001");
     expect(resultA.payment.receiptNo).not.toBe(resultB.payment.receiptNo);
+  });
+});
+
+
+/**
+ * BUG FIX regression tests: recalculateFeeAssignmentDiscount is the
+ * function that actually makes a granted discount reduce a fee's
+ * pending amount - previously nothing ever wrote to
+ * FeeAssignment.discount when a StudentDiscount was created/toggled/
+ * deleted, so a discount had zero real effect. See this function's
+ * own doc comment in feePayment.service.ts for the full root cause.
+ */
+describe("recalculateFeeAssignmentDiscount", () => {
+  const makeMockTx = () => ({
+    feeAssignment: {
+      findUnique: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    studentDiscount: {
+      findMany: jest.fn(),
+    },
+  });
+
+  it("does nothing when the fee assignment does not exist", async () => {
+    const tx: any = makeMockTx();
+    tx.feeAssignment.findUnique.mockResolvedValue(null);
+
+    await recalculateFeeAssignmentDiscount(tx, "fa-missing");
+
+    expect(tx.studentDiscount.findMany).not.toHaveBeenCalled();
+    expect(tx.feeAssignment.update).not.toHaveBeenCalled();
+  });
+
+  it("sums a single fixed-amount active discount into FeeAssignment.discount", async () => {
+    const tx: any = makeMockTx();
+    tx.feeAssignment.findUnique.mockResolvedValue({ totalAmount: 1000 as any });
+    tx.studentDiscount.findMany.mockResolvedValue([{ value: 150 as any, isPercent: false }]);
+
+    await recalculateFeeAssignmentDiscount(tx, "fa-1");
+
+    expect(tx.studentDiscount.findMany).toHaveBeenCalledWith({
+      where: { feeAssignmentId: "fa-1", isActive: true },
+      select: { value: true, isPercent: true },
+    });
+    expect(tx.feeAssignment.update).toHaveBeenCalledWith({ where: { id: "fa-1" }, data: { discount: 150 } });
+  });
+
+  it("computes a percentage discount against the assignment's totalAmount", async () => {
+    const tx: any = makeMockTx();
+    tx.feeAssignment.findUnique.mockResolvedValue({ totalAmount: 1000 as any });
+    tx.studentDiscount.findMany.mockResolvedValue([{ value: 10 as any, isPercent: true }]);
+
+    await recalculateFeeAssignmentDiscount(tx, "fa-1");
+
+    expect(tx.feeAssignment.update).toHaveBeenCalledWith({ where: { id: "fa-1" }, data: { discount: 100 } });
+  });
+
+  it("sums multiple active discounts (percentage + fixed) additively against the original totalAmount", async () => {
+    const tx: any = makeMockTx();
+    tx.feeAssignment.findUnique.mockResolvedValue({ totalAmount: 1000 as any });
+    tx.studentDiscount.findMany.mockResolvedValue([
+      { value: 10 as any, isPercent: true }, // 100
+      { value: 50 as any, isPercent: false }, // 50
+    ]);
+
+    await recalculateFeeAssignmentDiscount(tx, "fa-1");
+
+    expect(tx.feeAssignment.update).toHaveBeenCalledWith({ where: { id: "fa-1" }, data: { discount: 150 } });
+  });
+
+  it("caps the total discount at totalAmount so it can never exceed what was actually charged", async () => {
+    const tx: any = makeMockTx();
+    tx.feeAssignment.findUnique.mockResolvedValue({ totalAmount: 1000 as any });
+    tx.studentDiscount.findMany.mockResolvedValue([
+      { value: 80 as any, isPercent: true }, // 800
+      { value: 50 as any, isPercent: true }, // 500 -> combined 1300, over totalAmount
+    ]);
+
+    await recalculateFeeAssignmentDiscount(tx, "fa-1");
+
+    expect(tx.feeAssignment.update).toHaveBeenCalledWith({ where: { id: "fa-1" }, data: { discount: 1000 } });
+  });
+
+  it("resets discount to 0 when there are no active discounts left (e.g. after a delete/deactivate)", async () => {
+    const tx: any = makeMockTx();
+    tx.feeAssignment.findUnique.mockResolvedValue({ totalAmount: 1000 as any });
+    tx.studentDiscount.findMany.mockResolvedValue([]);
+
+    await recalculateFeeAssignmentDiscount(tx, "fa-1");
+
+    expect(tx.feeAssignment.update).toHaveBeenCalledWith({ where: { id: "fa-1" }, data: { discount: 0 } });
   });
 });

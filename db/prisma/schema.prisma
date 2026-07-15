@@ -546,6 +546,7 @@ model FeeAssignment {
   student      Student      @relation(fields: [studentId], references: [id])
   feeStructure FeeStructure @relation(fields: [feeStructureId], references: [id])
   payments     Payment[]
+  discounts    StudentDiscount[]
 
   @@unique([studentId, feeStructureId])
   // Phase 5 (Performance): the defaulters list/CSV/fee-reminder flows
@@ -563,18 +564,38 @@ enum FeeStatus {
   WAIVED
 }
 
+// BUG FIX: previously had NO link to any FeeAssignment at all -
+// assigning a discount only ever created a row here; nothing ever
+// copied its value into FeeAssignment.discount (the column
+// getStudentPendingFees/recordFeePayment actually read to compute the
+// pending/due amount), so a granted discount never reduced anything a
+// student owed. feeAssignmentId now ties a discount to the ONE
+// specific fee it applies to (e.g. "10% off this year's Tuition Fee"),
+// and every create/toggle/delete of a StudentDiscount recalculates its
+// linked FeeAssignment.discount from the sum of its currently-active
+// linked discounts (see feePayment.service.ts's
+// recalculateFeeAssignmentDiscount).
+//
+// Nullable (not required) so pre-existing rows created before this
+// migration - which were never linked to any fee and had no effect -
+// don't break; they simply continue to have no effect (unchanged
+// behavior for them), rather than crashing the migration or being
+// guessed at automatically (which fee a legacy discount was intended
+// for is genuinely ambiguous when a student has more than one).
 model StudentDiscount {
-  id        String       @id @default(cuid())
-  studentId String
-  type      DiscountType
-  name      String       // "Sibling Discount", "Merit Scholarship", "RTE", "Staff Ward"
-  value     Decimal      @db.Decimal(10, 2)
-  isPercent Boolean      @default(false)
-  isActive  Boolean      @default(true)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id             String       @id @default(cuid())
+  studentId      String
+  feeAssignmentId String?
+  type           DiscountType
+  name           String       // "Sibling Discount", "Merit Scholarship", "RTE", "Staff Ward"
+  value          Decimal      @db.Decimal(10, 2)
+  isPercent      Boolean      @default(false)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
-  student Student @relation(fields: [studentId], references: [id])
+  student       Student        @relation(fields: [studentId], references: [id])
+  feeAssignment FeeAssignment? @relation(fields: [feeAssignmentId], references: [id])
 }
 
 enum DiscountType {
