@@ -4,6 +4,7 @@ import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveEffectiveBranchId, canAccessBranch } from "../utils/branchScope";
 import { logAuditFromRequest } from "../services/auditLog.service";
+import { invalidateClassesCache } from "../services/cache.service";
 import {
   generateDemoDataForBranch, DemoDataOptions,
   seedDemoData, removeDemoData, getDemoDataStatus, DEMO_BRANCH_ID,
@@ -66,6 +67,10 @@ export const generateDemoData = async (req: AuthRequest, res: Response): Promise
     if (options.attendanceDays !== undefined && !Number.isFinite(options.attendanceDays)) options.attendanceDays = undefined;
 
     const result = await generateDemoDataForBranch(branchId, req.user!.userId, options);
+
+    // Demo data creates students in sections - invalidate the cached
+    // class list so section occupancy counts update immediately.
+    await invalidateClassesCache(branchId);
 
     logAuditFromRequest(req, "CREATE", "demo_data", branchId, { newData: result });
 
