@@ -6,10 +6,12 @@ import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import Modal from "@/components/ui/Modal";
+import { usePermissions } from "@/hooks/usePermissions";
 
 export default function LeavesPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "SUPER_ADMIN" || user?.role === "BRANCH_ADMIN";
+  const { canEdit, canDelete } = usePermissions();
 
   const [tab, setTab] = useState<"pending" | "all" | "balance" | "types">("pending");
   const [applications, setApplications] = useState<any[]>([]);
@@ -233,8 +235,12 @@ export default function LeavesPage() {
                     <td className="px-4 py-3 text-center">
                       <div className="flex justify-center gap-2">
                         <button onClick={() => openDetail(lt.id)} className="text-gray-500 hover:text-gray-700" title="View Details"><Eye className="h-4 w-4" /></button>
-                        <button onClick={() => openEditType(lt)} className="text-primary-600 hover:text-primary-700" title="Edit"><Pencil className="h-4 w-4" /></button>
-                        <button onClick={() => handleDeleteType(lt)} className="text-red-500 hover:text-red-700" title="Delete"><Trash2 className="h-4 w-4" /></button>
+                        {canEdit && (
+                          <button onClick={() => openEditType(lt)} className="text-primary-600 hover:text-primary-700" title="Edit"><Pencil className="h-4 w-4" /></button>
+                        )}
+                        {canDelete && (
+                          <button onClick={() => handleDeleteType(lt)} className="text-red-500 hover:text-red-700" title="Delete"><Trash2 className="h-4 w-4" /></button>
+                        )}
                       </div>
                     </td>
                   </tr>

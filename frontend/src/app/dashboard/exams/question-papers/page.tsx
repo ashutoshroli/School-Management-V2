@@ -6,6 +6,7 @@ import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { formatDate } from "@/lib/utils";
 import { resolveUploadUrl } from "@/lib/uploads";
+import { usePermissions } from "@/hooks/usePermissions";
 
 
 interface QuestionPaper {
@@ -20,6 +21,7 @@ interface QuestionPaper {
 export default function QuestionPapersPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "SUPER_ADMIN" || user?.role === "BRANCH_ADMIN";
+  const { canDelete } = usePermissions();
 
   const [papers, setPapers] = useState<QuestionPaper[]>([]);
   const [loading, setLoading] = useState(true);
@@ -223,9 +225,11 @@ export default function QuestionPapersPage() {
                       <a href={resolveUploadUrl(p.fileUrl)} target="_blank" rel="noreferrer" className="p-1.5 text-primary-600 hover:bg-primary-50 rounded" title="Download">
                         <Download className="h-4 w-4" />
                       </a>
-                      <button onClick={() => handleDelete(p.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded" title="Delete">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {canDelete && (
+                        <button onClick={() => handleDelete(p.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded" title="Delete">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

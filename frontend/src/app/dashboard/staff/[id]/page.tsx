@@ -42,6 +42,12 @@ export default function StaffProfilePage() {
     qualification: "", experience: "",
     bankAccount: "", bankName: "", ifscCode: "", panNumber: "", aadharNumber: "",
     address: "", city: "", state: "", pincode: "", cardId: "", isActive: true, leavingDate: "",
+    // Point 10: free-text label, only meaningful when this staff
+    // member's System Role is "Others" (STAFF role) - blank for every
+    // normal role.
+    customStaffType: "",
+    // Point 3a: per-teacher daily period cap - blank/0 = no limit.
+    maxPeriodsPerDay: "",
   });
 
   // Salary structure (admin only)
@@ -159,6 +165,12 @@ export default function StaffProfilePage() {
       cardId: staff.cardId || "",
       isActive: staff.isActive,
       leavingDate: staff.leavingDate ? new Date(staff.leavingDate).toISOString().slice(0, 10) : "",
+      // Point 2 (auto-tick/pre-fill): loaded straight from the saved
+      // Staff record, same as every other field in this form, so
+      // re-opening Edit always shows the DB's current value, not a
+      // blank default.
+      customStaffType: staff.customStaffType || "",
+      maxPeriodsPerDay: staff.maxPeriodsPerDay ? String(staff.maxPeriodsPerDay) : "",
     });
     setShowEditModal(true);
   };
@@ -167,7 +179,10 @@ export default function StaffProfilePage() {
     e.preventDefault();
     setSaving(true);
     try {
-      await api.put(`/staff/${params.id}`, editForm);
+      await api.put(`/staff/${params.id}`, {
+        ...editForm,
+        maxPeriodsPerDay: editForm.maxPeriodsPerDay === "" ? null : parseInt(editForm.maxPeriodsPerDay, 10),
+      });
       setShowEditModal(false);
       await refetchStaff();
     } catch (err: any) {
@@ -271,7 +286,15 @@ export default function StaffProfilePage() {
                   {staff.type === "TEACHING" ? "Teaching" : "Non-Teaching"}
                 </span>
               </div>
-              <div><span className="text-gray-500">Role:</span> <span className="font-medium ml-2">{staff.user.role?.replace(/_/g, " ")}</span></div>
+              <div>
+                <span className="text-gray-500">Role:</span>
+                <span className="font-medium ml-2">
+                  {staff.user.role?.replace(/_/g, " ")}{staff.customStaffType ? ` (${staff.customStaffType})` : ""}
+                </span>
+              </div>
+              {staff.type === "TEACHING" && (
+                <div><span className="text-gray-500">Max Periods/Day:</span> <span className="font-medium ml-2">{staff.maxPeriodsPerDay || "No limit"}</span></div>
+              )}
               <div><span className="text-gray-500">Qualification:</span> <span className="font-medium ml-2">{staff.qualification || "-"}</span></div>
               <div><span className="text-gray-500">Experience:</span> <span className="font-medium ml-2">{staff.experience || "-"}</span></div>
               <div><span className="text-gray-500">Joining Date:</span> <span className="font-medium ml-2">{formatDate(staff.joiningDate)}</span></div>
@@ -563,6 +586,33 @@ export default function StaffProfilePage() {
                 <option value="NON_TEACHING">Non-Teaching</option>
               </select>
             </div>
+            {/* Point 10: shown whenever this staff record already has
+                (or is being given) a custom label - "System Role"
+                itself isn't editable here (see Add Staff form), but
+                the free-text label always is. */}
+            <div>
+              <label className="block text-sm font-medium mb-1">Custom Staff Type (if &quot;Others&quot;)</label>
+              <input
+                className="input-field"
+                placeholder="e.g., Lab Assistant"
+                value={editForm.customStaffType}
+                onChange={(e) => setEditForm({ ...editForm, customStaffType: e.target.value })}
+              />
+            </div>
+            {/* Point 3a */}
+            {editForm.type === "TEACHING" && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Max Periods / Day</label>
+                <input
+                  type="number"
+                  min={0}
+                  className="input-field"
+                  placeholder="0 = no limit"
+                  value={editForm.maxPeriodsPerDay}
+                  onChange={(e) => setEditForm({ ...editForm, maxPeriodsPerDay: e.target.value })}
+                />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium mb-1">Qualification</label>
               <input className="input-field" value={editForm.qualification} onChange={(e) => setEditForm({ ...editForm, qualification: e.target.value })} />

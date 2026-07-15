@@ -6,6 +6,7 @@ import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import DataTable from "@/components/ui/DataTable";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface Branch {
   id: string;
@@ -19,6 +20,10 @@ interface Branch {
 }
 
 export default function BranchesPage() {
+  // Point 4: Branch create/update/delete are SUPER_ADMIN-only on the
+  // backend (see backend/src/routes/branch.routes.ts) - Branch Admins
+  // never get Edit/Delete/Add here, only Super Admin does.
+  const { isSuperAdmin } = usePermissions();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -114,20 +119,24 @@ export default function BranchesPage() {
         </span>
       ),
     },
-    {
-      key: "actions",
-      label: "Actions",
-      render: (b: Branch) => (
-        <div className="flex items-center gap-1">
-          <button onClick={() => openEdit(b)} className="p-1 rounded hover:bg-gray-100" title="Edit">
-            <Edit className="h-4 w-4 text-gray-600" />
-          </button>
-          <button onClick={() => deleteBranchRecord(b.id, b.name)} className="p-1 rounded hover:bg-gray-100" title="Delete">
-            <Trash2 className="h-4 w-4 text-red-500" />
-          </button>
-        </div>
-      ),
-    },
+    ...(isSuperAdmin
+      ? [
+          {
+            key: "actions",
+            label: "Actions",
+            render: (b: Branch) => (
+              <div className="flex items-center gap-1">
+                <button onClick={() => openEdit(b)} className="p-1 rounded hover:bg-gray-100" title="Edit">
+                  <Edit className="h-4 w-4 text-gray-600" />
+                </button>
+                <button onClick={() => deleteBranchRecord(b.id, b.name)} className="p-1 rounded hover:bg-gray-100" title="Delete">
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </button>
+              </div>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -139,9 +148,11 @@ export default function BranchesPage() {
           </h1>
           <p className="text-gray-500 mt-1">Manage school branches / campuses</p>
         </div>
-        <button onClick={() => { setEditBranch(null); setForm({ name: "", code: "", address: "", city: "", state: "", pincode: "", phone: "", email: "" }); setShowModal(true); }} className="btn-primary flex items-center gap-2">
-          <Plus className="h-4 w-4" /> Add Branch
-        </button>
+        {isSuperAdmin && (
+          <button onClick={() => { setEditBranch(null); setForm({ name: "", code: "", address: "", city: "", state: "", pincode: "", phone: "", email: "" }); setShowModal(true); }} className="btn-primary flex items-center gap-2">
+            <Plus className="h-4 w-4" /> Add Branch
+          </button>
+        )}
       </div>
 
       {error && <ErrorBanner message={error} onRetry={fetchBranches} />}

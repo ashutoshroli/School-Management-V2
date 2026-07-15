@@ -106,6 +106,7 @@ model AcademicYear {
 enum UserRole {
   SUPER_ADMIN
   BRANCH_ADMIN
+  PRINCIPAL
   TEACHER
   ACCOUNTANT
   LIBRARIAN
@@ -191,6 +192,17 @@ model Staff {
   pincode       String?
   cardId        String?   @unique // RFID Card ID
   isActive      Boolean   @default(true)
+  // Only meaningful when the assigned "Staff Type"/System Role is
+  // "Others" (see frontend Staff form) - free text label the admin
+  // typed in for a role that isn't one of the fixed UserRole options.
+  // Nullable/unused for every normal role.
+  customStaffType String?
+  // Timetable rule (see timetable.controller.ts's upsertSlot): the
+  // maximum number of periods this teacher may be assigned across a
+  // single day, checked at slot-assignment time so a teacher never
+  // gets overloaded. 0/null = no limit configured yet (fully backward
+  // compatible with every teacher created before this field existed).
+  maxPeriodsPerDay Int?     @default(0)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -201,7 +213,9 @@ model Staff {
   leaves          LeaveApplication[]
   payslips        Payslip[]
   documents       StaffDocument[]
-  classTeacher    Section[]         @relation("ClassTeacher")
+  // One-to-one now (see Section.classTeacherId's @unique) - a staff
+  // member can be the class teacher of AT MOST one section at a time.
+  classTeacher    Section?          @relation("ClassTeacher")
   subjectTeachers SubjectTeacher[]
   timetableSlots  TimetableSlot[]
   assignedRooms   SchoolRoom[]      @relation("RoomAssignedStaff")
@@ -371,7 +385,13 @@ model Section {
   classId        String
   name           String   // A, B, C...
   capacity       Int      @default(40)
-  classTeacherId String?
+  // @unique: a staff member can be the class teacher of AT MOST ONE
+  // section at a time (enforced here at the DB level, in addition to
+  // the friendlier pre-check in updateSection/createSection). Multiple
+  // sections with classTeacherId: null is fine - Postgres treats every
+  // NULL as distinct for a unique index, so any number of
+  // not-yet-assigned sections can coexist.
+  classTeacherId String?  @unique
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -384,12 +404,37 @@ model Section {
   // instead of needing separate manual seat-tracking.
   roomId       String?
   room         SchoolRoom? @relation(fields: [roomId], references: [id])
+  // Additional rooms this section uses beyond its one primary
+  // classroom above (e.g. a shared Lab, Library slot, or Auditorium
+  // for special periods) - see SectionRoom below. The single `room`
+  // FK stays exactly as-is for the common "one classroom" case; this
+  // is purely additive/opt-in multi-room support for the "Class
+  // Assign" module's bulk multi-select workflow.
+  additionalRooms SectionRoom[]
   students     Student[]
   attendances  StudentAttendance[]
   timetable    Timetable?
   examQuestionPapers ExamQuestionPaper[]
 
   @@unique([classId, name])
+}
+
+// Many-to-many mapping letting a Section be linked to MULTIPLE
+// SchoolRooms at once (beyond its single primary Section.roomId), and
+// symmetrically letting one SchoolRoom be shared by multiple Sections
+// (e.g. a shared Lab/Auditorium used by several classes) - the "Class
+// Assign" module's bulk multi-select workflow creates/removes rows
+// here in bulk rather than one manual pick at a time.
+model SectionRoom {
+  id        String   @id @default(cuid())
+  sectionId String
+  roomId    String
+  createdAt DateTime @default(now())
+
+  section Section    @relation(fields: [sectionId], references: [id])
+  room    SchoolRoom @relation(fields: [roomId], references: [id])
+
+  @@unique([sectionId, roomId])
 }
 
 model Subject {
@@ -1546,6 +1591,7 @@ model SchoolRoom {
   floor         SchoolFloor @relation(fields: [floorId], references: [id])
   assignedStaff Staff?      @relation("RoomAssignedStaff", fields: [assignedStaffId], references: [id])
   sections      Section[]
+  additionalSections SectionRoom[]
   examSchedules ExamSchedule[]
   examSeatAllocations ExamSeatAllocation[]
   cabins        RoomCabin[]
@@ -1556,6 +1602,13 @@ enum SchoolRoomType {
   LAB
   OFFICE
   CHAMBER
+  // Dedicated multi-occupant teacher room - functionally like CHAMBER/
+  // STAFF_ROOM (uses the same RoomCabin mechanism below to let several
+  // teachers share one physical room, each with their own named
+  // cabin), but its own distinct type so it shows up clearly as
+  // "Teacher Chamber" in the Room Type list/filters instead of being
+  // folded into the generic CHAMBER or STAFF_ROOM buckets.
+  TEACHER_CHAMBER
   STAFF_ROOM
   LIBRARY
   AUDITORIUM
@@ -1717,11 +1770,22 @@ model CertificateTemplate {
   name      String   // "Transfer Certificate", "Bonafide", "Character", "ID Card"
   type      CertificateType
   templateUrl String // uploaded DOCX template file
+  // Multiple templates can now exist for the same `type` (e.g. two
+  // different ID Card layouts) - isActive marks the ONE currently used
+  // as the default when a caller generates a document without
+  // explicitly picking a templateId (see certificateGenerator usages
+  // that look up "the" template for a type). Uploading no longer
+  // replaces the previous template in place; it adds a new row, and
+  // "Set Active" (see template.controller.ts's setActiveTemplate)
+  // switches which one is the default, deactivating any previous
+  // default of the same type.
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   generated GeneratedCertificate[]
+
+  @@index([type, isActive])
 }
 
 enum CertificateType {
@@ -1754,6 +1818,13 @@ model DocumentTemplate {
   name        String
   type        DocTemplateType
   templateUrl String   // DOCX file
+  // Multiple templates can now be uploaded for the same (type, examId)
+  // slot (e.g. 3 different Report Card layouts) - isDefault marks the
+  // ONE currently used automatically when generating a document
+  // without an explicit templateId (see documentTemplateLookup.
+  // service.ts). Uploading a new template no longer replaces/deletes
+  // the previous one; each upload adds a new selectable row, and at
+  // most one row per (type, examId) has isDefault: true at any time.
   isDefault   Boolean  @default(false)
   // null = the org-wide/school-wide default template for this `type`
   // (the original behavior - one global DOCX per type). A non-null
@@ -1765,23 +1836,16 @@ model DocumentTemplate {
   // REPORT_CARD) - other types (FEE_RECEIPT, PAYSLIP, ADMISSION_FORM,
   // CUSTOM) have no natural exam association and always leave this
   // null. Lookup order (see documentTemplateLookup.service.ts) always
-  // tries the exam-specific row first, falling back to the type's
-  // global (examId: null) row when none exists for that exam.
+  // tries the exam-specific DEFAULT row first, falling back to the
+  // type's global (examId: null) DEFAULT row when none exists for
+  // that exam.
   examId      String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   exam Exam? @relation(fields: [examId], references: [id])
 
-  // Guards against uploading two templates for the same (type, exam)
-  // pair - matches the "one current DOCX per slot" convention the
-  // upload endpoint already enforces in application code for the
-  // global (examId: null) case. Postgres treats multiple NULLs as
-  // distinct for a unique index, so this does NOT by itself prevent
-  // more than one global row per type - that's still enforced by
-  // uploadTemplateFile's existing findFirst-then-update-or-create
-  // logic, same as before this field was added.
-  @@unique([type, examId])
+  @@index([type, examId, isDefault])
 }
 
 enum DocTemplateType {

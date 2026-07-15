@@ -5,6 +5,7 @@ import { Radio, Plus, Trash2, RefreshCw, Copy, CheckCircle2, Eye, EyeOff, Power 
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface Device {
   id: string;
@@ -26,6 +27,7 @@ interface Device {
  * the devices LIST never has an apiKey column at all (nothing to show).
  */
 export default function AttendanceDevicesPage() {
+  const { canDelete } = usePermissions();
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -190,14 +192,16 @@ export default function AttendanceDevicesPage() {
                       >
                         <RefreshCw className={`h-4 w-4 ${regeneratingId === d.id ? "animate-spin" : ""}`} />
                       </button>
-                      <button
-                        onClick={() => handleDelete(d)}
-                        disabled={deletingId === d.id}
-                        title="Delete"
-                        className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {canDelete && (
+                        <button
+                          onClick={() => handleDelete(d)}
+                          disabled={deletingId === d.id}
+                          title="Delete"
+                          className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

@@ -6,6 +6,7 @@ import { FileText, Plus, UserCheck, Edit, Trash2, Eye, Users } from "lucide-reac
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface FeeStructure {
   id: string;
@@ -29,6 +30,7 @@ interface FeeStructure {
 
 export default function FeeStructuresPage() {
   const router = useRouter();
+  const { canEdit, canDelete } = usePermissions();
   const [structures, setStructures] = useState<FeeStructure[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -265,12 +267,16 @@ export default function FeeStructuresPage() {
                       <button onClick={() => openDetail(s.id)} title="View Details" className="text-gray-500 hover:text-gray-700">
                         <Eye className="h-3.5 w-3.5" />
                       </button>
-                      <button onClick={() => openEditModal(s)} title="Edit" className="text-gray-500 hover:text-gray-700">
-                        <Edit className="h-3.5 w-3.5" />
-                      </button>
-                      <button onClick={() => handleDelete(s.id)} title="Delete" className="text-red-500 hover:text-red-700">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {canEdit && (
+                        <button onClick={() => openEditModal(s)} title="Edit" className="text-gray-500 hover:text-gray-700">
+                          <Edit className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button onClick={() => handleDelete(s.id)} title="Delete" className="text-red-500 hover:text-red-700">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

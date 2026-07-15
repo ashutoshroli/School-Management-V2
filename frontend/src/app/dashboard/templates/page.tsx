@@ -6,6 +6,7 @@ import api from "@/lib/api";
 import { resolveUploadUrl } from "@/lib/uploads";
 import { formatDate } from "@/lib/utils";
 import Modal from "@/components/ui/Modal";
+import { usePermissions } from "@/hooks/usePermissions";
 
 type Category = "certificate" | "document";
 
@@ -304,13 +305,17 @@ interface TemplateRecord {
   name: string;
   type: string;
   templateUrl: string;
+  /** Certificate templates: whether this is the ONE active template used for generation. */
   isActive?: boolean;
+  /** Document templates: whether this is the ONE default template used for generation. */
+  isDefault?: boolean;
   updatedAt: string;
   /** Document templates only - set when this row is scoped to one specific exam (see schema.prisma). */
   examId?: string | null;
 }
 
 export default function TemplatesPage() {
+  const { canDelete } = usePermissions();
   const [certTemplates, setCertTemplates] = useState<TemplateRecord[]>([]);
   const [docTemplates, setDocTemplates] = useState<TemplateRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -361,12 +366,29 @@ export default function TemplatesPage() {
 
   useEffect(() => { fetchTemplates(); }, []);
 
-  const findExisting = (slot: TemplateSlot): TemplateRecord | undefined => {
+  // Point 5 (Multiple Template Upload): a slot can now have SEVERAL
+  // uploaded templates - findSlotTemplates returns ALL of them (for
+  // the picker list), findActiveTemplate returns just the one
+  // currently used for generation (isActive/isDefault).
+  const findSlotTemplates = (slot: TemplateSlot): TemplateRecord[] => {
     const list = slot.category === "certificate" ? certTemplates : docTemplates;
-    return list.find((t) => t.type === slot.type);
+    // Document templates only ever match the SCHOOL-WIDE slot here
+    // (examId: null) - exam-specific rows are managed entirely by the
+    // separate exam-scoped picker below.
+    return list.filter((t) => t.type === slot.type && (slot.category === "certificate" || !t.examId));
+  };
+  const findActiveTemplate = (slot: TemplateSlot): TemplateRecord | undefined => {
+    const list = findSlotTemplates(slot);
+    return list.find((t) => (slot.category === "certificate" ? t.isActive : t.isDefault));
   };
 
   const slotKey = (slot: TemplateSlot) => `${slot.category}:${slot.type}`;
+
+  // Which slot's "all uploaded templates" picker is currently open -
+  // separate from the placeholder Guide modal (guideSlot) and the
+  // exam-scoped picker (examScopedSlot) below.
+  const [manageSlot, setManageSlot] = useState<TemplateSlot | null>(null);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
 
   const handleFileSelected = async (slot: TemplateSlot, file: File) => {
     if (!file.name.toLowerCase().endsWith(".docx")) {
@@ -378,7 +400,7 @@ export default function TemplatesPage() {
     formData.append("file", file);
     formData.append("category", slot.category);
     formData.append("type", slot.type);
-    formData.append("name", slot.label);
+    formData.append("name", file.name.replace(/\.docx$/i, "") || slot.label);
 
     setUploadingSlot(slotKey(slot));
     try {
@@ -400,12 +422,26 @@ export default function TemplatesPage() {
   };
 
   const handleDelete = async (slot: TemplateSlot, template: TemplateRecord) => {
-    if (!confirm(`Remove the uploaded template for "${slot.label}"?`)) return;
+    if (!confirm(`Remove the template "${template.name}"?`)) return;
     try {
       await api.delete(`/templates/${template.id}`, { params: { category: slot.category } });
       await fetchTemplates();
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to delete template");
+    }
+  };
+
+  // Point 5: select which of several uploaded templates for this slot
+  // is the one actually used for generation.
+  const handleSetActive = async (slot: TemplateSlot, template: TemplateRecord) => {
+    setActivatingId(template.id);
+    try {
+      await api.patch(`/templates/${template.id}/activate`, null, { params: { category: slot.category } });
+      await fetchTemplates();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to set active template");
+    } finally {
+      setActivatingId(null);
     }
   };
 
@@ -445,8 +481,9 @@ export default function TemplatesPage() {
     setSelectedExamId("");
   };
 
-  const findExamTemplate = (examId: string): TemplateRecord | undefined =>
-    examTemplates.find((t) => t.examId === examId);
+  // Point 5: an exam can now have several uploaded templates too -
+  // findExamTemplates returns ALL of them for a given exam.
+  const findExamTemplates = (examId: string): TemplateRecord[] => examTemplates.filter((t) => t.examId === examId);
 
   const examLabel = (exam: ExamOption) =>
     `${exam.name}${exam.class?.name ? ` - ${exam.class.name}` : ""}${exam.academicYear?.name ? ` (${exam.academicYear.name})` : ""}`;
@@ -473,10 +510,11 @@ export default function TemplatesPage() {
       const res = await api.post("/templates/upload", formData, {
         headers: { "Content-Type": undefined },
       });
-      setExamTemplates((prev) => {
-        const withoutThisExam = prev.filter((t) => t.examId !== examId);
-        return [...withoutThisExam, res.data.data];
-      });
+      // Point 5: adds a NEW row alongside any this exam already has
+      // (rather than replacing) - the first upload for an exam is
+      // auto-marked default by the backend, matching the original
+      // single-template behavior for a brand-new exam slot.
+      setExamTemplates((prev) => [...prev, res.data.data]);
     } catch (err: any) {
       alert(err.response?.data?.message || "Upload failed");
     } finally {
@@ -489,17 +527,30 @@ export default function TemplatesPage() {
   const handleExamTemplateDelete = async (examId: string, template: TemplateRecord) => {
     if (!examScopedSlot) return;
     const exam = exams.find((e) => e.id === examId);
-    if (!confirm(`Remove the "${examScopedSlot.label}" template uploaded for ${exam ? examLabel(exam) : "this exam"}? It will fall back to the school-wide default.`)) return;
+    if (!confirm(`Remove the template "${template.name}" uploaded for ${exam ? examLabel(exam) : "this exam"}?`)) return;
     try {
       await api.delete(`/templates/${template.id}`, { params: { category: "document" } });
-      setExamTemplates((prev) => prev.filter((t) => t.examId !== examId));
+      setExamTemplates((prev) => prev.filter((t) => t.id !== template.id));
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to delete template");
     }
   };
 
+  const handleSetActiveExamTemplate = async (template: TemplateRecord) => {
+    setActivatingId(template.id);
+    try {
+      await api.patch(`/templates/${template.id}/activate`, null, { params: { category: "document" } });
+      setExamTemplates((prev) => prev.map((t) => (t.examId === template.examId ? { ...t, isDefault: t.id === template.id } : t)));
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to set active template");
+    } finally {
+      setActivatingId(null);
+    }
+  };
+
   const renderSlot = (slot: TemplateSlot) => {
-    const existing = findExisting(slot);
+    const active = findActiveTemplate(slot);
+    const allForSlot = findSlotTemplates(slot);
     const key = slotKey(slot);
     const isUploading = uploadingSlot === key;
 
@@ -519,26 +570,21 @@ export default function TemplatesPage() {
                 <Info className="h-4 w-4" />
               </button>
             </div>
-            {existing ? (
-              <p className="text-xs text-gray-500 mt-0.5">Uploaded {formatDate(existing.updatedAt)}</p>
+            {active ? (
+              <p className="text-xs text-gray-500 mt-0.5 truncate" title={active.name}>
+                Active: {active.name} &bull; {formatDate(active.updatedAt)}
+              </p>
             ) : (
               <p className="text-xs text-gray-400 mt-0.5">No template uploaded</p>
+            )}
+            {allForSlot.length > 0 && (
+              <p className="text-[11px] text-primary-600 mt-0.5">{allForSlot.length} template{allForSlot.length > 1 ? "s" : ""} uploaded</p>
             )}
           </div>
         </div>
 
         <div className="flex items-center gap-2 mt-auto flex-wrap">
-          {existing ? (
-            <a
-              href={resolveUploadUrl(existing.templateUrl)}
-              target="_blank"
-              rel="noreferrer"
-              className="btn-secondary text-xs flex items-center gap-1 px-2 py-1"
-              title="Download current template"
-            >
-              <FileDown className="h-3.5 w-3.5" /> Download
-            </a>
-          ) : (
+          {!active && (
             <a
               href={`/sample-templates/${slot.sampleFile}`}
               download
@@ -556,17 +602,17 @@ export default function TemplatesPage() {
             className="btn-primary text-xs flex items-center gap-1 px-2 py-1 disabled:opacity-60"
           >
             {isUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-            {isUploading ? "Uploading..." : existing ? "Replace" : "Upload"}
+            {isUploading ? "Uploading..." : "Upload New"}
           </button>
 
-          {existing && (
+          {allForSlot.length > 0 && (
             <button
               type="button"
-              onClick={() => handleDelete(slot, existing)}
-              className="text-red-500 hover:text-red-700 p-1"
-              title="Remove template"
+              onClick={() => setManageSlot(slot)}
+              className="btn-secondary text-xs flex items-center gap-1 px-2 py-1"
+              title="View, select, or remove any of this slot's uploaded templates"
             >
-              <Trash2 className="h-4 w-4" />
+              <FileStack className="h-3.5 w-3.5" /> Manage ({allForSlot.length})
             </button>
           )}
 
@@ -685,6 +731,78 @@ export default function TemplatesPage() {
         )}
       </Modal>
 
+      {/* Point 5: Manage all uploaded templates for one slot - select which is active, download/delete any of them. */}
+      <Modal
+        isOpen={!!manageSlot}
+        onClose={() => setManageSlot(null)}
+        title={manageSlot ? `${manageSlot.label} - Uploaded Templates` : ""}
+        size="lg"
+      >
+        {manageSlot && (
+          <div>
+            <p className="text-sm text-gray-600 mb-4">
+              Any number of templates can be uploaded for this slot. Click &quot;Set Active&quot; on the one you want used
+              when generating this document - only one can be active at a time.
+            </p>
+            <div className="border rounded-lg divide-y">
+              {findSlotTemplates(manageSlot).map((t) => {
+                const isActiveRow = manageSlot.category === "certificate" ? t.isActive : t.isDefault;
+                return (
+                  <div key={t.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate flex items-center gap-2">
+                        {t.name}
+                        {isActiveRow && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 flex-shrink-0">Active</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">Uploaded {formatDate(t.updatedAt)}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <a
+                        href={resolveUploadUrl(t.templateUrl)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn-secondary text-xs flex items-center gap-1 px-2 py-1"
+                        title="Download this template"
+                      >
+                        <FileDown className="h-3.5 w-3.5" /> Download
+                      </a>
+                      {!isActiveRow && (
+                        <button
+                          type="button"
+                          onClick={() => handleSetActive(manageSlot, t)}
+                          disabled={activatingId === t.id}
+                          className="btn-primary text-xs flex items-center gap-1 px-2 py-1 disabled:opacity-60"
+                        >
+                          {activatingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Set Active"}
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(manageSlot, t)}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Remove this template"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {findSlotTemplates(manageSlot).length === 0 && (
+                <p className="text-sm text-gray-400 px-3 py-4">No templates uploaded yet for this slot.</p>
+              )}
+            </div>
+            <div className="flex justify-end pt-4 mt-4 border-t">
+              <button type="button" onClick={() => setManageSlot(null)} className="btn-secondary">Close</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal
         isOpen={!!examScopedSlot}
         onClose={closeExamScopedPicker}
@@ -713,11 +831,9 @@ export default function TemplatesPage() {
                     onChange={(e) => setSelectedExamId(e.target.value)}
                   >
                     <option value="">Select an exam...</option>
-                    {exams
-                      .filter((exam) => !findExamTemplate(exam.id))
-                      .map((exam) => (
-                        <option key={exam.id} value={exam.id}>{examLabel(exam)}</option>
-                      ))}
+                    {exams.map((exam) => (
+                      <option key={exam.id} value={exam.id}>{examLabel(exam)}</option>
+                    ))}
                   </select>
                   <button
                     type="button"
@@ -755,62 +871,63 @@ export default function TemplatesPage() {
                     school-wide default.
                   </p>
                 ) : (
-                  <div className="border rounded-lg divide-y">
-                    {examTemplates.map((t) => {
-                      const exam = exams.find((e) => e.id === t.examId);
-                      return (
-                        <div key={t.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium truncate">{exam ? examLabel(exam) : t.name}</p>
-                            <p className="text-xs text-gray-500 mt-0.5">Uploaded {formatDate(t.updatedAt)}</p>
+                  <div className="space-y-4">
+                    {exams
+                      .filter((exam) => findExamTemplates(exam.id).length > 0)
+                      .map((exam) => {
+                        const templatesForExam = findExamTemplates(exam.id);
+                        return (
+                          <div key={exam.id} className="border rounded-lg overflow-hidden">
+                            <p className="text-sm font-medium bg-gray-50 px-3 py-2 border-b">{examLabel(exam)}</p>
+                            <div className="divide-y">
+                              {templatesForExam.map((t) => (
+                                <div key={t.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium truncate flex items-center gap-2">
+                                      {t.name}
+                                      {t.isDefault && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 flex-shrink-0">Active</span>
+                                      )}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-0.5">Uploaded {formatDate(t.updatedAt)}</p>
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    <a
+                                      href={resolveUploadUrl(t.templateUrl)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="btn-secondary text-xs flex items-center gap-1 px-2 py-1"
+                                      title="Download this template"
+                                    >
+                                      <FileDown className="h-3.5 w-3.5" /> Download
+                                    </a>
+                                    {!t.isDefault && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetActiveExamTemplate(t)}
+                                        disabled={activatingId === t.id}
+                                        className="btn-primary text-xs flex items-center gap-1 px-2 py-1 disabled:opacity-60"
+                                      >
+                                        {activatingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Set Active"}
+                                      </button>
+                                    )}
+                                    {canDelete && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleExamTemplateDelete(exam.id, t)}
+                                        className="text-red-500 hover:text-red-700 p-1"
+                                        title="Remove this template"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <a
-                              href={resolveUploadUrl(t.templateUrl)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="btn-secondary text-xs flex items-center gap-1 px-2 py-1"
-                              title="Download this exam's template"
-                            >
-                              <FileDown className="h-3.5 w-3.5" /> Download
-                            </a>
-                            <button
-                              type="button"
-                              onClick={() => t.examId && examFileInputs.current[t.examId]?.click()}
-                              disabled={!!t.examId && uploadingExamId === t.examId}
-                              className="btn-secondary text-xs flex items-center gap-1 px-2 py-1 disabled:opacity-60"
-                            >
-                              {t.examId && uploadingExamId === t.examId ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Upload className="h-3.5 w-3.5" />
-                              )}
-                              Replace
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => t.examId && handleExamTemplateDelete(t.examId, t)}
-                              className="text-red-500 hover:text-red-700 p-1"
-                              title="Remove this exam's template"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                            {t.examId && (
-                              <input
-                                ref={(el) => { examFileInputs.current[t.examId as string] = el; }}
-                                type="file"
-                                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file && t.examId) handleExamTemplateFileSelected(t.examId, file);
-                                }}
-                              />
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
                   </div>
                 )}
               </>

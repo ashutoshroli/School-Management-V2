@@ -159,6 +159,22 @@ export const createSection = async (req: AuthRequest, res: Response): Promise<vo
       }
     }
 
+    // RULE (Point 3b): a staff member may be the class teacher of AT
+    // MOST ONE section at a time (also enforced at the DB level via
+    // Section.classTeacherId's @unique) - checked here first so the
+    // caller gets a clear, actionable message naming the conflicting
+    // class/section instead of a raw unique-constraint error.
+    if (classTeacherId) {
+      const conflict = await prisma.section.findUnique({
+        where: { classTeacherId },
+        include: { class: { select: { name: true } } },
+      });
+      if (conflict) {
+        sendError(res, `This staff member is already the class teacher of ${conflict.class.name} - Section ${conflict.name}. Unassign them there first.`, 400);
+        return;
+      }
+    }
+
     const section = await prisma.section.create({
       data: { branchId, classId, name, capacity: capacity || 40, classTeacherId, roomId },
     });
@@ -210,6 +226,21 @@ export const updateSection = async (req: AuthRequest, res: Response): Promise<vo
       const room = await prisma.schoolRoom.findUnique({ where: { id: roomId }, include: { floor: { include: { building: true } } } });
       if (!room || room.floor.building.branchId !== existingSection.branchId) {
         sendError(res, "Room not found in this branch", 404);
+        return;
+      }
+    }
+
+    // RULE (Point 3b): same one-section-per-class-teacher rule as
+    // createSection above - exclude THIS section itself from the
+    // conflict search (re-saving the same section with its own current
+    // class teacher, or simply re-submitting the form, must not fail).
+    if (classTeacherId) {
+      const conflict = await prisma.section.findFirst({
+        where: { classTeacherId, id: { not: id } },
+        include: { class: { select: { name: true } } },
+      });
+      if (conflict) {
+        sendError(res, `This staff member is already the class teacher of ${conflict.class.name} - Section ${conflict.name}. Unassign them there first.`, 400);
         return;
       }
     }
@@ -679,5 +710,149 @@ export const removeSubjectFromClass = async (req: AuthRequest, res: Response): P
     sendSuccess(res, null, "Subject removed from class");
   } catch (error) {
     sendError(res, "Failed to remove subject", 500, (error as Error).message);
+  }
+};
+
+// ==================== MULTI ROOM / MULTI CLASS ASSIGN (Point 7) ====================
+// The "Class Assign" module's bulk multi-select workflow: assign
+// several rooms to several sections at once via the SectionRoom
+// many-to-many join table. Section.roomId (the single "primary
+// classroom") is untouched by this - these are ADDITIONAL rooms a
+// section also uses (e.g. a shared Lab/Library slot), and one room can
+// likewise be linked to several different sections.
+
+/**
+ * POST /classes/section-rooms/bulk
+ * body: { sectionIds: string[], roomIds: string[] }
+ * Links every sectionId to every roomId (the full cross-product) in
+ * one call - e.g. "Sections A, B, C all also use Lab 1 and Library
+ * Hall". Already-existing links are silently skipped (idempotent),
+ * matching bulkAssignSubjectToClass's own "skip what's already there"
+ * convention above.
+ */
+export const bulkAssignSectionRooms = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { sectionIds, roomIds } = req.body;
+
+    if (!Array.isArray(sectionIds) || sectionIds.length === 0) {
+      sendError(res, "sectionIds must be a non-empty array", 400);
+      return;
+    }
+    if (!Array.isArray(roomIds) || roomIds.length === 0) {
+      sendError(res, "roomIds must be a non-empty array", 400);
+      return;
+    }
+
+    const sections = await prisma.section.findMany({ where: { id: { in: sectionIds } }, select: { id: true, branchId: true } });
+    const rooms = await prisma.schoolRoom.findMany({
+      where: { id: { in: roomIds } },
+      select: { id: true, floor: { select: { building: { select: { branchId: true } } } } },
+    });
+
+    if (sections.length !== sectionIds.length) {
+      sendError(res, "One or more sections were not found", 404);
+      return;
+    }
+    if (rooms.length !== roomIds.length) {
+      sendError(res, "One or more rooms were not found", 404);
+      return;
+    }
+
+    // SECURITY: every section AND every room must belong to the SAME
+    // branch as the caller can access - otherwise a Branch Admin could
+    // link their sections to another branch's rooms (or vice versa),
+    // the same IDOR class already guarded against elsewhere in this
+    // file (createSection/updateSection's roomId branch check).
+    const branchIds = new Set([
+      ...sections.map((s) => s.branchId),
+      ...rooms.map((r) => r.floor.building.branchId),
+    ]);
+    if (branchIds.size > 1 || !canAccessBranch(req, sections[0].branchId)) {
+      sendError(res, "All sections and rooms must belong to the same branch you have access to", 403);
+      return;
+    }
+
+    const existing = await prisma.sectionRoom.findMany({
+      where: { sectionId: { in: sectionIds }, roomId: { in: roomIds } },
+      select: { sectionId: true, roomId: true },
+    });
+    const existingKeys = new Set(existing.map((e) => `${e.sectionId}:${e.roomId}`));
+
+    const toCreate: { sectionId: string; roomId: string }[] = [];
+    for (const sectionId of sectionIds) {
+      for (const roomId of roomIds) {
+        if (!existingKeys.has(`${sectionId}:${roomId}`)) {
+          toCreate.push({ sectionId, roomId });
+        }
+      }
+    }
+
+    if (toCreate.length > 0) {
+      await prisma.sectionRoom.createMany({ data: toCreate });
+    }
+
+    await invalidateClassesCache(sections[0].branchId);
+
+    sendSuccess(
+      res,
+      { created: toCreate.length, skipped: existingKeys.size, total: sectionIds.length * roomIds.length },
+      `Linked ${toCreate.length} section-room pair(s)` + (existingKeys.size > 0 ? ` (${existingKeys.size} already linked)` : "")
+    );
+  } catch (error) {
+    sendError(res, "Failed to bulk-assign rooms to sections", 500, (error as Error).message);
+  }
+};
+
+/**
+ * GET /classes/section-rooms?sectionId=... | ?roomId=...
+ * Lists SectionRoom links, optionally filtered to one section or one
+ * room - powers both "which extra rooms does this section use" and
+ * "which sections share this room" views.
+ */
+export const getSectionRooms = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const sectionId = req.query.sectionId as string | undefined;
+    const roomId = req.query.roomId as string | undefined;
+
+    const where: any = {};
+    if (sectionId) where.sectionId = sectionId;
+    if (roomId) where.roomId = roomId;
+
+    const links = await prisma.sectionRoom.findMany({
+      where,
+      include: {
+        section: { select: { id: true, name: true, class: { select: { id: true, name: true } } } },
+        room: { select: { id: true, roomNo: true, name: true, type: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    sendSuccess(res, links, "Section-room links fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch section-room links", 500, (error as Error).message);
+  }
+};
+
+/**
+ * DELETE /classes/section-rooms/:id
+ * Removes a single section-room link (unassign one extra room from
+ * one section) - no dependent data hangs off SectionRoom itself, so a
+ * plain delete is safe.
+ */
+export const removeSectionRoom = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const link = await prisma.sectionRoom.findUnique({
+      where: { id },
+      include: { section: { select: { branchId: true } } },
+    });
+    if (!link) { sendError(res, "Link not found", 404); return; }
+    if (!canAccessBranch(req, link.section.branchId)) { sendError(res, "Link not found", 404); return; }
+
+    await prisma.sectionRoom.delete({ where: { id } });
+    sendSuccess(res, null, "Room unlinked from section");
+  } catch (error) {
+    sendError(res, "Failed to remove section-room link", 500, (error as Error).message);
   }
 };

@@ -90,13 +90,16 @@ export const getTemplatesByCategory = async (req: AuthRequest, res: Response): P
  * examId (optional, document category only - see this file's top
  * comment; only accepted for REPORT_CARD/ADMIT_CARD types).
  *
- * If an active template of the same category+type (+examId, for the
- * document category) already exists, its old file is replaced (and
- * the old file deleted from storage) rather than creating a duplicate
- * row - each template "slot" (e.g. Bonafide, Fee Receipt, or one
- * specific exam's Admit Card) has exactly one current DOCX at a time,
- * matching how the Templates page presents one card per type with an
- * "Upload"/"Replace" button.
+ * Point 5 (Multiple Template Upload): each upload now ADDS a new row
+ * rather than replacing whatever was previously uploaded for that
+ * (category, type[, examId]) slot - any number of templates can exist
+ * side-by-side for the same slot (e.g. 3 different ID Card layouts),
+ * and the admin picks which ONE is currently the "active"/default via
+ * setActiveTemplate below. The very FIRST template ever uploaded for a
+ * slot is automatically marked active (so document generation has a
+ * template to use immediately, matching the original single-template
+ * behavior for a brand-new slot); every subsequent upload for that
+ * same slot starts INACTIVE until explicitly activated.
  */
 export const uploadTemplateFile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -127,23 +130,13 @@ export const uploadTemplateFile = async (req: AuthRequest, res: Response): Promi
 
       const { url } = await storage.save(req.file.buffer, req.file.originalname, `templates/${category}`);
 
-      const existing = await prisma.certificateTemplate.findFirst({ where: { type: type as CertificateType } });
-      let template;
-      if (existing) {
-        template = await prisma.certificateTemplate.update({
-          where: { id: existing.id },
-          data: { name: name.trim(), templateUrl: url, isActive: true },
-        });
-        await storage.deleteByUrl(existing.templateUrl).catch(() => undefined);
-        logAuditFromRequest(req, "UPDATE", "certificateTemplate", template.id, { oldData: existing, newData: template });
-      } else {
-        template = await prisma.certificateTemplate.create({
-          data: { name: name.trim(), type: type as CertificateType, templateUrl: url, isActive: true },
-        });
-        logAuditFromRequest(req, "CREATE", "certificateTemplate", template.id, { newData: template });
-      }
+      const hasAnyForType = await prisma.certificateTemplate.count({ where: { type: type as CertificateType } });
+      const template = await prisma.certificateTemplate.create({
+        data: { name: name.trim(), type: type as CertificateType, templateUrl: url, isActive: hasAnyForType === 0 },
+      });
+      logAuditFromRequest(req, "CREATE", "certificateTemplate", template.id, { newData: template });
 
-      sendSuccess(res, template, "Template uploaded", existing ? 200 : 201);
+      sendSuccess(res, template, "Template uploaded", 201);
       return;
     }
 
@@ -167,25 +160,60 @@ export const uploadTemplateFile = async (req: AuthRequest, res: Response): Promi
 
     const { url } = await storage.save(req.file.buffer, req.file.originalname, `templates/${category}`);
 
-    const existing = await prisma.documentTemplate.findFirst({ where: { type: type as DocTemplateType, examId: resolvedExamId } });
-    let template;
-    if (existing) {
-      template = await prisma.documentTemplate.update({
-        where: { id: existing.id },
-        data: { name: name.trim(), templateUrl: url },
-      });
-      await storage.deleteByUrl(existing.templateUrl).catch(() => undefined);
-      logAuditFromRequest(req, "UPDATE", "documentTemplate", template.id, { oldData: existing, newData: template });
-    } else {
-      template = await prisma.documentTemplate.create({
-        data: { name: name.trim(), type: type as DocTemplateType, templateUrl: url, examId: resolvedExamId },
-      });
-      logAuditFromRequest(req, "CREATE", "documentTemplate", template.id, { newData: template });
-    }
+    const hasAnyForSlot = await prisma.documentTemplate.count({ where: { type: type as DocTemplateType, examId: resolvedExamId } });
+    const template = await prisma.documentTemplate.create({
+      data: { name: name.trim(), type: type as DocTemplateType, templateUrl: url, examId: resolvedExamId, isDefault: hasAnyForSlot === 0 },
+    });
+    logAuditFromRequest(req, "CREATE", "documentTemplate", template.id, { newData: template });
 
-    sendSuccess(res, template, "Template uploaded", existing ? 200 : 201);
+    sendSuccess(res, template, "Template uploaded", 201);
   } catch (error) {
     sendError(res, "Failed to upload template", 500, (error as Error).message);
+  }
+};
+
+/**
+ * PATCH /api/templates/:id/activate?category=certificate|document
+ * Point 5 (Multiple Template Upload): marks ONE uploaded template as
+ * the active/default for its (type[, examId]) slot - deactivating any
+ * other template currently active for that same slot, so document
+ * generation (which always looks up "the" active/default template for
+ * a type) picks up the newly-selected one. A no-op (still succeeds)
+ * if the given template is already the active one.
+ */
+export const setActiveTemplate = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const category = req.query.category as string;
+    if (!isValidCategory(category)) {
+      sendError(res, "category must be 'certificate' or 'document'", 400);
+      return;
+    }
+
+    if (category === "certificate") {
+      const template = await prisma.certificateTemplate.findUnique({ where: { id } });
+      if (!template) { sendError(res, "Template not found", 404); return; }
+
+      await prisma.$transaction([
+        prisma.certificateTemplate.updateMany({ where: { type: template.type, id: { not: id } }, data: { isActive: false } }),
+        prisma.certificateTemplate.update({ where: { id }, data: { isActive: true } }),
+      ]);
+      logAuditFromRequest(req, "UPDATE", "certificateTemplate", id, { newData: { isActive: true } });
+      sendSuccess(res, null, "Template set as active");
+      return;
+    }
+
+    const template = await prisma.documentTemplate.findUnique({ where: { id } });
+    if (!template) { sendError(res, "Template not found", 404); return; }
+
+    await prisma.$transaction([
+      prisma.documentTemplate.updateMany({ where: { type: template.type, examId: template.examId, id: { not: id } }, data: { isDefault: false } }),
+      prisma.documentTemplate.update({ where: { id }, data: { isDefault: true } }),
+    ]);
+    logAuditFromRequest(req, "UPDATE", "documentTemplate", id, { newData: { isDefault: true } });
+    sendSuccess(res, null, "Template set as default");
+  } catch (error) {
+    sendError(res, "Failed to set active template", 500, (error as Error).message);
   }
 };
 
@@ -222,6 +250,17 @@ export const deleteTemplateFile = async (req: AuthRequest, res: Response): Promi
       await prisma.certificateTemplate.delete({ where: { id } });
       await storage.deleteByUrl(template.templateUrl).catch(() => undefined);
       logAuditFromRequest(req, "DELETE", "certificateTemplate", id, { oldData: template });
+
+      // Point 5: deleting the ACTIVE template for a slot with other
+      // uploaded templates left must promote one of them to active -
+      // otherwise document generation for that type would silently
+      // stop finding any template at all, even though alternatives
+      // exist.
+      if (template.isActive) {
+        const replacement = await prisma.certificateTemplate.findFirst({ where: { type: template.type }, orderBy: { updatedAt: "desc" } });
+        if (replacement) await prisma.certificateTemplate.update({ where: { id: replacement.id }, data: { isActive: true } });
+      }
+
       sendSuccess(res, null, "Template deleted");
       return;
     }
@@ -232,6 +271,17 @@ export const deleteTemplateFile = async (req: AuthRequest, res: Response): Promi
     await prisma.documentTemplate.delete({ where: { id } });
     await storage.deleteByUrl(template.templateUrl).catch(() => undefined);
     logAuditFromRequest(req, "DELETE", "documentTemplate", id, { oldData: template });
+
+    // Same promotion logic as the certificate branch above, scoped to
+    // this exact (type, examId) slot.
+    if (template.isDefault) {
+      const replacement = await prisma.documentTemplate.findFirst({
+        where: { type: template.type, examId: template.examId },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (replacement) await prisma.documentTemplate.update({ where: { id: replacement.id }, data: { isDefault: true } });
+    }
+
     sendSuccess(res, null, "Template deleted");
   } catch (error) {
     sendError(res, "Failed to delete template", 500, (error as Error).message);

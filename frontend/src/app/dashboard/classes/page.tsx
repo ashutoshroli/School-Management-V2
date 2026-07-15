@@ -5,6 +5,7 @@ import { School, Plus, Edit, Trash2, BookOpen, Users } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface Section {
   id: string;
@@ -24,6 +25,7 @@ interface ClassItem {
 }
 
 export default function ClassesPage() {
+  const { canEdit, canDelete } = usePermissions();
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showClassModal, setShowClassModal] = useState(false);
@@ -185,12 +187,16 @@ export default function ClassesPage() {
                   <button onClick={() => { setSelectedClassId(cls.id); setShowSectionModal(true); }} className="p-1 rounded hover:bg-gray-100" title="Add Section">
                     <Plus className="h-4 w-4 text-green-600" />
                   </button>
-                  <button onClick={() => openEditClass(cls)} className="p-1 rounded hover:bg-gray-100" title="Edit">
-                    <Edit className="h-4 w-4 text-gray-600" />
-                  </button>
-                  <button onClick={() => deleteClass(cls.id)} className="p-1 rounded hover:bg-gray-100" title="Delete">
-                    <Trash2 className="h-4 w-4 text-red-500" />
-                  </button>
+                  {canEdit && (
+                    <button onClick={() => openEditClass(cls)} className="p-1 rounded hover:bg-gray-100" title="Edit">
+                      <Edit className="h-4 w-4 text-gray-600" />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button onClick={() => deleteClass(cls.id)} className="p-1 rounded hover:bg-gray-100" title="Delete">
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
@@ -207,12 +213,16 @@ export default function ClassesPage() {
                     </span>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-gray-500">{sec._count?.students || 0}/{sec.capacity}</span>
-                      <button onClick={() => openEditSection(sec)} className="text-gray-400 hover:text-gray-600">
-                        <Edit className="h-3 w-3" />
-                      </button>
-                      <button onClick={() => deleteSection(sec.id)} className="text-red-400 hover:text-red-600">
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                      {canEdit && (
+                        <button onClick={() => openEditSection(sec)} className="text-gray-400 hover:text-gray-600">
+                          <Edit className="h-3 w-3" />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button onClick={() => deleteSection(sec.id)} className="text-red-400 hover:text-red-600">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

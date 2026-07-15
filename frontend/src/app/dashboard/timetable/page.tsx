@@ -4,15 +4,28 @@ import { useState, useEffect } from "react";
 import { Calendar, Trash2, Printer } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import MultiFilterBar, { MultiFilterValue } from "@/components/ui/MultiFilterBar";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const DAYS = ["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY"];
 const PERIODS = [1,2,3,4,5,6,7,8];
 
 export default function TimetablePage() {
+  const { canDelete } = usePermissions();
   const [classes, setClasses] = useState<any[]>([]);
-  const [classId, setClassId] = useState("");
-  const [sectionId, setSectionId] = useState("");
-  const [sections, setSections] = useState<any[]>([]);
+  // Point 1 (Multi-Filter): Class + Section + Teacher + Subject,
+  // combined - Teacher narrows the Section list to sections where that
+  // staff member is the class teacher; Subject narrows the slot
+  // editor's own Subject dropdown further still (on top of the
+  // existing Point 11 class-wise narrowing already in place below).
+  const [filters, setFilters] = useState<MultiFilterValue>({});
+  const classId = filters.classId || "";
+  const sectionId = filters.sectionId || "";
+  const sections = (() => {
+    const cls = classes.find((c) => c.id === classId);
+    const all = cls?.sections || [];
+    return filters.teacherId ? all.filter((s: any) => s.classTeacherId === filters.teacherId) : all;
+  })();
   const [timetable, setTimetable] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [subjects, setSubjects] = useState<any[]>([]);
@@ -47,17 +60,30 @@ export default function TimetablePage() {
     api.get("/academics/period-config").then(r => setPeriodConfigs(r.data.data || [])).catch(() => setPeriodConfigs([]));
   }, []);
 
+  // Point 11 (Class-wise Subject Selection): the slot editor's Subject
+  // dropdown is narrowed to ONLY the currently selected class's
+  // assigned subjects (ClassSubject) - previously showed every
+  // subject in the branch regardless of which class's timetable was
+  // being edited. Further narrowed to the filter bar's own Subject
+  // filter (Point 1) when one is picked there, as a convenience for
+  // jumping straight to that subject's slots when editing.
+  const [classSubjects, setClassSubjects] = useState<any[]>([]);
+  useEffect(() => {
+    if (!classId) { setClassSubjects([]); return; }
+    api.get(`/classes/${classId}/subjects`)
+      .then(r => setClassSubjects((r.data.data || []).map((cs: any) => cs.subject)))
+      .catch(() => setClassSubjects([]));
+  }, [classId]);
+  const subjectOptions = (() => {
+    const base = classId && classSubjects.length > 0 ? classSubjects : subjects;
+    return filters.subjectId ? base.filter((s: any) => s.id === filters.subjectId) : base;
+  })();
+
   // The branch's configured Start/End Time for a given period number
   // (1-based, matching PERIODS above) - undefined if that period
   // hasn't been configured in Settings yet, in which case the slot
   // editor simply falls back to its old empty-field behavior.
   const configForPeriod = (period: number) => periodConfigs.find((p: any) => p.periodNo === period);
-
-  useEffect(() => {
-    const cls = classes.find(c => c.id === classId);
-    setSections(cls?.sections || []);
-    setSectionId("");
-  }, [classId, classes]);
 
   const fetchTimetable = async () => {
     if (!sectionId || !classId) return;
@@ -187,15 +213,9 @@ export default function TimetablePage() {
         <h1 className="text-2xl font-bold flex items-center gap-2"><Calendar className="h-6 w-6 text-primary-600" /> Timetable</h1>
       </div>
 
+      {/* Point 1: combined Class + Section + Teacher + Subject filter bar */}
+      <MultiFilterBar value={filters} onChange={setFilters} />
       <div className="card mb-6 flex flex-wrap gap-4">
-        <select className="input-field w-auto" value={classId} onChange={e => setClassId(e.target.value)}>
-          <option value="">Select Class</option>
-          {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select className="input-field w-auto" value={sectionId} onChange={e => setSectionId(e.target.value)}>
-          <option value="">Section</option>
-          {sections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
         <button
           type="button"
           onClick={openConsolidatedView}
@@ -276,7 +296,7 @@ export default function TimetablePage() {
                 <label className="block text-sm font-medium mb-1">Subject</label>
                 <select className="input-field" value={slotForm.subjectId} onChange={(e) => setSlotForm({ ...slotForm, subjectId: e.target.value })}>
                   <option value="">Select</option>
-                  {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  {subjectOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
               <div>
@@ -306,7 +326,7 @@ export default function TimetablePage() {
           )}
 
           <div className="flex justify-between items-center gap-3 pt-4 border-t">
-            {getSlot(slotDay, slotPeriod) ? (
+            {getSlot(slotDay, slotPeriod) && canDelete ? (
               <button type="button" onClick={handleDeleteSlot} className="text-red-500 hover:text-red-700 flex items-center gap-1 text-sm">
                 <Trash2 className="h-4 w-4" /> Remove Slot
               </button>

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ClipboardList, Save } from "lucide-react";
 import api from "@/lib/api";
 import ErrorBanner from "@/components/ui/ErrorBanner";
+import MultiFilterBar, { MultiFilterValue } from "@/components/ui/MultiFilterBar";
 
 interface StudentRow {
   studentId: string;
@@ -26,6 +27,13 @@ export default function EnterMarksPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Point 1 (Multi-Filter): Section + Teacher + Subject, combined -
+  // Class is fixed to this exam's own class (not filterable, since
+  // marks are always entered for one specific exam/class), but the
+  // roster can still be narrowed to one Section and/or the Subject
+  // filter can drive the same "Subject" selector used to save marks
+  // below (kept in sync both ways).
+  const [filters, setFilters] = useState<MultiFilterValue>({});
 
   // Load the exam's own metadata (no single-exam GET endpoint exists,
   // so pull it out of the list the Exams page already uses) plus the
@@ -45,6 +53,14 @@ export default function EnterMarksPage() {
           return;
         }
         setExam(found);
+        // classId isn't user-editable here (see MultiFilterBar's
+        // enable=["section","teacher","subject"] below - Class is
+        // fixed to this exam's own class) but is still set internally
+        // so the filter bar's Subject dropdown narrows to THIS class's
+        // assigned subjects and its Section dropdown narrows to THIS
+        // class's sections, instead of showing every branch subject/
+        // every section in the branch.
+        setFilters((prev) => ({ ...prev, classId: found.classId }));
 
         // FIX: this had no .catch() - if it failed for any reason, the
         // whole load() threw and showed a misleading error even though
@@ -63,13 +79,21 @@ export default function EnterMarksPage() {
   }, [examId]);
 
   // Load the class roster + any marks already recorded for this
-  // subject, whenever the exam or the selected subject changes.
+  // subject, whenever the exam, the selected subject, or the Section/
+  // Teacher filters change.
   useEffect(() => {
     const loadRoster = async () => {
       if (!exam || !subjectId) return;
       try {
         const [studentsRes, resultsRes] = await Promise.all([
-          api.get("/students", { params: { classId: exam.classId, limit: 200 } }),
+          api.get("/students", {
+            params: {
+              classId: exam.classId,
+              limit: 200,
+              sectionId: filters.sectionId || undefined,
+              teacherId: filters.teacherId || undefined,
+            },
+          }),
           api.get(`/academics/exams/${examId}/results`),
         ]);
         const students = studentsRes.data.data || [];
@@ -94,7 +118,15 @@ export default function EnterMarksPage() {
       }
     };
     loadRoster();
-  }, [exam, subjectId, examId, subjects]);
+  }, [exam, subjectId, examId, subjects, filters.sectionId, filters.teacherId]);
+
+  // Keep the filter bar's Subject selector and the actual "which
+  // subject am I entering marks for" selector in sync - picking a
+  // subject in either place updates both.
+  useEffect(() => {
+    if (filters.subjectId && filters.subjectId !== subjectId) setSubjectId(filters.subjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.subjectId]);
 
   const updateRow = (studentId: string, field: "maxMarks" | "obtainedMarks", value: string) => {
     setRows((prev) => prev.map((r) => (r.studentId === studentId ? { ...r, [field]: value } : r)));
@@ -148,9 +180,16 @@ export default function EnterMarksPage() {
         </div>
       ) : exam ? (
         <>
+          {/* Point 1: combined Section + Teacher + Subject filter bar (Class fixed to this exam) */}
+          <MultiFilterBar value={filters} onChange={setFilters} enable={["section", "teacher", "subject"]} />
+
           <div className="card mb-4 flex items-center gap-4">
             <label className="text-sm font-medium text-gray-700">Subject</label>
-            <select className="input-field w-auto" value={subjectId} onChange={(e) => setSubjectId(e.target.value)}>
+            <select
+              className="input-field w-auto"
+              value={subjectId}
+              onChange={(e) => { setSubjectId(e.target.value); setFilters({ ...filters, subjectId: e.target.value || undefined }); }}
+            >
               {subjects.length === 0 && <option value="">No subjects configured for this class</option>}
               {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>

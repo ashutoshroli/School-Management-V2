@@ -40,6 +40,34 @@ const generateAdmissionNo = async (
 };
 
 /**
+ * Point 6 (Manual Roll No. Generation): auto-generates the NEXT roll
+ * number within a section (1, 2, 3, ... - scoped to the section, not
+ * the whole branch, since roll numbers traditionally restart per
+ * class/section) when the admin leaves the Roll No. field blank on the
+ * admission form. If the admin instead TYPES a roll number, that
+ * manual value is used as-is (see createStudent/updateStudent below) -
+ * this helper is only ever called for the auto path.
+ *
+ * rollNo is a free-text String? column (not a real integer), so this
+ * only looks at rows whose current rollNo is a plain non-negative
+ * integer when computing "the next one" - a section that has manually-
+ * entered non-numeric roll numbers (e.g. "A-01") simply falls back to
+ * "1" for the very first auto-generated one in that section, rather
+ * than crashing trying to parse them.
+ */
+const generateNextRollNo = async (
+  sectionId: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma
+): Promise<string> => {
+  const existing = await client.student.findMany({ where: { sectionId }, select: { rollNo: true } });
+  const numericRollNos = existing
+    .map((s) => (s.rollNo && /^\d+$/.test(s.rollNo) ? parseInt(s.rollNo, 10) : null))
+    .filter((n): n is number => n !== null);
+  const nextNo = numericRollNos.length > 0 ? Math.max(...numericRollNos) + 1 : 1;
+  return String(nextNo);
+};
+
+/**
  * Create student (Admission)
  */
 export const createStudent = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -49,6 +77,11 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
       dateOfBirth, gender, bloodGroup, religion, caste, category,
       nationality, motherTongue, address, city, state, pincode,
       previousSchool, cardId,
+      // Point 6: if the admin typed a roll number, it's used as-is
+      // (manual entry). Left blank/undefined -> auto-generated as the
+      // next available number within this section (see
+      // generateNextRollNo above).
+      rollNo,
       // Parent info
       fatherName, fatherEmail, fatherPhone, fatherOccupation,
       motherName, motherEmail, motherPhone, motherOccupation,
@@ -99,6 +132,13 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
       // read is consistent with the student.create() below.
       const admissionNo = await generateAdmissionNo(branchId, tx);
 
+      // Point 6: manual entry wins if provided; otherwise auto-generate
+      // the next roll number within this section, read inside the same
+      // transaction so it stays consistent with the student.create()
+      // below (no race between two concurrent admissions into the same
+      // section both computing the same "next" number).
+      const resolvedRollNo = rollNo && String(rollNo).trim() !== "" ? String(rollNo).trim() : await generateNextRollNo(sectionId, tx);
+
       // Create user account for student
       const studentUser = await tx.user.create({
         data: {
@@ -118,6 +158,7 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
           userId: studentUser.id,
           branchId,
           admissionNo,
+          rollNo: resolvedRollNo,
           classId,
           sectionId,
           dateOfBirth: new Date(dateOfBirth),
@@ -268,6 +309,18 @@ export const getStudents = async (req: AuthRequest, res: Response): Promise<void
     const branchId = resolveBranchId(req);
     const classId = req.query.classId as string;
     const sectionId = req.query.sectionId as string;
+    // Point 1 (Multi-Filter): narrow the roster to students in a
+    // class/section this teacher actually teaches - either as class
+    // teacher (Section.classTeacherId) or via a SubjectTeacher row for
+    // that class (school-wide default OR class-specific). Combined
+    // with classId/sectionId above (all filters apply together, not
+    // exclusively).
+    const teacherId = req.query.teacherId as string;
+    // subjectId alone (without teacherId) narrows to students in
+    // classes where this subject is actually taught (ClassSubject) -
+    // rarely useful alone, but combines meaningfully with teacherId to
+    // mean "students taught THIS subject BY this teacher".
+    const subjectId = req.query.subjectId as string;
     const search = req.query.search as string;
     const isActive = req.query.isActive !== "false";
 
@@ -275,6 +328,48 @@ export const getStudents = async (req: AuthRequest, res: Response): Promise<void
     if (branchId) where.branchId = branchId;
     if (classId) where.classId = classId;
     if (sectionId) where.sectionId = sectionId;
+
+    if (teacherId) {
+      const subjectTeacherWhere: any = { staffId: teacherId };
+      if (subjectId) subjectTeacherWhere.subjectId = subjectId;
+      const assignments = await prisma.subjectTeacher.findMany({
+        where: subjectTeacherWhere,
+        select: { classId: true },
+      });
+      const subjectTeacherClassIds = assignments.map((a) => a.classId).filter((id): id is string => !!id);
+      // classId: null on a SubjectTeacher row means "this teacher's
+      // subject-wide default applies to every class teaching that
+      // subject" - resolve those separately via ClassSubject so a
+      // school-wide (not class-specific) assignment is still honored.
+      const hasSchoolWideAssignment = assignments.some((a) => a.classId === null);
+      let schoolWideClassIds: string[] = [];
+      if (hasSchoolWideAssignment && subjectId) {
+        const classSubjects = await prisma.classSubject.findMany({ where: { subjectId }, select: { classId: true } });
+        schoolWideClassIds = classSubjects.map((cs) => cs.classId);
+      }
+
+      where.OR = [
+        { section: { classTeacherId: teacherId } },
+        ...(subjectTeacherClassIds.length > 0 ? [{ classId: { in: subjectTeacherClassIds } }] : []),
+        ...(schoolWideClassIds.length > 0 ? [{ classId: { in: schoolWideClassIds } }] : []),
+      ];
+    } else if (subjectId) {
+      // subjectId with no teacherId: just "students in a class that
+      // teaches this subject" - combined with an explicit classId
+      // filter (if also provided) via AND, never silently overwriting it.
+      const classSubjects = await prisma.classSubject.findMany({ where: { subjectId }, select: { classId: true } });
+      const subjectClassIds = classSubjects.map((cs) => cs.classId);
+      if (where.classId) {
+        if (!subjectClassIds.includes(where.classId)) {
+          // The explicitly-selected class doesn't even teach this
+          // subject - no student can match both; short-circuit to an
+          // impossible filter rather than silently ignoring one side.
+          where.classId = "__no_match__";
+        }
+      } else {
+        where.classId = { in: subjectClassIds };
+      }
+    }
 
     if (search) {
       where.OR = [

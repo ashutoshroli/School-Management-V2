@@ -33,11 +33,21 @@ export const getActiveDocumentTemplate = async (
   type: DocTemplateType,
   examId?: string | null
 ): Promise<{ templateUrl: string } | null> => {
+  // Point 5 (Multiple Template Upload): any number of DocumentTemplate
+  // rows can now exist for the same (type, examId) slot - `isDefault`
+  // picks out the ONE the admin has selected as active for generation.
+  // Falls back to the most recently updated row for that slot if none
+  // is (somehow) marked default, so generation never silently fails
+  // just because a default flag got out of sync.
   if (examId) {
-    const examTemplate = await prisma.documentTemplate.findFirst({ where: { type, examId }, select: { templateUrl: true } });
+    const examTemplate =
+      (await prisma.documentTemplate.findFirst({ where: { type, examId, isDefault: true }, select: { templateUrl: true } })) ||
+      (await prisma.documentTemplate.findFirst({ where: { type, examId }, orderBy: { updatedAt: "desc" }, select: { templateUrl: true } }));
     if (examTemplate) return examTemplate;
   }
 
-  const globalTemplate = await prisma.documentTemplate.findFirst({ where: { type, examId: null }, select: { templateUrl: true } });
+  const globalTemplate =
+    (await prisma.documentTemplate.findFirst({ where: { type, examId: null, isDefault: true }, select: { templateUrl: true } })) ||
+    (await prisma.documentTemplate.findFirst({ where: { type, examId: null }, orderBy: { updatedAt: "desc" }, select: { templateUrl: true } }));
   return globalTemplate;
 };

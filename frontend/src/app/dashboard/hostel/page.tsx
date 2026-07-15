@@ -5,10 +5,12 @@ import { Home, Plus, Trash2, Layers, DoorOpen, Users, UserPlus, UserMinus, Searc
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatCurrency } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const ROOM_TYPES = ["SINGLE", "DOUBLE", "DORMITORY"];
 
 export default function HostelPage() {
+  const { canDelete } = usePermissions();
   const [buildings, setBuildings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -371,9 +373,11 @@ export default function HostelPage() {
                   >
                     <Layers className="h-3.5 w-3.5" /> Add Multiple Floors
                   </button>
-                  <button onClick={() => deleteBuilding(b.id, b.name)} title="Delete Building" className="text-red-400 hover:text-red-600">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canDelete && (
+                    <button onClick={() => deleteBuilding(b.id, b.name)} title="Delete Building" className="text-red-400 hover:text-red-600">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -521,7 +525,9 @@ export default function HostelPage() {
                 </select>
                 <input type="number" min={1} className="input-field col-span-2" placeholder="Capacity" value={r.capacity} onChange={(e) => updateBulkRoomRow(i, "capacity", e.target.value)} />
                 <input type="number" min={0} className="input-field col-span-3" placeholder="Monthly Fee" value={r.monthlyFee} onChange={(e) => updateBulkRoomRow(i, "monthlyFee", e.target.value)} />
-                <button type="button" onClick={() => removeBulkRoomRow(i)} className="col-span-1 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+                {canDelete && (
+                  <button type="button" onClick={() => removeBulkRoomRow(i)} className="col-span-1 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+                )}
               </div>
             ))}
           </div>
@@ -551,14 +557,16 @@ export default function HostelPage() {
                         {a.bedNo ? ` \u2022 Bed: ${a.bedNo}` : ""}
                       </p>
                     </div>
-                    <button
-                      onClick={() => deallocate(a.id, a.student?.user?.name)}
-                      disabled={deallocatingId === a.id}
-                      title="Deallocate"
-                      className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
-                    >
-                      <UserMinus className="h-4 w-4" />
-                    </button>
+                    {canDelete && (
+                      <button
+                        onClick={() => deallocate(a.id, a.student?.user?.name)}
+                        disabled={deallocatingId === a.id}
+                        title="Deallocate"
+                        className="p-1.5 text-red-500 hover:bg-red-50 rounded disabled:opacity-40"
+                      >
+                        <UserMinus className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

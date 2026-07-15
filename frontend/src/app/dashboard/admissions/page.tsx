@@ -10,6 +10,7 @@ import ErrorBanner from "@/components/ui/ErrorBanner";
 import Modal from "@/components/ui/Modal";
 import { openPdfInNewTab } from "@/lib/pdf";
 import { useAuth } from "@/hooks/useAuth";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const STATUS_COLORS: Record<string, string> = {
   NEW: "bg-blue-100 text-blue-700",
@@ -22,6 +23,7 @@ export default function AdmissionInquiriesPage() {
   const router = useRouter();
   const { user } = useAuth();
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const { canDelete } = usePermissions();
   const [inquiries, setInquiries] = useState<any[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -217,14 +219,16 @@ export default function AdmissionInquiriesPage() {
           >
             <Download className="h-4 w-4" />
           </button>
-          <button
-            type="button"
-            onClick={() => handleDelete(i.id, i.studentName)}
-            className="text-red-500 hover:text-red-700"
-            title="Delete inquiry"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => handleDelete(i.id, i.studentName)}
+              className="text-red-500 hover:text-red-700"
+              title="Delete inquiry"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
         </div>
       ),
     },

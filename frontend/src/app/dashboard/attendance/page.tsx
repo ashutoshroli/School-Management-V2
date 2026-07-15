@@ -5,6 +5,7 @@ import { ClipboardCheck } from "lucide-react";
 import api from "@/lib/api";
 import { todayLocalDateInput } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
+import MultiFilterBar, { MultiFilterValue } from "@/components/ui/MultiFilterBar";
 
 const STATUS_COLORS: Record<string, string> = {
   PRESENT: "bg-green-500", ABSENT: "bg-red-500", HALF_DAY: "bg-yellow-400", LATE: "bg-orange-500",
@@ -21,10 +22,13 @@ export default function StudentAttendancePage() {
   // be confusing. Admin roles keep the full /classes picker unchanged.
   const isTeacher = user?.role === "TEACHER";
 
-  const [classes, setClasses] = useState<any[]>([]);
-  const [classId, setClassId] = useState("");
-  const [sectionId, setSectionId] = useState("");
-  const [sections, setSections] = useState<any[]>([]);
+  // Point 1 (Multi-Filter): Class + Section + Teacher + Subject,
+  // combined in one filter bar (admin roles only) - the Section
+  // dropdown inside MultiFilterBar is already narrowed to the selected
+  // class's sections; sectionId is what actually drives the roster
+  // fetch below, same as before this filter bar existed.
+  const [filters, setFilters] = useState<MultiFilterValue>({});
+  const sectionId = filters.sectionId || "";
   const [myAssignedSections, setMyAssignedSections] = useState<any[]>([]);
   // BUG FIX: was `new Date().toISOString().split("T")[0]`, which
   // converts to UTC first and can default the date picker to the wrong
@@ -51,17 +55,8 @@ export default function StudentAttendancePage() {
   useEffect(() => {
     if (isTeacher) {
       api.get("/academics/attendance/my-sections").then((r) => setMyAssignedSections(r.data.data || []));
-    } else {
-      api.get("/classes").then(r => setClasses(r.data.data || []));
     }
   }, [isTeacher]);
-
-  useEffect(() => {
-    if (isTeacher) return; // section picker for a teacher is flat (no class step), see below
-    const cls = classes.find(c => c.id === classId);
-    setSections(cls?.sections || []);
-    setSectionId("");
-  }, [classId, classes, isTeacher]);
 
   const fetchAttendance = async () => {
     if (!sectionId) return;
@@ -110,36 +105,43 @@ export default function StudentAttendancePage() {
         <button onClick={saveAll} disabled={saving || !students.length} className="btn-primary">{saving ? "Saving..." : "Save All"}</button>
       </div>
 
-      <div className="card mb-6 flex flex-wrap gap-4">
-        {isTeacher ? (
-          <select className="input-field w-auto" value={sectionId} onChange={e => setSectionId(e.target.value)}>
+      {isTeacher ? (
+        <div className="card mb-6 flex flex-wrap gap-4">
+          <select className="input-field w-auto" value={sectionId} onChange={e => setFilters({ ...filters, sectionId: e.target.value || undefined })}>
             <option value="">Select your class/section</option>
             {myAssignedSections.map((s: any) => <option key={s.id} value={s.id}>{s.class?.name} - {s.name}</option>)}
           </select>
-        ) : (
-          <>
-            <select className="input-field w-auto" value={classId} onChange={e => setClassId(e.target.value)}>
-              <option value="">Select Class</option>
-              {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          <input type="date" className="input-field w-auto" value={date} onChange={e => setDate(e.target.value)} />
+          {periodConfigs.length > 0 && (
+            <select className="input-field w-auto" value={selectedPeriod} onChange={e => setSelectedPeriod(e.target.value)}>
+              <option value="">Day-wise (full day)</option>
+              {periodConfigs.map((p: any) => (
+                <option key={p.periodNo} value={String(p.periodNo)}>
+                  {p.label || `Period ${p.periodNo}`} ({p.startTime}-{p.endTime})
+                </option>
+              ))}
             </select>
-            <select className="input-field w-auto" value={sectionId} onChange={e => setSectionId(e.target.value)}>
-              <option value="">Section</option>
-              {sections.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </>
-        )}
-        <input type="date" className="input-field w-auto" value={date} onChange={e => setDate(e.target.value)} />
-        {periodConfigs.length > 0 && (
-          <select className="input-field w-auto" value={selectedPeriod} onChange={e => setSelectedPeriod(e.target.value)}>
-            <option value="">Day-wise (full day)</option>
-            {periodConfigs.map((p: any) => (
-              <option key={p.periodNo} value={String(p.periodNo)}>
-                {p.label || `Period ${p.periodNo}`} ({p.startTime}-{p.endTime})
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Point 1: combined Class + Section + Teacher + Subject filter bar */}
+          <MultiFilterBar value={filters} onChange={setFilters} />
+          <div className="card mb-6 flex flex-wrap gap-4">
+            <input type="date" className="input-field w-auto" value={date} onChange={e => setDate(e.target.value)} />
+            {periodConfigs.length > 0 && (
+              <select className="input-field w-auto" value={selectedPeriod} onChange={e => setSelectedPeriod(e.target.value)}>
+                <option value="">Day-wise (full day)</option>
+                {periodConfigs.map((p: any) => (
+                  <option key={p.periodNo} value={String(p.periodNo)}>
+                    {p.label || `Period ${p.periodNo}`} ({p.startTime}-{p.endTime})
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        </>
+      )}
       {isTeacher && myAssignedSections.length === 0 && (
         <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-4 py-3">
           You are not currently assigned as a class teacher or subject teacher for any class - contact an admin to get assigned before you can mark attendance.

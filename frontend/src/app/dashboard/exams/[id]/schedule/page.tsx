@@ -9,6 +9,7 @@ import ErrorBanner from "@/components/ui/ErrorBanner";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
 import { resolveUploadUrl } from "@/lib/uploads";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface ScheduleRow {
   id?: string;
@@ -72,6 +73,7 @@ export default function ExamSchedulePage() {
   const examId = params.id as string;
   const { user } = useAuth();
   const isAdmin = user?.role === "SUPER_ADMIN" || user?.role === "BRANCH_ADMIN";
+  const { canDelete } = usePermissions();
 
   const [exam, setExam] = useState<any>(null);
   const [subjects, setSubjects] = useState<any[]>([]);
@@ -796,7 +798,9 @@ export default function ExamSchedulePage() {
                                 fix + full explanation in
                                 exams/question-papers/page.tsx. */}
                             <a href={resolveUploadUrl(p.fileUrl)} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline">{p.fileName}</a>
-                            <button onClick={() => handleDeletePaper(r.id!, p.id)} className="text-red-500 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>
+                            {canDelete && (
+                              <button onClick={() => handleDeletePaper(r.id!, p.id)} className="text-red-500 hover:text-red-700"><Trash2 className="h-3.5 w-3.5" /></button>
+                            )}
                           </li>
                         ))}
                       </ul>

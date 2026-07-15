@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Tag, Plus, ToggleLeft, ToggleRight, Trash2, Eye } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface Category {
   id: string;
@@ -14,6 +15,7 @@ interface Category {
 }
 
 export default function FeeCategoriesPage() {
+  const { canDelete } = usePermissions();
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -108,7 +110,7 @@ export default function FeeCategoriesPage() {
                 <button onClick={() => toggle(cat.id)} className="p-1" title={cat.isActive ? "Deactivate" : "Activate"}>
                   {cat.isActive ? <ToggleRight className="h-6 w-6 text-green-600" /> : <ToggleLeft className="h-6 w-6 text-gray-400" />}
                 </button>
-                {!cat.isSystem && (
+                {!cat.isSystem && canDelete && (
                   <button onClick={() => deleteCategory(cat.id, cat.name)} className="p-1" title="Delete">
                     <Trash2 className="h-4 w-4 text-red-500" />
                   </button>

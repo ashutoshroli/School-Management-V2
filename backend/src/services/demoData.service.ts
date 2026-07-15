@@ -297,8 +297,17 @@ export const generateDemoDataForBranch = async (
   const teacherStaffIds = createdStaffIds.length > 0 ? createdStaffIds : (await prisma.staff.findMany({ where: { branchId, type: "TEACHING" }, select: { id: true } })).map((s) => s.id);
   if (teacherStaffIds.length > 0) {
     const sectionsNeedingTeacher = await prisma.section.findMany({ where: { branchId, classTeacherId: null } });
-    await sequentially(sectionsNeedingTeacher.length, async (i) => {
-      await prisma.section.update({ where: { id: sectionsNeedingTeacher[i].id }, data: { classTeacherId: pick(teacherStaffIds) } });
+    // BUG FIX: a staff member can be the class teacher of AT MOST ONE
+    // section (Section.classTeacherId is now @unique) - the old
+    // pick(teacherStaffIds) sampled WITH replacement, so two sections
+    // could randomly get the SAME teacher and crash the whole demo
+    // data generation on a unique-constraint violation. Shuffle once
+    // and hand out teachers WITHOUT replacement instead; if there are
+    // more sections than available teachers, the excess sections
+    // simply stay unassigned (no class teacher) rather than erroring.
+    const availableTeachers = shuffle(teacherStaffIds);
+    await sequentially(Math.min(sectionsNeedingTeacher.length, availableTeachers.length), async (i) => {
+      await prisma.section.update({ where: { id: sectionsNeedingTeacher[i].id }, data: { classTeacherId: availableTeachers[i] } });
     });
 
     // Subject-teacher assignments for a handful of subjects per class.

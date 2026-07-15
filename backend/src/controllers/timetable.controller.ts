@@ -73,6 +73,38 @@ export const upsertSlot = async (req: AuthRequest, res: Response): Promise<void>
       where: { timetableId_day_period: { timetableId, day, period } },
     });
 
+    // RULE (Point 3a): a teacher may not be assigned more periods on
+    // one day than their configured Staff.maxPeriodsPerDay (0/null =
+    // no limit set, so every teacher is unrestricted until an admin
+    // opts them into a cap on the Staff form). Counts every OTHER
+    // non-break slot this teacher already has on this exact day
+    // (across every class/section - a teacher's day is shared school-
+    // wide, not per-class), then adds this one being saved. Excludes
+    // the slot being replaced (`existing`) from the count so editing
+    // an already-saved slot for the same day/period doesn't double-count
+    // it against itself.
+    if (teacherId && !isBreak) {
+      const teacher = await prisma.staff.findUnique({ where: { id: teacherId }, select: { maxPeriodsPerDay: true, user: { select: { name: true } } } });
+      if (teacher?.maxPeriodsPerDay && teacher.maxPeriodsPerDay > 0) {
+        const todaysSlotCount = await prisma.timetableSlot.count({
+          where: {
+            teacherId,
+            day,
+            isBreak: false,
+            id: existing ? { not: existing.id } : undefined,
+          },
+        });
+        if (todaysSlotCount + 1 > teacher.maxPeriodsPerDay) {
+          sendError(
+            res,
+            `Cannot assign: ${teacher.user.name} already has ${todaysSlotCount} period(s) on ${day} (max allowed: ${teacher.maxPeriodsPerDay} per day)`,
+            400
+          );
+          return;
+        }
+      }
+    }
+
     if (existing) {
       const updated = await prisma.timetableSlot.update({
         where: { id: existing.id },

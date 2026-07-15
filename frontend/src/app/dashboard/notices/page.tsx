@@ -5,8 +5,10 @@ import { Bell, Plus, Pin, Trash2, Eye, Globe } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { formatDate } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 export default function NoticesPage() {
+  const { canDelete } = usePermissions();
   const [notices, setNotices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -96,7 +98,9 @@ export default function NoticesPage() {
                   <button onClick={() => togglePublicVisibility(n.id)} className="p-1 rounded hover:bg-gray-100" title={n.isPublic ? "Remove from public notice board" : "Show on public notice board"}>
                     <Globe className={`h-4 w-4 ${n.isPublic ? "text-blue-500" : "text-gray-400"}`} />
                   </button>
-                  <button onClick={() => deleteNotice(n.id)} className="p-1 rounded hover:bg-gray-100" title="Delete"><Trash2 className="h-4 w-4 text-red-400" /></button>
+                  {canDelete && (
+                    <button onClick={() => deleteNotice(n.id)} className="p-1 rounded hover:bg-gray-100" title="Delete"><Trash2 className="h-4 w-4 text-red-400" /></button>
+                  )}
                 </div>
               </div>
             </div>

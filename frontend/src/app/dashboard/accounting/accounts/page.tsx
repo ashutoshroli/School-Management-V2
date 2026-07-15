@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { BookOpen, Plus, Trash2, Sparkles } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface Account {
   id: string; name: string; code: string; type: string;
@@ -18,6 +19,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function ChartOfAccountsPage() {
+  const { canDelete } = usePermissions();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -111,11 +113,11 @@ export default function ChartOfAccountsPage() {
                     <div><span className="font-medium text-sm">{a.name}</span><span className="text-xs text-gray-400 ml-2">{a.code}</span></div>
                     {a.isSystem ? (
                       <span className="text-xs text-gray-400">system</span>
-                    ) : (
+                    ) : canDelete ? (
                       <button onClick={() => deleteAccount(a.id, a.name)} title="Delete" className="text-red-400 hover:text-red-600">
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 ))}
               </div>

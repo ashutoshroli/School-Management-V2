@@ -4,9 +4,11 @@ import { useState, useEffect } from "react";
 import { LayoutGrid, Play, Trash2, Download } from "lucide-react";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
 
 
 export default function ExamSeatPlanPage() {
+  const { canDelete } = usePermissions();
   const [exams, setExams] = useState<any[]>([]);
   const [selectedExamId, setSelectedExamId] = useState("");
   const [schedules, setSchedules] = useState<any[]>([]);
@@ -138,7 +140,7 @@ export default function ExamSeatPlanPage() {
             <button onClick={handleGenerate} disabled={!selectedScheduleId || generating} className="btn-primary flex items-center gap-1.5 disabled:opacity-50">
               <Play className="h-4 w-4" /> {generating ? "Generating..." : "Generate"}
             </button>
-            {(seatPlanView?.totalSeated ?? 0) > 0 && (
+            {canDelete && (seatPlanView?.totalSeated ?? 0) > 0 && (
               <button onClick={handleClear} disabled={clearing} className="btn-secondary flex items-center gap-1.5 text-red-600 disabled:opacity-50">
                 <Trash2 className="h-4 w-4" /> {clearing ? "Clearing..." : "Clear"}
               </button>
