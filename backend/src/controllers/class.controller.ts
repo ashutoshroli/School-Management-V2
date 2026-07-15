@@ -72,7 +72,7 @@ export const getClasses = async (req: AuthRequest, res: Response): Promise<void>
         where: { branchId },
         orderBy: { numericOrder: "asc" },
         include: {
-          sections: { orderBy: { name: "asc" }, include: { room: { select: { id: true, roomNo: true, name: true } } } },
+          sections: { orderBy: { name: "asc" }, include: { room: { select: { id: true, roomNo: true, name: true } }, _count: { select: { students: true } } } },
           _count: { select: { students: true } },
         },
       })
