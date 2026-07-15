@@ -10,6 +10,7 @@ import { generateOneTimePassword } from "../utils/password";
 import { logAuditFromRequest } from "../services/auditLog.service";
 import { notify } from "../services/notification.service";
 import { welcomeEmail } from "../services/notification/emailTemplates";
+import { invalidateClassesCache } from "../services/cache.service";
 import { config } from "../config";
 
 /**
@@ -247,6 +248,10 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     sendSuccess(res, fullStudent, "Student admitted successfully", 201);
+    // Invalidate cached class/section list so the section's _count.students
+    // reflects this new enrollment immediately (without waiting for
+    // the 1-hour cache TTL to expire).
+    await invalidateClassesCache(fullStudent!.branchId);
   } catch (error) {
     sendError(res, "Failed to create student", 500, (error as Error).message);
   }
@@ -410,6 +415,14 @@ export const updateStudent = async (req: AuthRequest, res: Response): Promise<vo
 
     logAuditFromRequest(req, "UPDATE", "student", id, { oldData: student, newData: updated });
 
+    // If the student's class or section changed, the cached _count.students
+    // for BOTH the old and new section/class is now stale - invalidate.
+    // (Also covers isActive toggling, which affects whether the student
+    // appears in the live count.)
+    if (classId || sectionId || isActive !== undefined) {
+      await invalidateClassesCache(student.branchId);
+    }
+
     sendSuccess(res, updated, "Student updated");
   } catch (error) {
     sendError(res, "Failed to update student", 500, (error as Error).message);
@@ -540,6 +553,10 @@ export const deleteStudent = async (req: AuthRequest, res: Response): Promise<vo
     });
 
     logAuditFromRequest(req, "DELETE", "student", id, { oldData: student });
+
+    // Removing a student changes the section's _count.students -
+    // invalidate so the Classes module shows the updated occupancy.
+    await invalidateClassesCache(student.branchId);
 
     sendSuccess(res, null, "Student deleted");
   } catch (error) {

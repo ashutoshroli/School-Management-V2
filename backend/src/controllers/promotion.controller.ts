@@ -3,6 +3,7 @@ import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { canAccessBranch } from "../utils/branchScope";
+import { invalidateClassesCache } from "../services/cache.service";
 
 /**
  * Bulk promote students (year-end).
@@ -168,6 +169,12 @@ export const bulkPromote = async (req: AuthRequest, res: Response): Promise<void
           ]
         : []),
     ]);
+
+    // Promotion moves students between classes/sections (and may
+    // deactivate TC-issued students) - the cached class list's
+    // _count.students for BOTH source and target sections is now stale.
+    // All involved classes belong to the same branch (enforced above).
+    await invalidateClassesCache(fromClass.branchId);
 
     sendSuccess(
       res,
