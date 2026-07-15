@@ -216,21 +216,40 @@ export default function StudentProfilePage() {
   };
 
   const [showDiscountModal, setShowDiscountModal] = useState(false);
-  const [discountForm, setDiscountForm] = useState({ type: "SIBLING", name: "Sibling Discount", value: "", isPercent: false });
+  // BUG FIX: feeAssignmentId is now required - a discount with no
+  // linked fee never actually reduced the amount a student owed (see
+  // recalculateFeeAssignmentDiscount's doc comment in
+  // feePayment.service.ts for the full root cause). Defaults to the
+  // first pending fee once pendingFees loads, so the picker isn't
+  // left blank when there's an obvious single choice.
+  const [discountForm, setDiscountForm] = useState({ feeAssignmentId: "", type: "SIBLING", name: "Sibling Discount", value: "", isPercent: false });
+
+  const openDiscountModal = () => {
+    setDiscountForm({
+      feeAssignmentId: pendingFees[0]?.id || "",
+      type: "SIBLING",
+      name: "Sibling Discount",
+      value: "",
+      isPercent: false,
+    });
+    setShowDiscountModal(true);
+  };
 
   const handleAddDiscount = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!discountForm.feeAssignmentId) { alert("Select which fee this discount applies to"); return; }
     try {
       await api.post("/fees/discounts", {
         studentId: params.id,
+        feeAssignmentId: discountForm.feeAssignmentId,
         type: discountForm.type,
         name: discountForm.name,
         value: parseFloat(discountForm.value),
         isPercent: discountForm.isPercent,
       });
       setShowDiscountModal(false);
-      setDiscountForm({ type: "SIBLING", name: "Sibling Discount", value: "", isPercent: false });
-      await refetchStudent();
+      setDiscountForm({ feeAssignmentId: "", type: "SIBLING", name: "Sibling Discount", value: "", isPercent: false });
+      await Promise.all([refetchStudent(), loadFees()]);
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to add discount");
     }
@@ -239,7 +258,11 @@ export default function StudentProfilePage() {
   const toggleDiscount = async (id: string) => {
     try {
       await api.patch(`/fees/discounts/${id}/toggle`);
-      await refetchStudent();
+      // BUG FIX: toggling now changes the linked fee's actual pending
+      // amount server-side (see recalculateFeeAssignmentDiscount) - the
+      // Fee Details card must be refreshed too, not just the discount
+      // list, or the pending amount shown would go stale.
+      await Promise.all([refetchStudent(), loadFees()]);
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to toggle discount");
     }
@@ -249,7 +272,9 @@ export default function StudentProfilePage() {
     if (!confirm("Remove this discount?")) return;
     try {
       await api.delete(`/fees/discounts/${id}`);
-      await refetchStudent();
+      // Same reason as toggleDiscount above - the linked fee's pending
+      // amount is restored server-side and must be reflected here.
+      await Promise.all([refetchStudent(), loadFees()]);
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to remove discount");
     }
@@ -610,7 +635,7 @@ export default function StudentProfilePage() {
           <div className="card">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-semibold text-gray-600">Discounts / Scholarships</h3>
-              <button onClick={() => setShowDiscountModal(true)} className="text-primary-600 hover:text-primary-700" title="Add discount">
+              <button onClick={openDiscountModal} className="text-primary-600 hover:text-primary-700" title="Add discount">
                 <Plus className="h-4 w-4" />
               </button>
             </div>
@@ -811,6 +836,29 @@ export default function StudentProfilePage() {
       <Modal isOpen={showDiscountModal} onClose={() => setShowDiscountModal(false)} title="Add Discount / Scholarship">
         <form onSubmit={handleAddDiscount} className="space-y-4">
           <div>
+            <label className="block text-sm font-medium mb-1">Apply To (Fee) *</label>
+            {pendingFees.length === 0 ? (
+              <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                This student has no pending fees to discount yet - assign a fee first (Fees &gt; Assign Fees), then
+                come back here.
+              </p>
+            ) : (
+              <select
+                className="input-field"
+                value={discountForm.feeAssignmentId}
+                onChange={(e) => setDiscountForm({ ...discountForm, feeAssignmentId: e.target.value })}
+                required
+              >
+                <option value="">Select a fee</option>
+                {pendingFees.map((fee: any) => (
+                  <option key={fee.id} value={fee.id}>
+                    {fee.feeStructure.feeCategory.name} - {formatCurrency(fee.pendingAmount)} pending
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
             <label className="block text-sm font-medium mb-1">Type *</label>
             <select
               className="input-field"
@@ -841,7 +889,7 @@ export default function StudentProfilePage() {
           </div>
           <div className="flex justify-end gap-3 pt-4 border-t">
             <button type="button" onClick={() => setShowDiscountModal(false)} className="btn-secondary">Cancel</button>
-            <button type="submit" className="btn-primary">Add Discount</button>
+            <button type="submit" disabled={pendingFees.length === 0} className="btn-primary disabled:opacity-50">Add Discount</button>
           </div>
         </form>
       </Modal>

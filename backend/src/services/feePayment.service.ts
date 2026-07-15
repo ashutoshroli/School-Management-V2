@@ -33,6 +33,56 @@ export const getValidatedFeeAssignment = async (
 };
 
 /**
+ * Recomputes ONE FeeAssignment's `discount` column from the sum of its
+ * currently-ACTIVE linked StudentDiscount rows, and writes it back.
+ *
+ * BUG FIX: assignDiscount/toggleDiscount/deleteDiscount used to only
+ * ever touch the StudentDiscount table - nothing ever copied a
+ * discount's value into FeeAssignment.discount, which is the column
+ * getStudentPendingFees/recordFeePayment actually read to compute the
+ * amount a student owes. A granted discount therefore never reduced
+ * anything. Every discount mutation (create/toggle/delete) now calls
+ * this for the discount's linked feeAssignmentId (a discount with no
+ * feeAssignmentId - e.g. a legacy pre-migration row - has nothing to
+ * recalculate and is skipped by callers before reaching here).
+ *
+ * A percentage discount is computed against the assignment's
+ * totalAmount (not the already-discounted running total) - multiple
+ * active percentage discounts on the same fee are additive percentages
+ * of the original total, not compounded, which matches how a
+ * "10% sibling + 5% merit" combo is normally described/expected.
+ * capped at totalAmount so `discount` can never exceed what was
+ * actually charged (an over-generous combination of discounts should
+ * waive the fee entirely, not produce a negative pending amount).
+ */
+export const recalculateFeeAssignmentDiscount = async (
+  tx: Prisma.TransactionClient | typeof prisma,
+  feeAssignmentId: string
+): Promise<void> => {
+  const assignment = await tx.feeAssignment.findUnique({
+    where: { id: feeAssignmentId },
+    select: { totalAmount: true },
+  });
+  if (!assignment) return;
+
+  const activeDiscounts = await tx.studentDiscount.findMany({
+    where: { feeAssignmentId, isActive: true },
+    select: { value: true, isPercent: true },
+  });
+
+  const totalAmount = Number(assignment.totalAmount);
+  const totalDiscount = activeDiscounts.reduce((sum, d) => {
+    const contribution = d.isPercent ? (totalAmount * Number(d.value)) / 100 : Number(d.value);
+    return sum + contribution;
+  }, 0);
+
+  await tx.feeAssignment.update({
+    where: { id: feeAssignmentId },
+    data: { discount: Math.min(totalDiscount, totalAmount) },
+  });
+};
+
+/**
  * Fire-and-forget payment-confirmation notification to the student's
  * linked parents. Deliberately called AFTER the transaction commits
  * (not from inside recordFeePayment) - notification delivery is a side

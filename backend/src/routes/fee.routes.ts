@@ -14,7 +14,7 @@ import {
   assignTransportFeeSchema, assignTransportFeeToStudentsSchema, createRazorpayOrderSchema, verifyRazorpayPaymentSchema,
   bulkCreateFeeStructureSchema,
 } from "../validators/fee.validator";
-import { bulkAssignDiscountSchema } from "../validators/discount.validator";
+import { assignDiscountSchema, bulkAssignDiscountSchema } from "../validators/discount.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -85,7 +85,7 @@ router.get("/discounts", authorize(...FINANCE), getAllDiscounts);
 // consistent with the rest of the file.
 router.get("/discounts/detail/:id", authorize(...FINANCE), getDiscountById);
 router.get("/discounts/:studentId", authorize(...FINANCE), getStudentDiscounts);
-router.post("/discounts", authorize(...ADMIN), assignDiscount);
+router.post("/discounts", authorize(...ADMIN), validate(assignDiscountSchema), assignDiscount);
 router.post("/discounts/bulk", authorize(...ADMIN), validate(bulkAssignDiscountSchema), bulkAssignDiscount);
 router.patch("/discounts/:id/toggle", authorize(...ADMIN), toggleDiscount);
 router.delete("/discounts/:id", authorize(...ADMIN), deleteDiscount);

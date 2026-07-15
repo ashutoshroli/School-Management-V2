@@ -87,11 +87,21 @@ export default function FeeDiscountsPage() {
   // discount up to now had to be granted one student at a time from
   // their profile page.
   const [showBulkModal, setShowBulkModal] = useState(false);
-  const [bulkForm, setBulkForm] = useState({ classId: "", sectionId: "", type: "MERIT_SCHOLARSHIP", name: "", value: "", isPercent: true });
+  // BUG FIX: feeStructureId is now required - each matched student's
+  // OWN assignment for this specific fee structure is what actually
+  // gets discounted server-side (see bulkAssignDiscount's doc comment
+  // in discount.controller.ts); without it, the discount had nothing
+  // to link to and never reduced anything a student owed.
+  const [bulkForm, setBulkForm] = useState({ classId: "", sectionId: "", feeStructureId: "", type: "MERIT_SCHOLARSHIP", name: "", value: "", isPercent: true });
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkError, setBulkError] = useState("");
-  const [bulkResult, setBulkResult] = useState<{ assigned: number; total: number } | null>(null);
+  const [bulkResult, setBulkResult] = useState<{ assigned: number; skipped: number; total: number } | null>(null);
   const bulkSections = classes.find((c) => c.id === bulkForm.classId)?.sections || [];
+  const [feeStructures, setFeeStructures] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.get("/fees/structures").then((res) => setFeeStructures(res.data.data || [])).catch(() => {});
+  }, []);
 
   // Live preview of how many active students the chosen class/section
   // filter actually matches, BEFORE submitting - same pattern already
@@ -116,7 +126,7 @@ export default function FeeDiscountsPage() {
   }, [showBulkModal, bulkForm.classId, bulkForm.sectionId]);
 
   const openBulkModal = () => {
-    setBulkForm({ classId: "", sectionId: "", type: "MERIT_SCHOLARSHIP", name: "", value: "", isPercent: true });
+    setBulkForm({ classId: "", sectionId: "", feeStructureId: "", type: "MERIT_SCHOLARSHIP", name: "", value: "", isPercent: true });
     setBulkError("");
     setBulkResult(null);
     setBulkMatchCount(null);
@@ -125,6 +135,7 @@ export default function FeeDiscountsPage() {
 
   const handleBulkAssign = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!bulkForm.feeStructureId) { setBulkError("Select which fee structure this discount applies to"); return; }
     setBulkSaving(true);
     setBulkError("");
     setBulkResult(null);
@@ -132,6 +143,7 @@ export default function FeeDiscountsPage() {
       const res = await api.post("/fees/discounts/bulk", {
         classId: bulkForm.classId || undefined,
         sectionId: bulkForm.sectionId || undefined,
+        feeStructureId: bulkForm.feeStructureId,
         type: bulkForm.type,
         name: bulkForm.name,
         value: parseFloat(bulkForm.value),
@@ -318,8 +330,23 @@ export default function FeeDiscountsPage() {
           {bulkResult && (
             <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-3 py-2">
               Assigned to {bulkResult.assigned} of {bulkResult.total} matched student(s).
+              {bulkResult.skipped > 0 && ` ${bulkResult.skipped} skipped - no assignment for this fee structure yet.`}
             </div>
           )}
+          <div>
+            <label className="block text-sm font-medium mb-1">Fee Structure *</label>
+            <select className="input-field" value={bulkForm.feeStructureId} onChange={(e) => setBulkForm({ ...bulkForm, feeStructureId: e.target.value })} required>
+              <option value="">Select the fee this discount applies to</option>
+              {feeStructures.map((fs: any) => (
+                <option key={fs.id} value={fs.id}>
+                  {fs.feeCategory?.name} - {fs.class?.name || fs.transportRoute?.name} ({fs.frequency})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              Only students who already have THIS fee assigned to them will receive the discount.
+            </p>
+          </div>
           <p className="text-xs text-gray-400">Select at least a class (and optionally a section) to target students.</p>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -370,7 +397,7 @@ export default function FeeDiscountsPage() {
           </div>
           <div className="flex justify-end gap-3 pt-2 border-t">
             <button type="button" onClick={() => setShowBulkModal(false)} className="btn-secondary">Close</button>
-            <button type="submit" disabled={bulkSaving || (!bulkForm.classId && !bulkForm.sectionId)} className="btn-primary disabled:opacity-50">
+            <button type="submit" disabled={bulkSaving || !bulkForm.feeStructureId || (!bulkForm.classId && !bulkForm.sectionId)} className="btn-primary disabled:opacity-50">
               {bulkSaving ? "Assigning..." : `Assign to Matched Students${bulkMatchCount !== null ? ` (${bulkMatchCount})` : ""}`}
             </button>
           </div>
