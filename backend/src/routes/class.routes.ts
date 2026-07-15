@@ -7,6 +7,7 @@ import {
   assignSubjectToClass, bulkAssignSubjectToClass, getClassSubjects, getClassSubjectMatrix, removeSubjectFromClass,
   assignSubjectTeacher, getSubjectTeachers, removeSubjectTeacher,
   bulkAssignSectionRooms, getSectionRooms, removeSectionRoom,
+  getClassTeacherConflicts, resolveClassTeacherConflicts,
 } from "../controllers/class.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -55,5 +56,12 @@ router.delete("/subject-teachers/:id", authorize(...ADMIN), removeSubjectTeacher
 router.post("/section-rooms/bulk", authorize(...ADMIN), bulkAssignSectionRooms);
 router.get("/section-rooms", getSectionRooms);
 router.delete("/section-rooms/:id", authorize(...ADMIN), removeSectionRoom);
+
+// Class Teacher conflict check/resolve (migration helper for
+// Section.classTeacherId's new @unique constraint) - SUPER_ADMIN only
+// since it scans/modifies data across EVERY branch, not just the
+// caller's own.
+router.get("/sections/class-teacher-conflicts", authorize(UserRole.SUPER_ADMIN), getClassTeacherConflicts);
+router.post("/sections/class-teacher-conflicts/resolve", authorize(UserRole.SUPER_ADMIN), resolveClassTeacherConflicts);
 
 export default router;
