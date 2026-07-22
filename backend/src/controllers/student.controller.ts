@@ -269,6 +269,19 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
 
     logAuditFromRequest(req, "CREATE", "student", studentId, { newData: fullStudent });
 
+    // Seat-availability check (spec Section 18) - WARNING ONLY, never
+    // blocks admission. Computed AFTER the student is already created
+    // (the section's live count now includes them) so the message
+    // accurately reflects the section being at/over capacity.
+    let seatCapacityWarning: string | null = null;
+    const section = await prisma.section.findUnique({ where: { id: sectionId }, select: { capacity: true, name: true } });
+    if (section) {
+      const occupied = await prisma.student.count({ where: { sectionId, isActive: true } });
+      if (occupied > section.capacity) {
+        seatCapacityWarning = `Section ${section.name} is now at ${occupied}/${section.capacity} capacity (over capacity) - admission was still allowed per policy.`;
+      }
+    }
+
     // Fire-and-forget welcome emails to every newly-created account
     // (student + any new parent accounts) - sent AFTER the transaction
     // commits, since notification delivery is a side effect that must
@@ -288,7 +301,7 @@ export const createStudent = async (req: AuthRequest, res: Response): Promise<vo
       }).catch((err) => console.error("Failed to send welcome email:", err));
     }
 
-    sendSuccess(res, fullStudent, "Student admitted successfully", 201);
+    sendSuccess(res, { ...fullStudent, seatCapacityWarning }, "Student admitted successfully", 201);
     // Invalidate cached class/section list so the section's _count.students
     // reflects this new enrollment immediately (without waiting for
     // the 1-hour cache TTL to expire).

@@ -1,10 +1,10 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { UserRole } from "@prisma/client";
-import { createAdmissionInquiry, getAdmissionInquiries, getAdmissionInquiryById, updateAdmissionInquiryStatus, getPublicBranchList, getAdmissionInquiryPdf, deleteAdmissionInquiry } from "../controllers/admission.controller";
+import { createAdmissionInquiry, getAdmissionInquiries, getAdmissionInquiryById, updateAdmissionInquiryStatus, getPublicBranchList, getAdmissionInquiryPdf, deleteAdmissionInquiry, recordEntranceTestResult } from "../controllers/admission.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
-import { createAdmissionInquirySchema, updateAdmissionInquiryStatusSchema } from "../validators/admission.validator";
+import { createAdmissionInquirySchema, updateAdmissionInquiryStatusSchema, recordEntranceTestResultSchema } from "../validators/admission.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -30,5 +30,7 @@ router.get("/inquiries/:id", authenticate, authorize(...ADMIN), getAdmissionInqu
 router.get("/inquiries/:id/pdf", authenticate, authorize(...ADMIN), getAdmissionInquiryPdf);
 router.patch("/inquiries/:id/status", authenticate, authorize(...ADMIN), validate(updateAdmissionInquiryStatusSchema), updateAdmissionInquiryStatus);
 router.delete("/inquiries/:id", authenticate, authorize(...ADMIN), deleteAdmissionInquiry);
+// Entrance test (spec Section 18 - applies to ALL classes)
+router.post("/entrance-test", authenticate, authorize(...ADMIN), validate(recordEntranceTestResultSchema), recordEntranceTestResult);
 
 export default router;
