@@ -398,13 +398,43 @@ export const refreshToken = async (req: Request, res: Response): Promise<void> =
       return;
     }
 
+    // BUG FIX: a SUPER_ADMIN has no linked Staff record (see login()'s
+    // identical comment above), so `user.staff?.branchId` is always
+    // undefined for them - this function was silently dropping
+    // branchId off the REFRESHED access token every ~15 minutes
+    // (config.jwt.accessTokenExpiresIn), even though login() itself
+    // correctly defaults a Super Admin to the org's first active
+    // branch. Every branch-scoped write (Academic Years, Classes, Fee
+    // Categories, ...) calls resolveEffectiveBranchId, which falls
+    // back to this exact JWT field once nothing is explicitly sent -
+    // so a Super Admin's session would work fine right after logging
+    // in, then start failing with "Branch ID could not be resolved"
+    // the moment the access token silently refreshed in the
+    // background.
+    //
+    // Preserve whatever branchId was already on the (still-valid,
+    // just-expiring) OLD access token's payload first - this is what
+    // lets a Super Admin's `switchBranch()` selection survive a token
+    // refresh instead of silently resetting back to the org's first
+    // branch on every refresh. Only fall back to a fresh "first active
+    // branch" lookup if the old token never had one at all.
+    let branchId = user.staff?.branchId || payload.branchId;
+    if (!branchId && user.role === UserRole.SUPER_ADMIN) {
+      const defaultBranch = await prisma.branch.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      });
+      branchId = defaultBranch?.id;
+    }
+
     // Generate new access token
     const newAccessToken = generateAccessToken({
       userId: user.id,
       email: user.email,
       role: user.role,
       organizationId: user.organizationId || undefined,
-      branchId: user.staff?.branchId,
+      branchId,
     });
 
     sendSuccess(res, {
