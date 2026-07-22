@@ -50,3 +50,10 @@ export const bulkAssignDiscountSchema = z.object({
       path: ["classId"],
     }),
 });
+
+
+export const respondToDiscountApprovalSchema = z.object({
+  body: z.object({
+    decision: z.enum(["APPROVE", "REJECT"]),
+  }),
+});

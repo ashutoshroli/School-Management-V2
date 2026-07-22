@@ -69,3 +69,37 @@ export const bulkAddRoomsSchema = z.object({
     rooms: z.array(bulkHostelRoomEntrySchema).min(1, "rooms must be a non-empty array"),
   }),
 });
+
+
+export const requestBedSchema = z.object({
+  body: z.object({
+    studentId: z.string().min(1, "studentId is required"),
+    roomId: z.string().min(1, "roomId is required"),
+  }),
+});
+
+export const respondToRoomRequestSchema = z.object({
+  body: z.object({
+    decision: z.enum(["APPROVE", "REJECT"]),
+  }),
+});
+
+export const setAllotmentCutoffSchema = z.object({
+  body: z.object({
+    cutoffDate: z.coerce.date({ errorMap: () => ({ message: "Valid cutoffDate is required" }) }),
+  }),
+});
+
+export const finalizeHostelAllotmentsSchema = z.object({
+  body: z.object({
+    buildingId: z.string().min(1, "buildingId is required"),
+  }),
+});
+
+export const hostelTapSchema = z.object({
+  body: z.object({
+    studentId: z.string().min(1, "studentId is required"),
+    direction: z.enum(["IN", "OUT"]),
+    deviceId: z.string().optional(),
+  }),
+});

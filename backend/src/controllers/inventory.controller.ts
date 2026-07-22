@@ -6,7 +6,9 @@ import { resolveBranchId, resolveEffectiveBranchId, canAccessBranch } from "../u
 
 export const addItem = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { name, category, unit, minStock } = req.body;
+    // Rack/counter-wise placement + appliance/AMC/warranty tracking
+    // (spec Section 17), all optional/additive.
+    const { name, category, unit, minStock, rackNo, counterNo, isAppliance, warrantyExpiry, amcExpiry } = req.body;
     // BUG FIX + SECURITY: the "Add Item" form has no branch-picker, so
     // req.body.branchId always arrived as "" - see
     // resolveEffectiveBranchId's doc comment. Also adds the
@@ -23,9 +25,121 @@ export const addItem = async (req: AuthRequest, res: Response): Promise<void> =>
       return;
     }
 
-    const item = await prisma.inventoryItem.create({ data: { branchId, name, category, unit, minStock: minStock || 5, currentStock: 0 } });
+    const item = await prisma.inventoryItem.create({
+      data: {
+        branchId, name, category, unit, minStock: minStock || 5, currentStock: 0,
+        rackNo, counterNo, isAppliance: !!isAppliance,
+        warrantyExpiry: warrantyExpiry ? new Date(warrantyExpiry) : null,
+        amcExpiry: amcExpiry ? new Date(amcExpiry) : null,
+      },
+    });
     sendSuccess(res, item, "Item added", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Purchase/reorder APPROVAL CHAIN (spec Section 17 - "same chain as
+ * diesel/canteen: Incharge -> Manager -> Accounts -> Director"). The
+ * pre-existing purchaseStock (below) remains available for small/
+ * direct restocks with no approval needed; this is the new
+ * approval-gated path.
+ */
+export const raiseInventoryPurchaseRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { itemId, vendor, quantity, estimatedCost, reason } = req.body;
+    const item = await prisma.inventoryItem.findUnique({ where: { id: itemId } });
+    if (!item) { sendError(res, "Item not found", 404); return; }
+    if (!canAccessBranch(req, item.branchId)) { sendError(res, "Item not found", 404); return; }
+
+    const request = await prisma.inventoryPurchaseRequest.create({
+      data: { itemId, vendor, quantity, estimatedCost, reason, requestedBy: req.user!.userId, stage: "INCHARGE_REQUESTED" },
+    });
+    sendSuccess(res, request, "Purchase request raised", 201);
+  } catch (error) { sendError(res, "Failed to raise purchase request", 500, (error as Error).message); }
+};
+
+export const advanceInventoryPurchaseRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { decision, rejectionReason, billNo, billDate } = req.body;
+
+    const request = await prisma.inventoryPurchaseRequest.findUnique({ where: { id }, include: { item: true } });
+    if (!request) { sendError(res, "Purchase request not found", 404); return; }
+    if (!canAccessBranch(req, request.item.branchId)) { sendError(res, "Purchase request not found", 404); return; }
+
+    if (decision === "REJECT") {
+      const updated = await prisma.inventoryPurchaseRequest.update({ where: { id }, data: { stage: "REJECTED", rejectionReason } });
+      sendSuccess(res, updated, "Purchase request rejected");
+      return;
+    }
+
+    const approverId = req.user!.userId;
+    const stageMap: Record<string, any> = {
+      INCHARGE_REQUESTED: { stage: "MANAGER_APPROVED", managerApprovedBy: approverId, managerApprovedAt: new Date() },
+      MANAGER_APPROVED: { stage: "ACCOUNTS_APPROVED", accountsApprovedBy: approverId, accountsApprovedAt: new Date() },
+      ACCOUNTS_APPROVED: { stage: "DIRECTOR_APPROVED", directorApprovedBy: approverId, directorApprovedAt: new Date() },
+    };
+    const nextData = stageMap[request.stage];
+    if (!nextData) { sendError(res, "This request has already completed its approval chain", 400); return; }
+
+    let updated = await prisma.inventoryPurchaseRequest.update({ where: { id }, data: nextData });
+
+    // Once fully Director-approved, actually create the
+    // InventoryPurchase ledger row and apply the stock increment
+    // (mirrors purchaseStock below).
+    if (updated.stage === "DIRECTOR_APPROVED") {
+      const purchase = await prisma.inventoryPurchase.create({
+        data: {
+          itemId: request.itemId, vendor: request.vendor, quantity: request.quantity,
+          rate: Number(request.estimatedCost) / request.quantity, totalCost: request.estimatedCost,
+          billNo, billDate: billDate ? new Date(billDate) : null,
+        },
+      });
+      await prisma.inventoryItem.update({ where: { id: request.itemId }, data: { currentStock: { increment: request.quantity } } });
+      updated = await prisma.inventoryPurchaseRequest.update({ where: { id }, data: { resultingPurchaseId: purchase.id } });
+    }
+
+    sendSuccess(res, updated, `Purchase request advanced to ${updated.stage}`);
+  } catch (error) { sendError(res, "Failed to advance purchase request", 500, (error as Error).message); }
+};
+
+export const getInventoryPurchaseRequests = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    const requests = await prisma.inventoryPurchaseRequest.findMany({
+      where: { item: { branchId } },
+      include: { item: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    sendSuccess(res, requests, "Inventory purchase requests fetched");
+  } catch (error) { sendError(res, "Failed to fetch purchase requests", 500, (error as Error).message); }
+};
+
+/**
+ * AMC/warranty expiry reminders (spec Section 17 - "full auto-
+ * reminders/alerts"). Returns every appliance item whose
+ * warrantyExpiry or amcExpiry falls within the next 30 days (or has
+ * already passed) - polled by the frontend, same convention as Lab's
+ * getExpiringConsumables (no scheduled-job infra exists in this
+ * codebase for a push-style reminder yet).
+ */
+export const getApplianceExpiryAlerts = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    if (!branchId) { sendError(res, "Branch ID required", 400); return; }
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() + 30);
+
+    const items = await prisma.inventoryItem.findMany({
+      where: {
+        branchId, isAppliance: true,
+        OR: [{ warrantyExpiry: { lte: cutoff } }, { amcExpiry: { lte: cutoff } }],
+      },
+      orderBy: { warrantyExpiry: "asc" },
+    });
+    sendSuccess(res, items, "Appliance expiry alerts fetched");
+  } catch (error) { sendError(res, "Failed to fetch appliance expiry alerts", 500, (error as Error).message); }
 };
 
 /**
@@ -89,16 +203,40 @@ export const purchaseStock = async (req: AuthRequest, res: Response): Promise<vo
 
 export const issueStock = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { itemId, issuedTo, quantity, purpose } = req.body;
+    const { itemId, issuedTo, quantity, purpose, isReturnable } = req.body;
     const item = await prisma.inventoryItem.findUnique({ where: { id: itemId } });
     if (!item || item.currentStock < quantity) { sendError(res, "Insufficient stock", 400); return; }
 
     const issue = await prisma.inventoryIssue.create({
-      data: { itemId, issuedTo, quantity, purpose, issuedBy: req.user!.userId },
+      data: { itemId, issuedTo, quantity, purpose, issuedBy: req.user!.userId, isReturnable: !!isReturnable },
     });
     await prisma.inventoryItem.update({ where: { id: itemId }, data: { currentStock: { decrement: quantity } } });
     sendSuccess(res, issue, "Stock issued", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Marks a previously-issued RETURNABLE item as returned (spec Section
+ * 17 - "return status if returnable"). Does NOT automatically add the
+ * quantity back to currentStock - a returned asset (e.g. a projector)
+ * isn't fungible "stock" the same way consumables are; re-issuing it
+ * is just creating a fresh InventoryIssue row referencing the same
+ * item, not incrementing a count.
+ */
+export const returnIssuedStock = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { returnCondition } = req.body;
+
+    const issue = await prisma.inventoryIssue.findUnique({ where: { id }, include: { item: true } });
+    if (!issue) { sendError(res, "Issue record not found", 404); return; }
+    if (!canAccessBranch(req, issue.item.branchId)) { sendError(res, "Issue record not found", 404); return; }
+    if (!issue.isReturnable) { sendError(res, "This item was not issued as returnable", 400); return; }
+    if (issue.returnedAt) { sendError(res, "This item has already been marked as returned", 400); return; }
+
+    const updated = await prisma.inventoryIssue.update({ where: { id }, data: { returnedAt: new Date(), returnCondition } });
+    sendSuccess(res, updated, "Item marked as returned");
+  } catch (error) { sendError(res, "Failed to mark item as returned", 500, (error as Error).message); }
 };
 
 /**

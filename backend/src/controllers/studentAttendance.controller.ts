@@ -11,6 +11,82 @@ import { notifyParentsOfStudent } from "../services/notification.service";
 import { toAttendanceDateOnly } from "../utils/attendanceDate";
 
 /**
+ * Roll number assignment rule (spec Section 18 - "Roll Number assigned
+ * on the STUDENT'S FIRST ATTENDANCE DAY, not at admission").
+ * Triggered from markStudentAttendance below for every batch of
+ * students just marked - only students with rollNoAssignedAt still
+ * null (i.e. today IS their first attendance) are considered;
+ * everyone else is a no-op skip.
+ *
+ * Ordering is decided by the branch's configured RollNumberRule:
+ *  - PERFORMANCE_BASED: ranked by average exam marks so far (students
+ *    with no marks yet sort last within this batch), alphabetical
+ *    tiebreak.
+ *  - FEES_BASED: students who have cleared ALL dues rank first,
+ *    alphabetical tiebreak.
+ *  - ALPHABETICAL: pure alphabetical (also the universal tiebreaker
+ *    for the other two rules above).
+ *
+ * New roll numbers continue sequentially from the section's current
+ * highest already-assigned numeric roll number (reusing the same
+ * "parse existing numeric rollNo values" approach as
+ * generateNextRollNo in student.controller.ts, kept as a separate
+ * copy here since this file has its own independent import surface
+ * and the two helpers' triggering conditions differ enough - admission
+ * -time vs first-attendance-time - that sharing one function would
+ * conflate two different lifecycle events).
+ */
+const assignRollNumbersForFirstAttendance = async (sectionId: string, studentIds: string[]): Promise<void> => {
+  const section = await prisma.section.findUnique({ where: { id: sectionId }, select: { branchId: true } });
+  if (!section) return;
+  const branch = await prisma.branch.findUnique({ where: { id: section.branchId }, select: { rollNumberRule: true } });
+  const rule = branch?.rollNumberRule || "ALPHABETICAL";
+
+  const candidates = await prisma.student.findMany({
+    where: { id: { in: studentIds }, rollNoAssignedAt: null },
+    include: { user: { select: { name: true } } },
+  });
+  if (candidates.length === 0) return;
+
+  let ranked = candidates;
+  if (rule === "PERFORMANCE_BASED") {
+    const avgMarks = await Promise.all(
+      candidates.map(async (s) => {
+        const agg = await prisma.mark.aggregate({ where: { studentId: s.id }, _avg: { obtainedMarks: true } });
+        return { student: s, avg: agg._avg.obtainedMarks ? Number(agg._avg.obtainedMarks) : -1 };
+      })
+    );
+    ranked = avgMarks
+      .sort((a, b) => b.avg - a.avg || a.student.user.name.localeCompare(b.student.user.name))
+      .map((x) => x.student);
+  } else if (rule === "FEES_BASED") {
+    const duesCounts = await Promise.all(
+      candidates.map(async (s) => {
+        const pending = await prisma.feeAssignment.count({ where: { studentId: s.id, status: { in: ["PENDING", "PARTIAL", "OVERDUE"] } } });
+        return { student: s, hasDues: pending > 0 };
+      })
+    );
+    ranked = duesCounts
+      .sort((a, b) => Number(a.hasDues) - Number(b.hasDues) || a.student.user.name.localeCompare(b.student.user.name))
+      .map((x) => x.student);
+  } else {
+    ranked = [...candidates].sort((a, b) => a.user.name.localeCompare(b.user.name));
+  }
+
+  const existing = await prisma.student.findMany({ where: { sectionId }, select: { rollNo: true } });
+  const numericRollNos = existing
+    .map((s) => (s.rollNo && /^\d+$/.test(s.rollNo) ? parseInt(s.rollNo, 10) : null))
+    .filter((n): n is number => n !== null);
+  let nextNo = numericRollNos.length > 0 ? Math.max(...numericRollNos) + 1 : 1;
+
+  await prisma.$transaction(
+    ranked.map((s) =>
+      prisma.student.update({ where: { id: s.id }, data: { rollNo: String(nextNo++), rollNoAssignedAt: new Date() } })
+    )
+  );
+};
+
+/**
  * Mark student attendance (teacher marks for a class/section/date)
  *
  * BUG FIX HISTORY:
@@ -108,6 +184,48 @@ export const markStudentAttendance = async (req: AuthRequest, res: Response): Pr
       })
     );
 
+    // Period 1's marking auto-copies as the default to every later
+    // period the same day (spec Section 6) - only when THIS save is
+    // for period 1 specifically; a period-specific teacher marking
+    // their own later period independently (attendancePeriod > 1)
+    // never triggers this copy-forward, it just records that one
+    // period directly as already-handled above.
+    if (attendancePeriod === 1) {
+      const periodConfigs = await prisma.periodConfig.findMany({
+        where: { branchId: section.branchId, isBreak: false, periodNo: { gt: 1 } },
+        select: { periodNo: true },
+      });
+      if (periodConfigs.length > 0) {
+        const laterPeriods = periodConfigs.map((p) => p.periodNo);
+        const existingLater = await prisma.studentAttendance.findMany({
+          where: { studentId: { in: studentIds }, date: attendanceDate, period: { in: laterPeriods } },
+          select: { studentId: true, period: true },
+        });
+        const existingKey = new Set(existingLater.map((r) => `${r.studentId}:${r.period}`));
+
+        const toCopy = records.flatMap((rec: any) =>
+          laterPeriods
+            .filter((p) => !existingKey.has(`${rec.studentId}:${p}`))
+            .map((p) => ({
+              studentId: rec.studentId, sectionId, date: attendanceDate, status: rec.status,
+              period: p, source: "MANUAL" as const, markedBy: req.user!.userId, copiedFromPeriod1: true,
+            }))
+        );
+        if (toCopy.length > 0) {
+          await prisma.studentAttendance.createMany({ data: toCopy });
+        }
+      }
+    }
+
+    // Roll number assignment on first attendance day (spec Section 18)
+    // - fires for every student in this batch whose attendance hasn't
+    // been recorded before today (handled inside the helper via the
+    // rollNoAssignedAt null check), independent of which period was
+    // marked.
+    assignRollNumbersForFirstAttendance(sectionId, studentIds).catch((err) =>
+      console.error("Failed to auto-assign roll numbers on first attendance:", err)
+    );
+
     sendSuccess(res, { created, updated }, `Attendance saved: ${created} new, ${updated} updated`);
   } catch (error) { sendError(res, "Failed to save attendance", 500, (error as Error).message); }
 };
@@ -150,13 +268,16 @@ export const studentCardTap = async (req: AuthRequest, res: Response): Promise<v
       if (existing.inTime) {
         const diff = (tapTime.getTime() - new Date(existing.inTime).getTime()) / 60000;
         if (diff < 2) { sendSuccess(res, { ignored: true }, "Duplicate tap"); return; }
-        await prisma.studentAttendance.update({ where: { id: existing.id }, data: { outTime: tapTime } });
+        // rfidTappedAt tracked independently of the Class Teacher's
+        // separate manual verification (spec Section 6 - both apply
+        // together, see verifyStudentAttendance above).
+        await prisma.studentAttendance.update({ where: { id: existing.id }, data: { outTime: tapTime, rfidTappedAt: tapTime } });
         sendSuccess(res, { action: "OUT" }, "OUT recorded");
         notifyCardTap(student.id, "exit", tapTime);
       }
     } else {
       await prisma.studentAttendance.create({
-        data: { studentId: student.id, sectionId: student.sectionId, date: today, status: "PRESENT", inTime: tapTime, source: "CARD_TAP", deviceId },
+        data: { studentId: student.id, sectionId: student.sectionId, date: today, status: "PRESENT", inTime: tapTime, source: "CARD_TAP", deviceId, rfidTappedAt: tapTime },
       });
       sendSuccess(res, { action: "IN" }, "IN recorded", 201);
       notifyCardTap(student.id, "entry", tapTime);
@@ -194,6 +315,39 @@ const notifyCardTap = (studentId: string, type: "entry" | "exit", time: Date): v
       channels: [NotificationChannel.SMS],
     });
   })().catch((err) => console.error("Failed to send card-tap notification:", err));
+};
+
+/**
+ * Class Teacher's manual verification of a student's attendance (spec
+ * Section 6 - "both auto-tracking and manual verification apply
+ * together"). Independent of `status`/`source` (which reflect
+ * whatever RFID tap or manual mark already exists) - this only flips
+ * the separate verifiedByClassTeacher/verifiedAt/verifiedBy fields,
+ * confirming that a human (specifically the class teacher) has looked
+ * at and endorsed the day's record, whatever it says.
+ */
+export const verifyStudentAttendance = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params; // StudentAttendance row id
+
+    const record = await prisma.studentAttendance.findUnique({ where: { id }, include: { section: { select: { branchId: true, classTeacherId: true } } } });
+    if (!record) { sendError(res, "Attendance record not found", 404); return; }
+    if (!canAccessBranch(req, record.section.branchId)) { sendError(res, "Attendance record not found", 404); return; }
+
+    if (req.user!.role === "TEACHER") {
+      const staff = await prisma.staff.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+      if (!staff || staff.id !== record.section.classTeacherId) {
+        sendError(res, "Only this class's Class Teacher may verify its attendance", 403);
+        return;
+      }
+    }
+
+    const updated = await prisma.studentAttendance.update({
+      where: { id },
+      data: { verifiedByClassTeacher: true, verifiedAt: new Date(), verifiedBy: req.user!.userId },
+    });
+    sendSuccess(res, updated, "Attendance verified by Class Teacher");
+  } catch (error) { sendError(res, "Failed to verify attendance", 500, (error as Error).message); }
 };
 
 /**

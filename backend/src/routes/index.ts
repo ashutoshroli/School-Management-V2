@@ -20,6 +20,14 @@ import admissionRoutes from "./admission.routes";
 import templateRoutes from "./template.routes";
 import demoDataRoutes from "./demoData.routes";
 import publicRoutes from "./public.routes";
+import branchTransferRoutes from "./branchTransfer.routes";
+import roomBookingRoutes from "./roomBooking.routes";
+import messRoutes from "./mess.routes";
+import canteenRoutes from "./canteen.routes";
+import labRoutes from "./lab.routes";
+import dieselRoutes from "./diesel.routes";
+import appraisalRoutes from "./appraisal.routes";
+import publicContentRoutes from "./publicContent.routes";
 // TEMPORARY - see debug.routes.ts's own header comment. Delete this
 // import + the router.use("/debug", ...) line below, and the whole
 // debug.routes.ts file, once you've finished verifying this deploy.
@@ -118,6 +126,14 @@ router.use("/admission", admissionRoutes);
 router.use("/templates", templateRoutes);
 router.use("/demo-data", demoDataRoutes);
 router.use("/public", publicRoutes);
+router.use("/branch-transfer", branchTransferRoutes);
+router.use("/room-bookings", roomBookingRoutes);
+router.use("/mess", messRoutes);
+router.use("/canteen", canteenRoutes);
+router.use("/lab", labRoutes);
+router.use("/diesel-requests", dieselRoutes);
+router.use("/appraisal", appraisalRoutes);
+router.use("/public-content", publicContentRoutes);
 
 // router.use("/attendance", attendanceRoutes); // Phase 4
 // router.use("/exams", examRoutes);            // Phase 4

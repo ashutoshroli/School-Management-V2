@@ -46,6 +46,32 @@ model Branch {
   email          String?
   logo           String?
   isActive       Boolean  @default(true)
+  // --- Branch Independence Principle: per-branch configurable rules ---
+  // Roll number assignment rule (spec Section 18) - branch-wide policy
+  // for how rollNo is decided once a student's Class & Section are
+  // assigned (alphabetical is always the tiebreaker/fallback in either
+  // mode, applied in the roll-number assignment service).
+  rollNumberRule           RollNumberRule @default(ALPHABETICAL)
+  // Timetable clash-detection mode for ROOM double-booking (spec
+  // Section 20) - branch-configurable warning-only vs hard block.
+  // Teacher-clash is always a hard block (unchanged, pre-existing
+  // behavior in timetable.controller.ts's upsertSlot).
+  roomClashMode            ClashMode      @default(WARNING)
+  // No fixed gap rule between exams (spec Section 20) - branch-custom
+  // minimum number of days required between two exams for the same
+  // class. 0 = no gap enforced (default, fully backward compatible).
+  examMinGapDays           Int            @default(0)
+  // School's own custom "week cycle" length in days (spec Section 6) -
+  // used for the teacher late/early-penalty rolling window instead of
+  // a fixed Mon-Sun week. Defaults to 7 (a normal week) so existing
+  // branches behave exactly as before until explicitly changed.
+  attendanceWeekCycleDays  Int            @default(7)
+  // Every 5 combined late-entries+early-exits in one week-cycle
+  // deducts this many periods from that day's attendance (spec
+  // Section 6) - branch-configurable, defaults to the spec's stated
+  // rule (5 occurrences -> 1 period deducted).
+  lateEarlyPenaltyThreshold Int           @default(5)
+  lateEarlyPenaltyPeriods   Int           @default(1)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -73,6 +99,39 @@ model Branch {
   devices         AttendanceDevice[]
   admissionInquiries AdmissionInquiry[]
   jobVacancies    JobVacancy[]
+  // --- New modules (see each model's own doc comment for details) ---
+  studentTransfersOut StudentBranchTransfer[] @relation("StudentTransferOriginBranch")
+  studentTransfersIn  StudentBranchTransfer[] @relation("StudentTransferDestinationBranch")
+  staffTransfersOut   StaffBranchTransfer[]   @relation("StaffTransferOriginBranch")
+  staffTransfersIn    StaffBranchTransfer[]   @relation("StaffTransferDestinationBranch")
+  roomBookings        RoomBooking[]
+  messMenus           MessMenu[]
+  messBills           MessBill[]
+  canteenItems        CanteenItem[]
+  canteenWallets      CanteenWallet[]
+  labEquipment        LabEquipment[]
+  dieselRequests      DieselRequest[]
+  appraisalRatings    AppraisalRating[]
+  admissionEntranceTests EntranceTestResult[]
+  galleryImages       GalleryImage[]
+  publicFeedback      PublicFeedback[]
+}
+
+// Roll number assignment policy (spec Section 18) - branch-configurable.
+// Alphabetical order is always used as the fallback/tiebreaker in
+// either mode (implemented in the roll-number assignment service, run
+// on a student's first attendance day).
+enum RollNumberRule {
+  PERFORMANCE_BASED
+  FEES_BASED
+  ALPHABETICAL
+}
+
+// Timetable clash-detection mode (spec Section 20) - branch-configurable
+// warning-vs-block for room double-booking.
+enum ClashMode {
+  WARNING
+  BLOCK
 }
 
 
@@ -107,6 +166,12 @@ enum UserRole {
   SUPER_ADMIN
   BRANCH_ADMIN
   PRINCIPAL
+  // Vice Principal - scoped to their own branch like PRINCIPAL, sits
+  // one level below Principal in the leave-approval chain (Staff -> VP
+  // -> Principal, see leave.controller.ts) and participates in the
+  // VP<->Teacher mutual quarterly appraisal rating (see
+  // AppraisalRating below).
+  VICE_PRINCIPAL
   TEACHER
   ACCOUNTANT
   LIBRARIAN
@@ -129,6 +194,22 @@ model User {
   isActive       Boolean      @default(true)
   googleId       String?      @unique
   lastLogin      DateTime?
+  // "Remember Me" login option - when true, refresh tokens issued for
+  // this login should use the longer-lived TTL (see auth.controller.ts's
+  // login()) instead of the normal session-length TTL. Purely a
+  // per-login preference read at login time, not a permanent account
+  // setting - stored here only so a fresh login can default to the
+  // user's last choice.
+  rememberMePreferred Boolean @default(false)
+  // Super Admin "global bypass flag" (spec section 3) - an explicit,
+  // configurable toggle layered ON TOP of the SUPER_ADMIN role check
+  // already enforced everywhere via canAccessBranch/authorize. Every
+  // SUPER_ADMIN defaults to bypassAllChecks: true at creation (see
+  // auth.controller.ts / branch admin creation flow) so existing
+  // behavior is unchanged, but a Super Admin account can have this
+  // explicitly turned off (e.g. a restricted/audit-only Super Admin
+  // login) without changing its role.
+  bypassAllChecks Boolean @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -203,6 +284,12 @@ model Staff {
   // gets overloaded. 0/null = no limit configured yet (fully backward
   // compatible with every teacher created before this field existed).
   maxPeriodsPerDay Int?     @default(0)
+  // Director-set custom working-days count for THIS specific staff
+  // member (spec Section 7) - overrides the auto-calculated
+  // per-role/per-branch/per-year working-days figure used for leave
+  // quota + payroll attendance % purposes. null = use the
+  // auto-calculated value (default, backward compatible).
+  customWorkingDaysPerYear Int?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -220,6 +307,14 @@ model Staff {
   timetableSlots  TimetableSlot[]
   assignedRooms   SchoolRoom[]      @relation("RoomAssignedStaff")
   assignedCabins  RoomCabin[]       @relation("CabinAssignedStaff")
+  transfersOut        StaffBranchTransfer[]   @relation("StaffTransferSubject")
+  roomBookingsRequested RoomBooking[]         @relation("RoomBookingRequestedBy")
+  labIssuesReceived    LabEquipmentIssue[]     @relation("LabIssueStaffReceiver")
+  dieselRequestsRaised DieselRequest[]         @relation("DieselRequestDriver")
+  ratingsAsSubject     AppraisalRating[]       @relation("AppraisalRatingSubject")
+  ratingsAsRater       AppraisalRating[]       @relation("AppraisalRatingRater")
+  invigilatorDuties    ExamInvigilator[]
+  substituteAssignmentsGiven LeaveSubstituteAssignment[] @relation("SubstituteStaff")
 }
 
 
@@ -276,6 +371,22 @@ model Student {
   leavingReason   String?
   cardId          String?  @unique // RFID Card ID
   isActive        Boolean  @default(true)
+  // Roll number has been assigned yet? (spec Section 18: "Roll Number
+  // assigned on the STUDENT'S FIRST ATTENDANCE DAY, not at admission")
+  // - rollNo itself stays nullable/free-editable as before; this flag
+  // just tracks whether the automatic first-attendance-day assignment
+  // has already run for this student, so it only ever fires once.
+  rollNoAssignedAt DateTime?
+  // Scholarship auto-cancellation on branch transfer (spec Section 5) -
+  // when true, this student currently holds an active scholarship
+  // that must be auto-cancelled (see completeStudentTransfer in
+  // branchTransfer.controller.ts) the moment a branch transfer
+  // completes; reset to false once cancelled. Kept as a simple flag
+  // rather than a new full scholarship model, since scholarships are
+  // otherwise represented generically via StudentDiscount
+  // (MERIT_SCHOLARSHIP type) - this flag exists purely so a transfer
+  // knows whether it needs to deactivate one.
+  hasActiveScholarship Boolean @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -290,15 +401,23 @@ model Student {
   attendances     StudentAttendance[]
   marks           Mark[]
   homeworkSubmissions HomeworkSubmission[]
+  homeworkRecheckRequests HomeworkRecheckRequest[]
   libraryIssues   LibraryIssue[]
   transportAllocation TransportAllocation?
   hostelAllocation    HostelAllocation?
+  hostelRoomRequests  HostelRoomRequest[] @relation("HostelRoomRequestStudent")
+  roommateApprovalsGiven HostelRoomRequest[] @relation("HostelRoomRequestRoommate")
   promotions      Promotion[]
   discounts       StudentDiscount[]
   certificates    GeneratedCertificate[]
   examSeatAllocations ExamSeatAllocation[]
   examAttendances     ExamAttendance[]
   admitCards          AdmitCard[]
+  branchTransfers     StudentBranchTransfer[]
+  labIssuesReceived   LabEquipmentIssue[] @relation("LabIssueStudentReceiver")
+  canteenWallet       CanteenWallet?
+  appraisalRatingsGiven AppraisalRating[] @relation("AppraisalRatingStudentRater")
+  entranceTestResult  EntranceTestResult?
 }
 
 
@@ -415,6 +534,7 @@ model Section {
   attendances  StudentAttendance[]
   timetable    Timetable?
   examQuestionPapers ExamQuestionPaper[]
+  exams        Exam[]
 
   @@unique([classId, name])
 }
@@ -498,6 +618,19 @@ model FeeCategory {
   code      String
   isSystem  Boolean  @default(false) // system-defined or custom
   isActive  Boolean  @default(true)
+  // Mandatory vs opt-in (spec Section 19 - "Director/Principal can
+  // create custom fee categories and mark each as mandatory or
+  // optional"). System categories (Tuition, Admission) are always
+  // effectively mandatory regardless of this flag; it's primarily
+  // meaningful for custom categories (Transport/Hostel are already
+  // naturally opt-in via their own allocation-based assignment flow).
+  isMandatory Boolean @default(true)
+  // Late fee grace period in days (spec Section 19 - "3-day grace
+  // period after due date before late fee starts applying"),
+  // configurable PER FEE CATEGORY as the spec states. Defaults to 3
+  // (the spec's stated default) so every existing category gets the
+  // spec-correct behavior without needing manual configuration.
+  lateFeeGraceDays Int @default(3)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -636,11 +769,27 @@ model StudentDiscount {
   value          Decimal      @db.Decimal(10, 2)
   isPercent      Boolean      @default(false)
   isActive       Boolean      @default(true)
+  // Sibling discount is NOT automatic - requires manual Principal
+  // approval (spec Section 19). Only meaningful when type is SIBLING;
+  // isActive is now gated on this being APPROVED for that type (see
+  // recalculateFeeAssignmentDiscount / discount.controller.ts) so an
+  // unapproved sibling-discount request never silently reduces a fee.
+  // Every other discount type defaults to APPROVED (unchanged prior
+  // behavior - approval is a new rule specific to SIBLING).
+  approvalStatus DiscountApprovalStatus @default(APPROVED)
+  approvedBy     String?
+  approvedAt     DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   student       Student        @relation(fields: [studentId], references: [id])
   feeAssignment FeeAssignment? @relation(fields: [feeAssignmentId], references: [id])
+}
+
+enum DiscountApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum DiscountType {
@@ -874,6 +1023,21 @@ model StaffAttendance {
   source    AttendanceSource    @default(MANUAL)
   deviceId  String?
   remarks   String?
+  // Late-entry / early-exit penalty rule (spec Section 6) - flagged at
+  // the time attendance is recorded (RFID tap or manual), based on
+  // this branch's configured shift start/end vs inTime/outTime.
+  // isLateEntry and isEarlyExit are counted COMBINED (not separately)
+  // toward the rolling week-cycle penalty threshold - every
+  // Branch.lateEarlyPenaltyThreshold combined occurrences deducts
+  // Branch.lateEarlyPenaltyPeriods period(s) from that day's
+  // attendance. periodsDeducted records how many periods THIS specific
+  // day's record had deducted once the running weekly count crossed a
+  // threshold multiple, so payroll's attendance % calculation can read
+  // it directly instead of recomputing the whole week's history every
+  // time.
+  isLateEntry     Boolean @default(false)
+  isEarlyExit     Boolean @default(false)
+  periodsDeducted Int     @default(0)
   createdAt DateTime            @default(now())
 
   staff Staff @relation(fields: [staffId], references: [id])
@@ -920,12 +1084,65 @@ model LeaveType {
   id           String  @id @default(cuid())
   name         String  // CL, SL, EL, Maternity, Paternity, Comp Off
   code         String  @unique
-  maxDays      Int     // annual quota
+  maxDays      Int     // annual quota (system-wide fallback/default)
   carryForward Boolean @default(false)
+  // Balance handling at year-end (spec Section 7 - "carry-forward,
+  // lapse, and encash - all three supported"). carryForward (above)
+  // is kept as-is for backward compatibility (existing simple
+  // boolean); this enum is the actual end-of-year DEFAULT behavior for
+  // this leave type, further overridable per-staff via
+  // StaffLeaveTypeConfig below.
+  endOfYearBehavior LeaveEndOfYearBehavior @default(LAPSE)
   isActive     Boolean @default(true)
   createdAt    DateTime @default(now())
 
   applications LeaveApplication[]
+  branchQuotas StaffLeaveTypeConfig[]
+  roleQuotas   LeaveRoleQuota[]
+}
+
+// Role-wise AND branch-wise leave quota (spec Section 7 - "Leave
+// quota: role-wise AND branch-wise, not a single uniform quota") -
+// overrides LeaveType.maxDays for a specific (branchId, role,
+// leaveTypeId) combination. Absence of a row here means "use
+// LeaveType.maxDays" (fully backward compatible with the original
+// single-quota behavior).
+model LeaveRoleQuota {
+  id          String   @id @default(cuid())
+  branchId    String
+  role        UserRole
+  leaveTypeId String
+  maxDays     Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([branchId, role, leaveTypeId])
+}
+
+// Per-staff, per-leave-type override of end-of-year balance handling
+// (spec Section 7 - "configurable staff-wise and role-wise") - e.g. one
+// specific senior teacher's Earned Leave encashes while everyone
+// else's just lapses. Absence of a row here means "use
+// LeaveType.endOfYearBehavior".
+model StaffLeaveTypeConfig {
+  id          String                 @id @default(cuid())
+  staffId     String
+  leaveTypeId String
+  behavior    LeaveEndOfYearBehavior
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([staffId, leaveTypeId])
+}
+
+enum LeaveEndOfYearBehavior {
+  CARRY_FORWARD
+  LAPSE
+  ENCASH
 }
 
 model LeaveApplication {
@@ -939,11 +1156,61 @@ model LeaveApplication {
   status      LeaveStatus @default(PENDING)
   approvedBy  String?
   remarks     String?
+  // 2-level approval chain (spec Section 7: Staff -> VP -> Principal;
+  // VP/Principal's own leave -> Director; Director approves his own
+  // leave himself). currentApprovalLevel tracks which step the
+  // application is currently waiting on; a plain Staff/Teacher
+  // application starts at VP, advances to PRINCIPAL once the VP
+  // approves, and is fully APPROVED once the Principal signs off. A
+  // VP's or Principal's OWN leave application starts directly at
+  // DIRECTOR (skipping the levels below their own role), and a
+  // BRANCH_ADMIN/Director's own application is auto-self-approved
+  // (see applyLeave in leave.controller.ts).
+  currentApprovalLevel LeaveApprovalLevel @default(VP)
+  vpApprovedBy          String?
+  vpApprovedAt          DateTime?
+  vpRemarks             String?
+  principalApprovedBy   String?
+  principalApprovedAt   DateTime?
+  principalRemarks      String?
+  // Substitute/cover-teacher assignment triggered on approval (spec
+  // Section 7) - one application can need cover for several periods
+  // across several days, so this is a separate relation
+  // (LeaveSubstituteAssignment below) rather than a single field.
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
   staff     Staff     @relation(fields: [staffId], references: [id])
   leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+  substituteAssignments LeaveSubstituteAssignment[]
+}
+
+// Substitute/cover-teacher assignment for one period, on one day,
+// arising from an approved LeaveApplication (spec Section 7) - supports
+// both system auto-suggest (isAutoSuggested: true, still needs a human
+// to confirm by creating/confirming this row) and fully manual
+// assignment.
+model LeaveSubstituteAssignment {
+  id                 String   @id @default(cuid())
+  leaveApplicationId String
+  date               DateTime
+  timetableSlotId    String
+  substituteStaffId  String
+  isAutoSuggested    Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  leaveApplication LeaveApplication @relation(fields: [leaveApplicationId], references: [id])
+  timetableSlot    TimetableSlot    @relation(fields: [timetableSlotId], references: [id])
+  substituteStaff  Staff            @relation("SubstituteStaff", fields: [substituteStaffId], references: [id])
+
+  @@unique([timetableSlotId, date])
+}
+
+enum LeaveApprovalLevel {
+  VP
+  PRINCIPAL
+  DIRECTOR
+  DONE
 }
 
 enum LeaveStatus {
@@ -970,6 +1237,26 @@ model StudentAttendance {
   deviceId  String?
   period    Int?             // null = day-wise, 1-8 = period-wise
   markedBy  String?          // teacher userId who marked
+  // Period 1's marking auto-copies as the default to every later
+  // period the same day (spec Section 6) - true on every period-2+
+  // row that was created purely by that auto-copy (never manually
+  // touched yet). A period-specific teacher overriding just their own
+  // period (per the spec) updates that row and flips this back to
+  // false, so it's easy to tell "still just inherited from Period 1"
+  // apart from "a teacher actually looked at this period".
+  copiedFromPeriod1 Boolean @default(false)
+  // RFID auto-tap tracking, kept alongside the Class Teacher's manual
+  // verification (spec Section 6: "both auto-tracking and manual
+  // verification apply together") - rfidTappedAt is set the moment a
+  // card-tap record arrives for this student/date (independent of
+  // `source`/`status`, which reflect the CLASS TEACHER's manual mark);
+  // verifiedByClassTeacher/verifiedAt/verifiedBy record that
+  // confirmation step separately, so a day can show "RFID says in, but
+  // not yet verified by class teacher" as a distinct state.
+  rfidTappedAt      DateTime?
+  verifiedByClassTeacher Boolean @default(false)
+  verifiedAt        DateTime?
+  verifiedBy        String?   // class teacher's userId
   createdAt DateTime         @default(now())
 
   student Student @relation(fields: [studentId], references: [id])
@@ -1006,20 +1293,117 @@ model Exam {
   id             String   @id @default(cuid())
   academicYearId String
   classId        String
+  // Optional narrower scope than the whole class (spec Section 9):
+  // a Class Teacher's custom exam is scoped to their own section, and
+  // a Subject Teacher's exam is scoped to their own class-subject.
+  // null = whole class (the Principal's normal "any scope" case, and
+  // the pre-existing default behavior).
+  sectionId      String?
+  subjectId      String?
   name           String   // "Unit Test 1", "Half Yearly", "Annual"
   type           ExamType
   startDate      DateTime?
   endDate        DateTime?
   isPublished    Boolean  @default(false)
+  // Creation-rights scoping (spec Section 9) - which of the three
+  // allowed creator kinds made this exam, purely for
+  // display/auditing/business-rule purposes (e.g. "Class/Subject
+  // Teacher created exams need no approval - go live directly" is
+  // already true for every exam today; this field lets a future
+  // approval-required rule for PRINCIPAL-created exams be added
+  // without a further migration).
+  createdByRole  ExamCreatorRole @default(PRINCIPAL)
+  createdBy      String?         // creator's userId
+  // Report card weightage for this exam TYPE within a branch (spec
+  // Section 9 - "Report card weightage per exam type set by
+  // Principal") lives on ReportCardWeightage below (branch+type keyed,
+  // not per-exam) since weightage is a policy applied across every
+  // exam of a given type, not a one-off per-exam number.
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
   class        Class        @relation(fields: [classId], references: [id])
+  section      Section?     @relation(fields: [sectionId], references: [id])
   marks        Mark[]
   schedules    ExamSchedule[]
   admitCards   AdmitCard[]
   documentTemplates DocumentTemplate[]
+  postponementRequests ExamPostponementRequest[]
+}
+
+enum ExamCreatorRole {
+  PRINCIPAL
+  CLASS_TEACHER
+  SUBJECT_TEACHER
+}
+
+// Report card weightage per exam type, branch-wide (spec Section 9 -
+// "Report card weightage per exam type set by Principal, e.g. Final
+// vs Mid-term vs Unit Test %"). Every ExamType configured for a branch
+// should ideally sum to 100, but that's a UI-level nudge, not
+// enforced here (a branch mid-way through configuring its weightages,
+// or deliberately using weights that don't need to sum to 100 for
+// some display convention, shouldn't be blocked at the DB level).
+model ReportCardWeightage {
+  id        String   @id @default(cuid())
+  branchId  String
+  examType  ExamType
+  weightPct Decimal  @db.Decimal(5, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, examType])
+}
+
+// Postponement-request workflow when a Principal schedules an exam
+// over an existing class/subject teacher's exam (spec Section 9) - if
+// the affected teacher doesn't respond by respondDeadline, the request
+// auto-approves and that teacher's ORIGINAL exam (originalExamId) is
+// marked postponed; the teacher then sets a new date for it
+// (newExamId, created once they respond/re-schedule).
+model ExamPostponementRequest {
+  id               String    @id @default(cuid())
+  examId           String    // the ORIGINAL exam being postponed
+  requestedBy      String    // Principal's userId
+  affectedStaffId  String    // the class/subject teacher whose exam this affects
+  reason           String?
+  status           PostponementStatus @default(PENDING)
+  respondDeadline  DateTime
+  respondedAt      DateTime?
+  newExamDate      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  exam Exam @relation(fields: [examId], references: [id])
+}
+
+enum PostponementStatus {
+  PENDING
+  AUTO_APPROVED
+  ACKNOWLEDGED
+  POSTPONED
+}
+
+// Invigilator duty assignment for one exam schedule sitting (spec
+// Section 20 - "Invigilator clash auto-check required"). Separate
+// from ExamQuestionPaper's uploadedBy (that's about WHO wrote the
+// paper; this is about who supervises the room during the sitting).
+// The uniqueness constraint on [examScheduleId, staffId] stops the
+// same teacher being double-booked for the SAME sitting; the
+// cross-schedule clash (same teacher, overlapping date/time across
+// DIFFERENT sittings) is checked in the assignment service, not at the
+// DB level (Prisma has no portable time-range-overlap constraint).
+model ExamInvigilator {
+  id             String       @id @default(cuid())
+  examScheduleId String
+  staffId        String
+  createdAt      DateTime     @default(now())
+
+  examSchedule ExamSchedule @relation(fields: [examScheduleId], references: [id])
+  staff        Staff        @relation(fields: [staffId], references: [id])
+
+  @@unique([examScheduleId, staffId])
 }
 
 enum ExamType {
@@ -1110,6 +1494,7 @@ model ExamSchedule {
   questionPapers ExamQuestionPaper[]
   seatAllocations ExamSeatAllocation[]
   examAttendances ExamAttendance[]
+  invigilators    ExamInvigilator[]
 
   // One schedule entry per subject per exam - a subject can't be
   // examined twice within the same Exam.
@@ -1234,12 +1619,21 @@ model TimetableSlot {
   period      Int     // 1, 2, 3... 8
   subjectId   String?
   teacherId   String?
+  // Room double-booking clash detection (spec Section 20) - optional,
+  // since most regular classes use the section's static Section.roomId
+  // (unchanged) and never need per-slot room tracking; only slots that
+  // deliberately move to a different room for that period (e.g. a lab
+  // -based subject shifting to the Physics Lab, per spec Section 4)
+  // set this.
+  roomId      String?
   startTime   String  // "09:00"
   endTime     String  // "09:45"
   isBreak     Boolean @default(false)
 
-  timetable Timetable @relation(fields: [timetableId], references: [id])
-  teacher   Staff?    @relation(fields: [teacherId], references: [id])
+  timetable Timetable  @relation(fields: [timetableId], references: [id])
+  teacher   Staff?     @relation(fields: [teacherId], references: [id])
+  room      SchoolRoom? @relation(fields: [roomId], references: [id])
+  substituteAssignments LeaveSubstituteAssignment[]
 
   @@unique([timetableId, day, period])
 }
@@ -1283,11 +1677,80 @@ model HomeworkSubmission {
   submittedAt DateTime @default(now())
   grade      String?
   remarks    String?
+  // 1-5 rating scale (spec Section 10 - "Grading: Subject Teacher
+  // only, after the deadline - 1-5 rating with remarks") - kept
+  // alongside the existing free-text `grade` field (unchanged, still
+  // used by getHomeworkById/etc for display) rather than replacing it,
+  // so this is purely additive; ratedBy/ratedAt record who actually
+  // graded it and when, enforcing the "Subject Teacher only, after
+  // deadline" rule in the controller.
+  rating     Int?     // 1-5
+  ratedBy    String?  // subject teacher's userId
+  ratedAt    DateTime?
+  // Late/Not-submitted flag (spec Section 10) - computed once at
+  // submission time by comparing submittedAt to the parent Homework's
+  // dueDate (a submission created after the due date is
+  // late-flagged); "Not Submitted" itself is derived (absence of any
+  // HomeworkSubmission row for a student), not a stored state here.
+  isLate     Boolean  @default(false)
 
   homework Homework @relation(fields: [homeworkId], references: [id])
   student  Student  @relation(fields: [studentId], references: [id])
+  recheckRequests HomeworkRecheckRequest[]
 
   @@unique([homeworkId, studentId])
+}
+
+// Recheck-request escalation flow (spec Section 10): Class Teacher
+// (1st level) -> Principal (if that teacher's recheck-request count
+// exceeds a Super-Admin-set threshold) -> Director (final escalation).
+// currentLevel tracks where in the chain the request currently sits;
+// escalation itself (level CLASS_TEACHER -> PRINCIPAL) is decided by
+// counting this teacher's total recheck requests against the
+// configurable threshold (see RecheckEscalationConfig below), not by a
+// fixed rule, so this stores the outcome rather than re-deriving it
+// each read.
+model HomeworkRecheckRequest {
+  id                    String   @id @default(cuid())
+  homeworkSubmissionId  String
+  studentId             String
+  reason                String
+  currentLevel          RecheckLevel @default(CLASS_TEACHER)
+  status                RecheckStatus @default(PENDING)
+  classTeacherRemarks   String?
+  principalRemarks       String?
+  directorRemarks        String?
+  resolvedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  submission HomeworkSubmission @relation(fields: [homeworkSubmissionId], references: [id])
+  student    Student            @relation(fields: [studentId], references: [id])
+}
+
+enum RecheckLevel {
+  CLASS_TEACHER
+  PRINCIPAL
+  DIRECTOR
+}
+
+enum RecheckStatus {
+  PENDING
+  RESOLVED
+  REJECTED
+}
+
+// Super-Admin-configurable escalation threshold (spec Section 10 -
+// "if that teacher's recheck-request count exceeds a max threshold,
+// set by Super Admin"). System-wide (no branchId), same convention as
+// GradeSystem/LeaveType. A single row is expected to exist; absence
+// means "no escalation limit configured yet" (requests never
+// auto-escalate past Class Teacher until this is set).
+model RecheckEscalationConfig {
+  id        String @id @default(cuid())
+  maxRequestsPerTeacherBeforeEscalation Int
+  updatedAt DateTime @updatedAt
+  updatedBy String?
 }
 
 
@@ -1307,12 +1770,53 @@ model LibraryBook {
   shelfNo     String?
   totalCopies Int      @default(1)
   availableCopies Int  @default(1)
+  // `price` (unchanged) continues to mean PURCHASE rate (spec Section
+  // 12 - "Book entry captures both purchase rate and current book
+  // rate"); currentRate is the new, separately-tracked present-day
+  // value used for lost/damage cost calculations below. null =
+  // current rate not set yet, falls back to `price`.
   price       Decimal? @db.Decimal(8, 2)
+  currentRate Decimal? @db.Decimal(8, 2)
+  // Per-book override of the branch-wide lost/damage % mode (spec
+  // Section 12: "Book-wise custom % of book rate - separate % for
+  // lost vs damaged"). null = use LibraryConfig's flat amount instead
+  // for this book.
+  lostCostPct    Decimal? @db.Decimal(5, 2)
+  damagedCostPct Decimal? @db.Decimal(5, 2)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   branch Branch         @relation(fields: [branchId], references: [id])
   issues LibraryIssue[]
+}
+
+// Branch-wide library policy (spec Section 12) - fine-per-day (Director
+// -set, replacing the previous hardcoded "Rs 2/day"), and the
+// lost/damage cost MODE: fixed flat amount (mode FIXED, using
+// flatLostCost/flatDamagedCost below) or book-wise custom % of book
+// rate (mode PERCENTAGE, using each LibraryBook's own
+// lostCostPct/damagedCostPct, falling back to these branch-wide
+// defaultLostCostPct/defaultDamagedCostPct when a book has no
+// override). One row per branch; absence of a row means "use the
+// original hardcoded Rs 2/day fine, no lost/damage cost configured
+// yet" (fully backward compatible).
+model LibraryConfig {
+  id                    String   @id @default(cuid())
+  branchId              String   @unique
+  finePerDay            Decimal  @default(2) @db.Decimal(8, 2)
+  lostDamageCostMode    LostDamageCostMode @default(FIXED)
+  flatLostCost          Decimal  @default(0) @db.Decimal(8, 2)
+  flatDamagedCost       Decimal  @default(0) @db.Decimal(8, 2)
+  defaultLostCostPct    Decimal  @default(0) @db.Decimal(5, 2)
+  defaultDamagedCostPct Decimal  @default(0) @db.Decimal(5, 2)
+  studentIssueLimit     Int      @default(3)
+  staffIssueLimit       Int      @default(10)
+  updatedAt             DateTime @updatedAt
+}
+
+enum LostDamageCostMode {
+  FIXED
+  PERCENTAGE
 }
 
 model LibraryIssue {
@@ -1323,6 +1827,18 @@ model LibraryIssue {
   dueDate    DateTime
   returnDate DateTime?
   fine       Decimal   @default(0) @db.Decimal(8, 2)
+  // Principal waiver (spec Section 12 - "Principal can waive fully or
+  // partially, custom amount or %") applied to `fine` (late-return) OR
+  // `lostDamageCost` below.
+  fineWaivedAmount Decimal @default(0) @db.Decimal(8, 2)
+  fineWaivedBy     String?
+  // Lost/damage cost (spec Section 12), computed at
+  // markLost/markDamaged time per LibraryConfig's mode - separate from
+  // `fine` (late-return), since a book can be returned late AND come
+  // back damaged (both costs apply independently).
+  lostDamageCost         Decimal @default(0) @db.Decimal(10, 2)
+  lostDamageCostWaived   Decimal @default(0) @db.Decimal(10, 2)
+  lostDamageCostWaivedBy String?
   status     IssueStatus @default(ISSUED)
   createdAt  DateTime  @default(now())
 
@@ -1330,11 +1846,35 @@ model LibraryIssue {
   student Student     @relation(fields: [studentId], references: [id])
 }
 
+// Staff book issues (spec Section 12 - "Staff max 10 books at a time")
+// - the original schema only ever supported STUDENT issues
+// (LibraryIssue.studentId is required); rather than making that
+// column nullable and overloading one table for two very differently
+// -limited audiences, this is a parallel table with the identical
+// shape, checked against LibraryConfig.staffIssueLimit instead of
+// studentIssueLimit.
+model StaffLibraryIssue {
+  id         String    @id @default(cuid())
+  bookId     String
+  staffId    String
+  issueDate  DateTime  @default(now())
+  dueDate    DateTime
+  returnDate DateTime?
+  fine       Decimal   @default(0) @db.Decimal(8, 2)
+  fineWaivedAmount Decimal @default(0) @db.Decimal(8, 2)
+  fineWaivedBy     String?
+  lostDamageCost         Decimal @default(0) @db.Decimal(10, 2)
+  lostDamageCostWaived   Decimal @default(0) @db.Decimal(10, 2)
+  status     IssueStatus @default(ISSUED)
+  createdAt  DateTime  @default(now())
+}
+
 enum IssueStatus {
   ISSUED
   RETURNED
   OVERDUE
   LOST
+  DAMAGED
 }
 
 // ============================================
@@ -1349,14 +1889,75 @@ model InventoryItem {
   unit        String   // pcs, kg, meters
   currentStock Int     @default(0)
   minStock    Int      @default(5)
+  // Rack/counter-wise placement (spec Section 17) - free text, same
+  // convention as LibraryBook's rackNo/shelfNo.
+  rackNo      String?
+  counterNo   String?
+  // Appliance/equipment tracking (spec Section 17 - "appliance
+  // management: equipment, maintenance, warranty/AMC, with full
+  // auto-reminders/alerts"). Only meaningful for durable
+  // equipment/appliance-type items, not consumable stock; null on
+  // every other item.
+  isAppliance      Boolean   @default(false)
+  warrantyExpiry   DateTime?
+  amcExpiry        DateTime?
+  lastMaintenanceAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   branch       Branch              @relation(fields: [branchId], references: [id])
   purchases    InventoryPurchase[]
   issues       InventoryIssue[]
+  purchaseRequests InventoryPurchaseRequest[]
 }
 
+// Purchase/reorder APPROVAL CHAIN (spec Section 17 - "same chain as
+// diesel/canteen: Incharge -> Manager -> Accounts -> Director"),
+// mirroring DieselRequest's exact stage shape below. The old
+// purchaseStock (direct single-step create) remains available for
+// small/no-approval-needed restocks; this model is the new
+// approval-gated path for purchases that should go through the full
+// chain. Once fully DIRECTOR_APPROVED, an InventoryPurchase row (the
+// pre-existing model, unchanged) is created to actually apply the
+// stock increment - this model is the workflow, InventoryPurchase
+// remains the ledger of what was actually bought.
+model InventoryPurchaseRequest {
+  id          String   @id @default(cuid())
+  itemId      String
+  vendor      String
+  quantity    Int
+  estimatedCost Decimal @db.Decimal(10, 2)
+  reason      String?
+  requestedBy String   // Incharge's userId
+  stage       ApprovalChainStage @default(INCHARGE_REQUESTED)
+  managerApprovedBy   String?
+  managerApprovedAt   DateTime?
+  accountsApprovedBy  String?
+  accountsApprovedAt  DateTime?
+  directorApprovedBy  String?
+  directorApprovedAt  DateTime?
+  rejectionReason     String?
+  resultingPurchaseId String? // set once fulfilled via InventoryPurchase
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  item InventoryItem @relation(fields: [itemId], references: [id])
+}
+
+// Shared approval-chain stage enum (spec: diesel/canteen/inventory all
+// use the identical Incharge -> Manager -> Accounts -> Director
+// pattern) - used by DieselRequest, CanteenStockRequest, and
+// InventoryPurchaseRequest so the stage semantics stay identical
+// across all three instead of three subtly-different enums drifting
+// apart over time.
+enum ApprovalChainStage {
+  INCHARGE_REQUESTED
+  MANAGER_APPROVED
+  ACCOUNTS_APPROVED
+  DIRECTOR_APPROVED
+  REJECTED
+  PAID
+}
 
 model InventoryPurchase {
   id        String   @id @default(cuid())
@@ -1380,6 +1981,13 @@ model InventoryIssue {
   purpose    String?
   issuedBy   String   // userId
   issueDate  DateTime @default(now())
+  // Return-status tracking for returnable items (spec Section 17 -
+  // "who took it, return status if returnable") - isReturnable is set
+  // at issue time (e.g. a borrowed projector vs consumed stationery);
+  // returnedAt/condition only apply when isReturnable is true.
+  isReturnable Boolean   @default(false)
+  returnedAt   DateTime?
+  returnCondition String?
   createdAt  DateTime @default(now())
 
   item InventoryItem @relation(fields: [itemId], references: [id])
@@ -1395,7 +2003,14 @@ model TransportRoute {
   name      String   // "Route 1 - City Center"
   startPoint String
   endPoint   String
+  // Measured ONCE by the Transport In-charge (spec Section 11) -
+  // `distance` (unchanged) remains that authoritative measured value.
+  // dieselDistanceOverride lets the Transport Manager manually
+  // fix/override the distance used specifically for diesel-cost
+  // calculation (view-only auto-calc from `distance` otherwise) - null
+  // = no override, diesel calculations use `distance` directly.
   distance   Decimal? @db.Decimal(6, 2)
+  dieselDistanceOverride Decimal? @db.Decimal(6, 2)
   monthlyFee Decimal  @db.Decimal(10, 2)
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
@@ -1414,6 +2029,16 @@ model TransportStop {
   name    String
   order   Int    // sequence in route
   time    String // "07:30"
+  // Stop-wise / distance-wise fee (spec Section 11 - "Fee: stop-wise /
+  // distance-wise, not flat") - distanceFromStartKm lets the fee be
+  // computed proportionally to how far along the route this stop is;
+  // monthlyFeeOverride lets a specific stop's fee be set directly
+  // instead, when a school wants to hand-set fees per stop rather than
+  // derive them from distance. Both optional/backward compatible - a
+  // route with no stop-level fee data still just uses
+  // TransportRoute.monthlyFee flat, exactly as before.
+  distanceFromStartKm Decimal? @db.Decimal(6, 2)
+  monthlyFeeOverride  Decimal? @db.Decimal(10, 2)
 
   route TransportRoute @relation(fields: [routeId], references: [id])
 
@@ -1425,6 +2050,19 @@ model Vehicle {
   branchId       String
   vehicleNo      String   @unique
   type           String   // Bus, Van, Auto
+  // Own vs Rented (spec Section 11 - "both get a full management
+  // system"). OWN vehicles use the existing fuel/maintenance tracking
+  // (VehicleMaintenanceLog below) same as before; RENTED vehicles
+  // additionally use perKmRate + monthlyFixedFee for diesel-cost
+  // calculation (see DieselRequest below).
+  ownership      VehicleOwnership @default(OWN)
+  // Rented-vehicle payment terms (spec Section 11) - only meaningful
+  // when ownership is RENTED. monthlyFixedFee is the base monthly
+  // payment; perKmRate is this specific rented vehicle's own diesel
+  // rate used to compute a DieselRequest's cost (perKmRate x distance
+  // on the assigned route).
+  monthlyFixedFee Decimal? @db.Decimal(10, 2)
+  perKmRate       Decimal? @db.Decimal(8, 2)
   capacity       Int
   driverName     String?
   driverPhone    String?
@@ -1432,12 +2070,47 @@ model Vehicle {
   insuranceExpiry DateTime?
   fitnessExpiry  DateTime?
   pucExpiry      DateTime?
+  // Live GPS location (spec Section 11 - "GPS tracking: required, live
+  // location"). Updated by whatever GPS device/app integration reports
+  // in; lastLocationAt lets the frontend show "location as of X
+  // minutes ago" / flag a stale/offline device.
+  lastLat        Decimal? @db.Decimal(10, 6)
+  lastLng        Decimal? @db.Decimal(10, 6)
+  lastLocationAt DateTime?
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   branch Branch         @relation(fields: [branchId], references: [id])
   routes VehicleRoute[]
+  maintenanceLogs VehicleMaintenanceLog[]
+  dieselRequests  DieselRequest[]
+}
+
+enum VehicleOwnership {
+  OWN
+  RENTED
+}
+
+// Fuel/maintenance tracking (spec Section 11 - "both Own and Rented
+// vehicle types get a full management system: fuel/maintenance/
+// diesel-request tracking"). Covers non-diesel-request maintenance
+// events (servicing, repairs, part replacement) for BOTH ownership
+// types; diesel cost specifically for rented vehicles flows through
+// the separate DieselRequest approval-chain model below instead, since
+// that needs its own multi-step approval workflow that a generic
+// maintenance log entry doesn't.
+model VehicleMaintenanceLog {
+  id        String   @id @default(cuid())
+  vehicleId String
+  type      String   // "Service", "Repair", "Tyre Change", "Fuel (Own vehicle)", ...
+  cost      Decimal  @db.Decimal(10, 2)
+  odometerReading Int?
+  notes     String?
+  loggedBy  String   // userId
+  loggedAt  DateTime @default(now())
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
 }
 
 
@@ -1502,10 +2175,16 @@ model HostelRoom {
   capacity  Int
   occupied  Int      @default(0)
   monthlyFee Decimal @db.Decimal(10, 2)
+  // Provisional-allotment cutoff date (spec Section 13) - set/published
+  // by the Warden; an allotment into an EMPTY room made before this
+  // date is provisional (see HostelAllocation.isProvisional) until the
+  // Warden finalizes it.
+  allotmentCutoffDate DateTime?
   createdAt DateTime @default(now())
 
   floor       HostelFloor        @relation(fields: [floorId], references: [id])
   allocations HostelAllocation[]
+  roomRequests HostelRoomRequest[]
 }
 
 enum RoomType {
@@ -1521,10 +2200,81 @@ model HostelAllocation {
   bedNo     String?
   startDate DateTime
   endDate   DateTime?
+  // Provisional-until-cutoff / Warden-finalized status (spec Section
+  // 13) - an allotment into an empty room is provisional
+  // (isProvisional: true) until the Warden's final list is published
+  // (finalizedAt set, isProvisional flipped to false). An allotment
+  // arising from an accepted roommate-approval (HostelRoomRequest) is
+  // never provisional - it's immediately confirmed since a live
+  // roommate already agreed to it.
+  isProvisional Boolean   @default(false)
+  finalizedBy   String?
+  finalizedAt   DateTime?
+  // RFID in/out (spec Section 13) - presence is derived from the LAST
+  // tap: an "in" tap with no later "out" tap means the student is
+  // currently present/inside. lastTapDirection + lastTapAt are updated
+  // by every hostel RFID tap event; isCurrentlyIn is a small denormalized
+  // convenience so "who's currently in the hostel" queries don't need
+  // to inspect a full tap-event history table (kept in sync with
+  // lastTapDirection at write time).
+  lastTapDirection HostelTapDirection?
+  lastTapAt        DateTime?
+  isCurrentlyIn    Boolean @default(false)
   createdAt DateTime @default(now())
 
   student Student    @relation(fields: [studentId], references: [id])
   room    HostelRoom @relation(fields: [roomId], references: [id])
+  tapEvents HostelTapEvent[]
+}
+
+enum HostelTapDirection {
+  IN
+  OUT
+}
+
+// Individual RFID tap events for hostel entry/exit (spec Section 13) -
+// a running log backing HostelAllocation's derived "last tap = current
+// presence" state above; kept as its own append-only table (rather
+// than only ever updating the allocation's denormalized fields) so a
+// full in/out history remains available for wardens/reports.
+model HostelTapEvent {
+  id            String   @id @default(cuid())
+  allocationId  String
+  direction     HostelTapDirection
+  tappedAt      DateTime @default(now())
+  deviceId      String?
+
+  allocation HostelAllocation @relation(fields: [allocationId], references: [id])
+
+  @@index([allocationId, tappedAt])
+}
+
+// Roommate-approval bed allotment flow (spec Section 13): a new
+// student's request for an ALREADY-OCCUPIED room goes to the existing
+// roommate first - only if they approve does the new student get
+// auto-allotted; if rejected, the requesting student is shown the next
+// suggested available room / can pick a custom room. An EMPTY room's
+// request skips this table entirely and goes straight to a
+// provisional HostelAllocation (see above) - this model only exists
+// for the occupied-room case.
+model HostelRoomRequest {
+  id                String   @id @default(cuid())
+  studentId         String   // student requesting to move in
+  roomId            String
+  existingRoommateId String  // Student.id of the current occupant being asked
+  status            HostelRoomRequestStatus @default(PENDING)
+  respondedAt       DateTime?
+  createdAt         DateTime @default(now())
+
+  student          Student    @relation("HostelRoomRequestStudent", fields: [studentId], references: [id])
+  room             HostelRoom @relation(fields: [roomId], references: [id])
+  existingRoommate Student    @relation("HostelRoomRequestRoommate", fields: [existingRoommateId], references: [id])
+}
+
+enum HostelRoomRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 
@@ -1595,6 +2345,44 @@ model SchoolRoom {
   examSchedules ExamSchedule[]
   examSeatAllocations ExamSeatAllocation[]
   cabins        RoomCabin[]
+  bookings      RoomBooking[]
+  timetableSlots TimetableSlot[]
+}
+
+// Shared-room booking (spec Section 4 - "Shared room booking
+// (Conference Room, Auditorium, etc.) requires Principal approval").
+// Any SchoolRoom can technically receive a booking request, but this
+// is only meaningful/expected for shared-use types (AUDITORIUM,
+// CONFERENCE-style OTHER rooms, SPORTS_ROOM, etc) - regular
+// classrooms are statically assigned via Section.roomId instead and
+// wouldn't normally go through this flow.
+model RoomBooking {
+  id            String   @id @default(cuid())
+  branchId      String
+  roomId        String
+  requestedById String   // Staff.id of whoever wants to book it
+  purpose       String
+  startTime     DateTime
+  endTime       DateTime
+  status        RoomBookingStatus @default(PENDING)
+  approvedBy    String?
+  approvedAt    DateTime?
+  rejectionReason String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branch      Branch     @relation(fields: [branchId], references: [id])
+  room        SchoolRoom @relation(fields: [roomId], references: [id])
+  requestedBy Staff      @relation("RoomBookingRequestedBy", fields: [requestedById], references: [id])
+
+  @@index([roomId, startTime, endTime])
+}
+
+enum RoomBookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
 }
 
 enum SchoolRoomType {
@@ -1941,10 +2729,37 @@ model AdmissionInquiry {
   status          AdmissionInquiryStatus @default(NEW)
   reviewedBy      String?
   reviewNotes     String?
+  // Multi-branch checklist with priority-order cascading (spec Section
+  // 21) - `branchId` (unchanged) remains the CURRENT branch actually
+  // handling this inquiry at any moment; branchPriorityIds is the full
+  // ordered list the applicant originally selected (e.g.
+  // ["branch-A-id","branch-B-id"]), and currentPriorityIndex tracks
+  // which position in that list `branchId` currently corresponds to.
+  // On REJECTED, the inquiry auto-advances: branchId is updated to
+  // branchPriorityIds[currentPriorityIndex+1], currentPriorityIndex
+  // increments, and status resets to NEW for that next branch to
+  // review - stopping once the list is exhausted (see the cascading
+  // logic in admission.controller.ts). A single-branch inquiry (the
+  // pre-existing common case) just has a one-element
+  // branchPriorityIds and never cascades, unchanged from before.
+  branchPriorityIds   String[] @default([])
+  currentPriorityIndex Int     @default(0)
+  // Entrance test step (spec Section 18 - "applies to ALL classes") -
+  // full result detail lives on EntranceTestResult below (linked once
+  // the applicant/converted-student takes it); this flag is a quick
+  // "has this inquiry cleared its entrance test yet" summary for the
+  // admissions pipeline view.
+  entranceTestCleared Boolean @default(false)
+  // Seat-availability WARNING (spec Section 18 - "warning only, does
+  // not block") - set when the class/section applied for was already
+  // at/over capacity at the time this inquiry was reviewed, purely
+  // informational for staff deciding whether to proceed.
+  seatCapacityWarning String?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 
   branch Branch @relation(fields: [branchId], references: [id])
+  entranceTestResult EntranceTestResult?
 
   @@index([branchId, status])
 }
@@ -1952,8 +2767,32 @@ model AdmissionInquiry {
 enum AdmissionInquiryStatus {
   NEW
   CONTACTED
+  ENTRANCE_TEST_SCHEDULED
   ADMITTED
   REJECTED
+}
+
+// Entrance test result (spec Section 18 - applies to ALL classes, a
+// mandatory step in the admission pipeline before Front Office final
+// approval). Linked to either an AdmissionInquiry (pre-admission,
+// common case) or directly to a Student (a test taken/recorded after
+// conversion) - exactly one of the two is set.
+model EntranceTestResult {
+  id                  String   @id @default(cuid())
+  admissionInquiryId  String?  @unique
+  studentId           String?  @unique
+  branchId            String
+  testDate            DateTime
+  score               Decimal  @db.Decimal(6, 2)
+  maxScore            Decimal  @db.Decimal(6, 2)
+  passed              Boolean
+  remarks             String?
+  recordedBy          String   // staff userId
+  createdAt           DateTime @default(now())
+
+  branch           Branch            @relation(fields: [branchId], references: [id])
+  admissionInquiry AdmissionInquiry? @relation(fields: [admissionInquiryId], references: [id])
+  student          Student?          @relation(fields: [studentId], references: [id])
 }
 
 // ============================================
@@ -2015,6 +2854,62 @@ enum JobApplicationStatus {
   HIRED
 }
 
+// ============================================
+// SECTION 24B: PUBLIC LANDING PAGE - GALLERY, REQUIREMENTS, FEEDBACK
+// ============================================
+
+// Public photo gallery (spec Section 21 - "Home page + Gallery +
+// general info"). Staff-managed (create/edit/delete), publicly
+// readable without auth, same "staff-managed content, public read"
+// shape as Notice.isPublic.
+model GalleryImage {
+  id          String   @id @default(cuid())
+  branchId    String
+  title       String?
+  imageUrl    String
+  category    String?  // "Campus", "Events", "Sports", ...
+  uploadedBy  String   // userId
+  createdAt   DateTime @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
+}
+
+// Admission eligibility/document Requirements page content (spec
+// Section 21) - staff-editable rich text per branch, publicly
+// readable. One row per branch (kept simple as a single editable
+// content blob, matching how a "Requirements page" is presented -
+// free-form text/HTML rather than a structured list of fields).
+model RequirementsPage {
+  id        String   @id @default(cuid())
+  branchId  String   @unique
+  content   String   // HTML/markdown content
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+// Public Feedback Form submission (spec Section 21 - "Forms:
+// Admission Application Form, Requirement/Enquiry Form, Feedback
+// Form"). Mirrors AdmissionInquiry/JobApplication's exact "anonymous
+// public submit, staff reviews" shape.
+model PublicFeedback {
+  id          String   @id @default(cuid())
+  branchId    String
+  name        String
+  email       String
+  phone       String?
+  subject     String?
+  message     String
+  reviewedBy  String?
+  reviewNotes String?
+  createdAt   DateTime @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
+}
+
 
 
 // ============================================
@@ -2052,4 +2947,502 @@ model LoginSession {
   @@index([userId])
   @@index([token])
   @@index([expiresAt])
+}
+
+
+// ============================================
+// SECTION 27: BRANCH TRANSFER (Students & Staff)
+// ============================================
+
+// Student branch transfer (spec Section 5). Director-initiated
+// transfers skip straight to APPROVED (no approval step needed, per
+// spec); Principal-initiated transfers start PENDING and need the
+// destination Principal's approval/rejection. feeDuesOption records
+// which of the 3 dues-handling choices the destination Principal made
+// (only meaningful once dues > 0 existed at the origin branch);
+// academicDataAccess starts at SUMMARY_ONLY and can be upgraded to
+// FULL only via the separate full-data-request/approval flow tracked
+// by fullDataRequestStatus below.
+model StudentBranchTransfer {
+  id                    String   @id @default(cuid())
+  studentId             String
+  originBranchId        String
+  destinationBranchId   String
+  initiatedBy           String   // userId (Director or origin Principal)
+  initiatedByRole       TransferInitiatorRole
+  status                TransferStatus @default(PENDING)
+  destinationApprovedBy String?
+  destinationApprovedAt DateTime?
+  rejectionReason       String?
+  // Fee dues handling (spec Section 5 - 3 options chosen by the
+  // DESTINATION Principal once dues exist at origin).
+  outstandingDuesAtOrigin Decimal? @db.Decimal(12, 2)
+  feeDuesOption           FeeDuesOption?
+  // Academic data visibility (spec Section 5) - defaults to summary
+  // only; a separate full-data request/approval cycle (tracked below)
+  // can upgrade this to FULL.
+  academicDataAccess      AcademicDataAccess @default(SUMMARY_ONLY)
+  fullDataRequestStatus   FullDataRequestStatus @default(NOT_REQUESTED)
+  fullDataRequestedBy     String? // destination Principal's userId
+  fullDataRequestedAt     DateTime?
+  fullDataApprovedBy      String? // origin Principal's userId
+  fullDataApprovedAt      DateTime?
+  fullDataRejectionReason String?
+  // Scholarship auto-cancellation (spec Section 5) - recorded here for
+  // audit once completeStudentTransfer runs, in addition to flipping
+  // Student.hasActiveScholarship off.
+  scholarshipAutoCancelled Boolean @default(false)
+  completedAt             DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  student            Student @relation(fields: [studentId], references: [id])
+  originBranch       Branch  @relation("StudentTransferOriginBranch", fields: [originBranchId], references: [id])
+  destinationBranch  Branch  @relation("StudentTransferDestinationBranch", fields: [destinationBranchId], references: [id])
+}
+
+enum TransferInitiatorRole {
+  DIRECTOR
+  ORIGIN_PRINCIPAL
+}
+
+enum TransferStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum FeeDuesOption {
+  CARRY_FORWARD
+  CLEAR_DUES_AND_ADMIT
+  CLEAR_AT_OLD_BRANCH
+}
+
+enum AcademicDataAccess {
+  SUMMARY_ONLY
+  FULL
+}
+
+enum FullDataRequestStatus {
+  NOT_REQUESTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Staff branch transfer (spec Section 5) - same Director-direct vs
+// Principal-initiated-with-approval shape as StudentBranchTransfer,
+// minus the student-only concerns (fee dues, academic data,
+// scholarship).
+model StaffBranchTransfer {
+  id                    String   @id @default(cuid())
+  staffId               String
+  originBranchId        String
+  destinationBranchId   String
+  initiatedBy           String
+  initiatedByRole       TransferInitiatorRole
+  status                TransferStatus @default(PENDING)
+  destinationApprovedBy String?
+  destinationApprovedAt DateTime?
+  rejectionReason       String?
+  completedAt           DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  staff              Staff  @relation("StaffTransferSubject", fields: [staffId], references: [id])
+  originBranch       Branch @relation("StaffTransferOriginBranch", fields: [originBranchId], references: [id])
+  destinationBranch  Branch @relation("StaffTransferDestinationBranch", fields: [destinationBranchId], references: [id])
+}
+
+// ============================================
+// SECTION 28: MESS MODULE
+// ============================================
+
+// Week-wise meal plan (spec Section 14) - one row per (branch, day of
+// week, meal type), veg/non-veg option. Menu approval chain lives on
+// MessMenuApproval below rather than a single status column here,
+// since the spec's chain (Incharge -> Warden -> Principal -> Director)
+// has 4 distinct stages to track, matching the ApprovalChainStage-style
+// pattern used elsewhere (though Mess's chain has an extra Warden step
+// the diesel/canteen/inventory chains don't).
+model MessMenu {
+  id         String   @id @default(cuid())
+  branchId   String
+  dayOfWeek  DayOfWeek
+  mealType   MessMealType
+  vegOption  String
+  nonVegOption String?
+  approvalStage MessApprovalStage @default(INCHARGE_DRAFTED)
+  wardenApprovedBy    String?
+  wardenApprovedAt    DateTime?
+  principalApprovedBy String?
+  principalApprovedAt DateTime?
+  directorApprovedBy  String?
+  directorApprovedAt  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@unique([branchId, dayOfWeek, mealType])
+}
+
+enum MessMealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACKS
+}
+
+enum MessApprovalStage {
+  INCHARGE_DRAFTED
+  WARDEN_APPROVED
+  PRINCIPAL_APPROVED
+  DIRECTOR_APPROVED
+  REJECTED
+}
+
+// Monthly fixed billing (spec Section 14 - "not per-meal-consumed") for
+// a hostel student's mess charges. Waiver either by Principal directly
+// (waivedByPrincipal) or automatically via a Warden-approved leave
+// covering the billing period (waivedViaLeaveApplicationId) - both are
+// independent grounds, so both fields can coexist if e.g. a leave
+// covered half the month and the Principal separately waived the rest.
+model MessBill {
+  id          String   @id @default(cuid())
+  branchId    String
+  studentId   String
+  month       Int
+  year        Int
+  amount      Decimal  @db.Decimal(10, 2)
+  waivedAmount Decimal @default(0) @db.Decimal(10, 2)
+  waivedByPrincipal String?
+  waivedViaLeaveApplicationId String?
+  status      MessBillStatus @default(PENDING)
+  paidAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@unique([studentId, month, year])
+}
+
+enum MessBillStatus {
+  PENDING
+  PAID
+  WAIVED
+}
+
+// Guest meal log (spec Section 14 - "parents eat free; other guests
+// are chargeable per meal"). isParent determines whether `chargeAmount`
+// is forced to 0 (parent) or an actual per-meal charge (other guest).
+model MessGuestMeal {
+  id           String   @id @default(cuid())
+  branchId     String
+  guestName    String
+  isParent     Boolean  @default(false)
+  relatedStudentId String? // which student's parent/guest this is, if known
+  mealType     MessMealType
+  chargeAmount Decimal  @default(0) @db.Decimal(8, 2)
+  mealDate     DateTime @default(now())
+  loggedBy     String   // userId
+  createdAt    DateTime @default(now())
+}
+
+// ============================================
+// SECTION 29: CANTEEN MODULE
+// ============================================
+
+// Canteen stock item - deliberately a SEPARATE model from
+// InventoryItem (Section 16/17) even though the shapes overlap, since
+// canteen items are consumable food/beverage stock with a sale PRICE
+// (what's charged to a student/staff buyer), which InventoryItem has
+// no concept of at all - conflating the two would require bolting
+// pricing onto every non-food inventory item too.
+model CanteenItem {
+  id           String   @id @default(cuid())
+  branchId     String
+  name         String
+  category     String?  // "Snacks", "Beverages", "Meals"
+  unit         String
+  currentStock Int      @default(0)
+  minStock     Int      @default(5)
+  price        Decimal  @db.Decimal(8, 2)
+  rackNo       String?
+  counterNo    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  saleItems CanteenSaleItem[]
+  stockRequests CanteenStockRequest[]
+}
+
+// Stock replenish approval (spec Section 15 - "same flow as diesel:
+// Incharge -> Manager approval -> Accounts -> Director payment
+// approval"), reusing the shared ApprovalChainStage enum (Section 16).
+model CanteenStockRequest {
+  id            String   @id @default(cuid())
+  itemId        String
+  vendor        String
+  quantity      Int
+  estimatedCost Decimal  @db.Decimal(10, 2)
+  requestedBy   String
+  stage         ApprovalChainStage @default(INCHARGE_REQUESTED)
+  managerApprovedBy  String?
+  managerApprovedAt  DateTime?
+  accountsApprovedBy String?
+  accountsApprovedAt DateTime?
+  directorApprovedBy String?
+  directorApprovedAt DateTime?
+  rejectionReason    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  item CanteenItem @relation(fields: [itemId], references: [id])
+}
+
+// Prepaid RFID wallet (spec Section 15 - "both prepaid wallet (RFID)
+// and cash/counter billing"). One wallet per student; recharge either
+// online or cash-at-counter, initiated by parent or student
+// themselves (see CanteenWalletTransaction below for the recharge
+// log).
+model CanteenWallet {
+  id        String   @id @default(cuid())
+  studentId String   @unique
+  branchId  String
+  balance   Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+  branch  Branch  @relation(fields: [branchId], references: [id])
+  transactions CanteenWalletTransaction[]
+}
+
+model CanteenWalletTransaction {
+  id          String   @id @default(cuid())
+  walletId    String
+  type        CanteenWalletTxnType
+  amount      Decimal  @db.Decimal(10, 2)
+  rechargeMode CanteenRechargeMode? // only for RECHARGE type
+  initiatedBy String?  // userId (parent or student) - only for RECHARGE
+  saleId      String?  // link back to the CanteenSale that debited this, if type=PURCHASE
+  createdAt   DateTime @default(now())
+
+  wallet CanteenWallet @relation(fields: [walletId], references: [id])
+}
+
+enum CanteenWalletTxnType {
+  RECHARGE
+  PURCHASE
+  REFUND
+}
+
+enum CanteenRechargeMode {
+  ONLINE
+  CASH_AT_COUNTER
+}
+
+// A single counter sale/bill - can be paid via wallet OR cash, per
+// spec's "both" requirement. items are the line items purchased.
+model CanteenSale {
+  id          String   @id @default(cuid())
+  branchId    String
+  studentId   String?  // null for a staff/walk-in cash sale with no student wallet involved
+  totalAmount Decimal  @db.Decimal(10, 2)
+  paymentMode CanteenPaymentMode
+  soldBy      String   // counter staff userId
+  createdAt   DateTime @default(now())
+
+  items CanteenSaleItem[]
+}
+
+enum CanteenPaymentMode {
+  WALLET
+  CASH
+}
+
+model CanteenSaleItem {
+  id       String  @id @default(cuid())
+  saleId   String
+  itemId   String
+  quantity Int
+  rate     Decimal @db.Decimal(8, 2)
+  subtotal Decimal @db.Decimal(10, 2)
+
+  sale CanteenSale @relation(fields: [saleId], references: [id])
+  item CanteenItem @relation(fields: [itemId], references: [id])
+}
+
+// ============================================
+// SECTION 30: LAB MANAGEMENT MODULE
+// ============================================
+
+model LabEquipment {
+  id           String   @id @default(cuid())
+  branchId     String
+  name         String
+  category     String?  // "Physics", "Chemistry", "Biology", "Computer"
+  totalQuantity Int     @default(1)
+  availableQuantity Int @default(1)
+  // Chemical/consumable expiry auto-alert (spec Section 16) - only
+  // meaningful for consumable/chemical items; null for durable
+  // equipment (microscopes, apparatus, etc).
+  isConsumable Boolean  @default(false)
+  expiryDate   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  issues LabEquipmentIssue[]
+}
+
+// Equipment issue - supports BOTH group and individual issue (spec
+// Section 16): an individual issue has studentId/staffId set with
+// groupLabel null; a group issue has groupLabel set (e.g. "Class 10-A
+// Batch 2") and MAY still record one representative
+// student/staffId as the receiver-of-record, or none at all if the
+// issue is tracked purely at the group level.
+model LabEquipmentIssue {
+  id           String   @id @default(cuid())
+  equipmentId  String
+  quantity     Int
+  groupLabel   String?
+  studentId    String?
+  staffId      String?
+  issuedBy     String   // Lab Assistant's userId
+  issueDate    DateTime @default(now())
+  returnDate   DateTime?
+  // Damage/breakage fine (spec Section 16 - "added by Lab Assistant,
+  // waivable by Principal") - same waiver pattern as
+  // LibraryIssue.fineWaivedAmount/fineWaivedBy.
+  damageFine       Decimal @default(0) @db.Decimal(10, 2)
+  damageFineWaived Decimal @default(0) @db.Decimal(10, 2)
+  damageFineWaivedBy String?
+  status       LabIssueStatus @default(ISSUED)
+  createdAt    DateTime @default(now())
+
+  equipment LabEquipment @relation(fields: [equipmentId], references: [id])
+  student   Student?     @relation("LabIssueStudentReceiver", fields: [studentId], references: [id])
+  staff     Staff?       @relation("LabIssueStaffReceiver", fields: [staffId], references: [id])
+}
+
+enum LabIssueStatus {
+  ISSUED
+  RETURNED
+  DAMAGED
+  LOST
+}
+
+// ============================================
+// SECTION 31: TRANSPORT DIESEL REQUEST APPROVAL CHAIN
+// ============================================
+
+// Diesel payment flow (spec Section 11): Driver raises request (amount
+// + litres) -> Transport Manager approves -> Accounts (as an
+// account-transfer request) -> Director approves payment -> Online =
+// payment transferred, Not online = Accounts releases cash directly.
+// Rejection: driver notified with reason, can re-request, capped at
+// max 3 re-requests per week (enforced in the controller by counting
+// this driver's requests in the current week-cycle, using
+// Branch.attendanceWeekCycleDays for week-boundary consistency with
+// the rest of the app's "custom week" concept).
+model DieselRequest {
+  id            String   @id @default(cuid())
+  branchId      String
+  vehicleId     String
+  driverId      String   // Staff.id of the driver (driver must be a Staff record)
+  amount        Decimal  @db.Decimal(10, 2)
+  litres        Decimal  @db.Decimal(8, 2)
+  distanceKm    Decimal? @db.Decimal(6, 2) // auto-calculated from route x perKmRate at request time, view-only snapshot
+  stage         ApprovalChainStage @default(INCHARGE_REQUESTED)
+  managerApprovedBy   String?
+  managerApprovedAt   DateTime?
+  accountsApprovedBy  String?
+  accountsApprovedAt  DateTime?
+  directorApprovedBy  String?
+  directorApprovedAt  DateTime?
+  rejectionReason     String?
+  paymentMode   DieselPaymentMode?
+  paidAt        DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  branch  Branch  @relation(fields: [branchId], references: [id])
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+  driver  Staff   @relation("DieselRequestDriver", fields: [driverId], references: [id])
+}
+
+enum DieselPaymentMode {
+  ONLINE_TRANSFER
+  CASH
+}
+
+// ============================================
+// SECTION 32: APPRAISAL RATING (Payroll Increment Data Sources)
+// ============================================
+
+// Unified appraisal rating capturing all 5 sources from spec Section 8
+// (Student weekly, Parent post-PTM, Principal<->Teacher quarterly
+// mutual, VP<->Teacher quarterly mutual, Attendance-performance
+// continuous). A single model with a `source` discriminator rather
+// than 5 separate tables, since every source shares the identical
+// shape (subject being rated, rater, score, period, optional
+// feedback text) - only the valid rater/subject role combination and
+// frequency cadence differ per source, which is validated in the
+// controller rather than via 5 near-identical schemas.
+model AppraisalRating {
+  id            String   @id @default(cuid())
+  branchId      String
+  subjectStaffId String  // the teacher/principal being rated
+  source        AppraisalSource
+  // Exactly one rater reference is set, matching `source`:
+  // STUDENT_WEEKLY -> raterStudentId, everything else -> raterStaffId
+  // (PARENT_POST_PTM's rater is technically a parent, but parents have
+  // no Staff record - raterStaffId is left null and raterUserId
+  // captures the parent's userId instead for that one case).
+  raterStaffId   String?
+  raterStudentId String?
+  raterUserId    String? // parent's userId, only for PARENT_POST_PTM
+  score          Decimal  @db.Decimal(4, 2) // e.g. out of 5 or 10, scale is source-dependent
+  maxScore       Decimal  @db.Decimal(4, 2)
+  feedback       String?
+  periodLabel    String   // "2026-W12" for weekly, "2026-Q1" for quarterly, etc - free text period identifier
+  createdAt      DateTime @default(now())
+
+  branch      Branch  @relation(fields: [branchId], references: [id])
+  subjectStaff Staff  @relation("AppraisalRatingSubject", fields: [subjectStaffId], references: [id])
+  raterStaff   Staff? @relation("AppraisalRatingRater", fields: [raterStaffId], references: [id])
+  raterStudent Student? @relation("AppraisalRatingStudentRater", fields: [raterStudentId], references: [id])
+
+  @@index([subjectStaffId, source, periodLabel])
+}
+
+enum AppraisalSource {
+  STUDENT_WEEKLY
+  PARENT_POST_PTM
+  PRINCIPAL_TEACHER_MUTUAL
+  VP_TEACHER_MUTUAL
+  ATTENDANCE_PERFORMANCE
+}
+
+// Director's manually-entered increment % for a staff member's
+// upcoming appraisal cycle (spec Section 8 - "Director manually enters
+// the increment % himself - no auto-formula"). The raw
+// AppraisalRating rows above feed the "increment screen" DISPLAY (raw
+// data + averages per source), but the actual decision is always this
+// one manually-entered number, never computed from them.
+model SalaryIncrement {
+  id            String   @id @default(cuid())
+  staffId       String
+  periodLabel   String   // e.g. "2026 Annual Review"
+  incrementPct  Decimal  @db.Decimal(5, 2)
+  enteredBy     String   // Director's userId
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  @@unique([staffId, periodLabel])
 }

@@ -21,6 +21,8 @@ export const addStopSchema = z.object({
     name: z.string().min(1, "name is required"),
     order: z.number().int().min(0, "order is required"),
     time: z.string().min(1, "time is required"),
+    distanceFromStartKm: money.optional(),
+    monthlyFeeOverride: money.optional(),
   }),
 });
 
@@ -41,6 +43,9 @@ export const addVehicleSchema = z.object({
     driverName: z.string().optional(),
     driverPhone: z.string().optional(),
     driverLicense: z.string().optional(),
+    ownership: z.enum(["OWN", "RENTED"]).optional(),
+    monthlyFixedFee: money.optional(),
+    perKmRate: money.optional(),
   }),
 });
 
@@ -48,5 +53,30 @@ export const assignVehicleToRouteSchema = z.object({
   body: z.object({
     vehicleId: z.string().min(1, "vehicleId is required"),
     routeId: z.string().min(1, "routeId is required"),
+  }),
+});
+
+
+export const updateVehicleLocationSchema = z.object({
+  body: z.object({
+    lat: z.number(),
+    lng: z.number(),
+  }),
+});
+
+export const logVehicleMaintenanceSchema = z.object({
+  body: z.object({
+    vehicleId: z.string().min(1, "vehicleId is required"),
+    type: z.string().min(1, "type is required"),
+    cost: money,
+    odometerReading: z.number().int().optional(),
+    notes: z.string().optional(),
+  }),
+});
+
+export const setRouteDistanceSchema = z.object({
+  body: z.object({
+    distance: money.optional(),
+    dieselDistanceOverride: money.optional(),
   }),
 });

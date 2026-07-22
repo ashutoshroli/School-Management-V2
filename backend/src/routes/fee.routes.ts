@@ -5,7 +5,7 @@ import { createFeeStructure, bulkCreateFeeStructure, getFeeStructures, getFeeStr
 import { bulkAssignFees, assignFeesToStudents, assignTransportFee, assignTransportFeeToStudents, getStudentPendingFees, collectPayment, getStudentPayments, waiveLateFee, createRefund, sendFeeRemindersHandler } from "../controllers/feeCollection.controller";
 import { createRazorpayOrder, verifyRazorpayPayment, razorpayWebhook } from "../controllers/payment.controller";
 import { getPaymentReceiptPdf } from "../controllers/document.controller";
-import { assignDiscount, bulkAssignDiscount, getAllDiscounts, getStudentDiscounts, getDiscountById, toggleDiscount, deleteDiscount } from "../controllers/discount.controller";
+import { assignDiscount, bulkAssignDiscount, getAllDiscounts, getStudentDiscounts, getDiscountById, toggleDiscount, deleteDiscount, respondToDiscountApproval } from "../controllers/discount.controller";
 import { getCollectionDayBook, getDefaultersList, getClassWiseSummary, getFeeCollectionTrend, getPaymentModeBreakdown, exportDefaultersCsv } from "../controllers/feeReports.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -14,7 +14,7 @@ import {
   assignTransportFeeSchema, assignTransportFeeToStudentsSchema, createRazorpayOrderSchema, verifyRazorpayPaymentSchema,
   bulkCreateFeeStructureSchema,
 } from "../validators/fee.validator";
-import { assignDiscountSchema, bulkAssignDiscountSchema } from "../validators/discount.validator";
+import { assignDiscountSchema, bulkAssignDiscountSchema, respondToDiscountApprovalSchema } from "../validators/discount.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
@@ -89,6 +89,8 @@ router.post("/discounts", authorize(...ADMIN), validate(assignDiscountSchema), a
 router.post("/discounts/bulk", authorize(...ADMIN), validate(bulkAssignDiscountSchema), bulkAssignDiscount);
 router.patch("/discounts/:id/toggle", authorize(...ADMIN), toggleDiscount);
 router.delete("/discounts/:id", authorize(...ADMIN), deleteDiscount);
+// Sibling discount Principal-approval gate (spec Section 19)
+router.patch("/discounts/:id/respond", authorize(...ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), validate(respondToDiscountApprovalSchema), respondToDiscountApproval);
 
 // Reports
 router.get("/reports/daybook", authorize(...FINANCE), getCollectionDayBook);

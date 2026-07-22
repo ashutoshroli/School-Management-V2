@@ -28,3 +28,31 @@ export const submitHomeworkSchema = z.object({
     fileUrl: z.string().optional(),
   }),
 });
+
+
+export const gradeHomeworkSubmissionSchema = z.object({
+  body: z.object({
+    rating: z.number().int().min(1, "rating must be 1-5").max(5, "rating must be 1-5"),
+    remarks: z.string().optional(),
+  }),
+});
+
+export const raiseRecheckRequestSchema = z.object({
+  body: z.object({
+    homeworkSubmissionId: z.string().min(1, "homeworkSubmissionId is required"),
+    reason: z.string().min(1, "reason is required"),
+  }),
+});
+
+export const resolveOrEscalateRecheckRequestSchema = z.object({
+  body: z.object({
+    action: z.enum(["RESOLVE", "ESCALATE"]),
+    remarks: z.string().optional(),
+  }),
+});
+
+export const upsertRecheckEscalationConfigSchema = z.object({
+  body: z.object({
+    maxRequestsPerTeacherBeforeEscalation: z.number().int().min(1, "must be a positive whole number"),
+  }),
+});

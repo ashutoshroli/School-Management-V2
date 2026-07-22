@@ -55,7 +55,7 @@ export const getOrCreateTimetable = async (req: AuthRequest, res: Response): Pro
  */
 export const upsertSlot = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { timetableId, day, period, subjectId, teacherId, startTime, endTime, isBreak } = req.body;
+    const { timetableId, day, period, subjectId, teacherId, roomId, startTime, endTime, isBreak } = req.body;
 
     // Conflict check: same teacher at same day+period in another class
     if (teacherId && !isBreak) {
@@ -72,6 +72,33 @@ export const upsertSlot = async (req: AuthRequest, res: Response): Promise<void>
     const existing = await prisma.timetableSlot.findUnique({
       where: { timetableId_day_period: { timetableId, day, period } },
     });
+
+    // Room double-booking clash detection (spec Section 20) -
+    // branch-configurable warning-only vs hard block (Branch.
+    // roomClashMode), unlike the teacher clash above which is always a
+    // hard block. Returns a warning string alongside the successful
+    // save when in WARNING mode, or a 400 error when in BLOCK mode.
+    let roomClashWarning: string | null = null;
+    if (roomId && !isBreak) {
+      const timetableForRoomCheck = await prisma.timetable.findUnique({ where: { id: timetableId }, select: { section: { select: { branchId: true } } } });
+      const branch = timetableForRoomCheck
+        ? await prisma.branch.findUnique({ where: { id: timetableForRoomCheck.section.branchId }, select: { roomClashMode: true } })
+        : null;
+      const clashMode = branch?.roomClashMode || "WARNING";
+
+      const roomConflict = await prisma.timetableSlot.findFirst({
+        where: { day, period, roomId, timetableId: { not: timetableId }, id: existing ? { not: existing.id } : undefined },
+        include: { timetable: { include: { class: { select: { name: true } }, section: { select: { name: true } } } } },
+      });
+      if (roomConflict) {
+        const message = `Room already booked by ${roomConflict.timetable.class.name}-${roomConflict.timetable.section.name} at this time`;
+        if (clashMode === "BLOCK") {
+          sendError(res, message, 400);
+          return;
+        }
+        roomClashWarning = message;
+      }
+    }
 
     // RULE (Point 3a): a teacher may not be assigned more periods on
     // one day than their configured Staff.maxPeriodsPerDay (0/null =
@@ -108,16 +135,55 @@ export const upsertSlot = async (req: AuthRequest, res: Response): Promise<void>
     if (existing) {
       const updated = await prisma.timetableSlot.update({
         where: { id: existing.id },
-        data: { subjectId, teacherId, startTime, endTime, isBreak: isBreak || false },
+        data: { subjectId, teacherId, roomId, startTime, endTime, isBreak: isBreak || false },
       });
-      sendSuccess(res, updated, "Slot updated");
+      sendSuccess(res, { ...updated, roomClashWarning }, "Slot updated");
     } else {
       const slot = await prisma.timetableSlot.create({
-        data: { timetableId, day, period, subjectId, teacherId, startTime, endTime, isBreak: isBreak || false },
+        data: { timetableId, day, period, subjectId, teacherId, roomId, startTime, endTime, isBreak: isBreak || false },
       });
-      sendSuccess(res, slot, "Slot created", 201);
+      sendSuccess(res, { ...slot, roomClashWarning }, "Slot created", 201);
     }
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Branch-wide clash-mode / week-cycle / exam-gap-day config (spec
+ * Sections 6/20) - a thin passthrough onto the existing Branch model's
+ * fields, so the frontend has one dedicated endpoint for the
+ * Timetable settings panel instead of needing the full branch-update
+ * endpoint's broader payload.
+ */
+export const getTimetableConfig = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { branchId } = req.params;
+    if (!canAccessBranch(req, branchId)) { sendError(res, "Branch not found", 404); return; }
+    const branch = await prisma.branch.findUnique({
+      where: { id: branchId },
+      select: { roomClashMode: true, examMinGapDays: true, attendanceWeekCycleDays: true },
+    });
+    if (!branch) { sendError(res, "Branch not found", 404); return; }
+    sendSuccess(res, branch, "Timetable config fetched");
+  } catch (error) { sendError(res, "Failed to fetch timetable config", 500, (error as Error).message); }
+};
+
+export const updateTimetableConfig = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { branchId } = req.params;
+    const { roomClashMode, examMinGapDays, attendanceWeekCycleDays } = req.body;
+    if (!canAccessBranch(req, branchId)) { sendError(res, "Branch not found", 404); return; }
+
+    const updated = await prisma.branch.update({
+      where: { id: branchId },
+      data: {
+        ...(roomClashMode && { roomClashMode }),
+        ...(examMinGapDays !== undefined && { examMinGapDays }),
+        ...(attendanceWeekCycleDays !== undefined && { attendanceWeekCycleDays }),
+      },
+      select: { roomClashMode: true, examMinGapDays: true, attendanceWeekCycleDays: true },
+    });
+    sendSuccess(res, updated, "Timetable config updated");
+  } catch (error) { sendError(res, "Failed to update timetable config", 500, (error as Error).message); }
 };
 
 /**

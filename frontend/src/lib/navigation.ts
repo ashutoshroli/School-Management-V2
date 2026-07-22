@@ -359,6 +359,55 @@ export const navigation: NavItem[] = [
     icon: "Database",
     roles: ["SUPER_ADMIN", "BRANCH_ADMIN"],
   },
+  // --- New modules added per school-erp-final-spec gap analysis ---
+  {
+    label: "Branch Transfer",
+    href: "/dashboard/branch-transfer",
+    icon: "ArrowRightLeft",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN", "PRINCIPAL", "VICE_PRINCIPAL"],
+  },
+  {
+    label: "Room Bookings",
+    href: "/dashboard/room-bookings",
+    icon: "CalendarCheck",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN", "PRINCIPAL", "VICE_PRINCIPAL", "TEACHER", "STAFF", "WARDEN", "LIBRARIAN", "TRANSPORT_MANAGER", "ACCOUNTANT"],
+  },
+  {
+    label: "Mess",
+    href: "/dashboard/mess",
+    icon: "UtensilsCrossed",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN", "WARDEN", "PRINCIPAL", "VICE_PRINCIPAL"],
+  },
+  {
+    label: "Canteen",
+    href: "/dashboard/canteen",
+    icon: "Coffee",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN", "ACCOUNTANT", "STAFF"],
+  },
+  {
+    label: "Lab Management",
+    href: "/dashboard/lab",
+    icon: "FlaskConical",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN", "TEACHER", "STAFF", "PRINCIPAL", "VICE_PRINCIPAL"],
+  },
+  {
+    label: "Diesel Requests",
+    href: "/dashboard/diesel-requests",
+    icon: "Fuel",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN", "TRANSPORT_MANAGER", "ACCOUNTANT"],
+  },
+  {
+    label: "Appraisal & Increment",
+    href: "/dashboard/appraisal",
+    icon: "TrendingUp",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN", "PRINCIPAL", "VICE_PRINCIPAL"],
+  },
+  {
+    label: "Public Content",
+    href: "/dashboard/public-content",
+    icon: "Globe",
+    roles: ["SUPER_ADMIN", "BRANCH_ADMIN"],
+  },
 ];
 
 export const getNavForRole = (role: UserRole): NavItem[] => {

@@ -186,3 +186,203 @@ export const getSubmissions = async (req: AuthRequest, res: Response): Promise<v
     sendSuccess(res, submissions, "Submissions fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
+
+/**
+ * Grade a homework submission with the 1-5 rating scale (spec Section
+ * 10 - "Grading: Subject Teacher only, after the deadline - 1-5
+ * rating with remarks"). Restricted to the SUBJECT teacher (a
+ * SubjectTeacher row for this homework's subject+class, school-wide
+ * default OR class-specific - same access shape as
+ * canTeacherTeachSubjectForClass) and only once the homework's
+ * dueDate has passed; ADMIN roles are unrestricted on both counts.
+ */
+export const gradeHomeworkSubmission = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params; // HomeworkSubmission id
+    const { rating, remarks } = req.body;
+
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      sendError(res, "rating must be a whole number from 1 to 5", 400);
+      return;
+    }
+
+    const submission = await prisma.homeworkSubmission.findUnique({
+      where: { id },
+      include: { homework: true },
+    });
+    if (!submission) { sendError(res, "Submission not found", 404); return; }
+
+    const cls = await prisma.class.findUnique({ where: { id: submission.homework.classId }, select: { branchId: true } });
+    if (!cls || !canAccessBranch(req, cls.branchId)) { sendError(res, "Submission not found", 404); return; }
+
+    if (req.user!.role === UserRole.TEACHER) {
+      const staff = await prisma.staff.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+      const isAssigned = staff && await prisma.subjectTeacher.count({
+        where: { staffId: staff.id, subjectId: submission.homework.subjectId, OR: [{ classId: submission.homework.classId }, { classId: null }] },
+      }) > 0;
+      if (!isAssigned) {
+        sendError(res, "Only the subject teacher for this homework may grade it", 403);
+        return;
+      }
+    }
+
+    if (new Date() < new Date(submission.homework.dueDate)) {
+      sendError(res, "Grading is only allowed after the homework's due date has passed", 400);
+      return;
+    }
+
+    const updated = await prisma.homeworkSubmission.update({
+      where: { id },
+      data: { rating, remarks, ratedBy: req.user!.userId, ratedAt: new Date() },
+    });
+    sendSuccess(res, updated, "Submission graded");
+  } catch (error) { sendError(res, "Failed to grade submission", 500, (error as Error).message); }
+};
+
+/**
+ * Student/Parent raises a homework recheck request (spec Section 10) -
+ * always starts at CLASS_TEACHER level. Escalation to PRINCIPAL/
+ * DIRECTOR happens explicitly via escalateRecheckRequest below (driven
+ * by the configurable per-teacher threshold), not automatically here.
+ */
+export const raiseRecheckRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { homeworkSubmissionId, reason } = req.body;
+
+    const submission = await prisma.homeworkSubmission.findUnique({ where: { id: homeworkSubmissionId } });
+    if (!submission) { sendError(res, "Submission not found", 404); return; }
+
+    if (req.user!.role === UserRole.STUDENT) {
+      const student = await prisma.student.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+      if (!student || student.id !== submission.studentId) {
+        sendError(res, "You may only raise a recheck request for your own submission", 403);
+        return;
+      }
+    }
+
+    const request = await prisma.homeworkRecheckRequest.create({
+      data: { homeworkSubmissionId, studentId: submission.studentId, reason, currentLevel: "CLASS_TEACHER", status: "PENDING" },
+    });
+    sendSuccess(res, request, "Recheck request submitted to the Class Teacher", 201);
+  } catch (error) { sendError(res, "Failed to raise recheck request", 500, (error as Error).message); }
+};
+
+export const getRecheckRequests = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const level = req.query.level as string | undefined;
+    const status = req.query.status as string | undefined;
+
+    const where: any = {};
+    if (level) where.currentLevel = level;
+    if (status) where.status = status;
+
+    const requests = await prisma.homeworkRecheckRequest.findMany({
+      where,
+      include: {
+        student: { include: { user: { select: { name: true } } } },
+        submission: { include: { homework: { select: { title: true, classId: true, assignedBy: true } } } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    sendSuccess(res, requests, "Recheck requests fetched");
+  } catch (error) { sendError(res, "Failed to fetch recheck requests", 500, (error as Error).message); }
+};
+
+/**
+ * Class Teacher resolves a recheck request at their level, OR escalates
+ * it onward (spec Section 10 - "if that teacher's recheck-request
+ * count exceeds a max threshold set by Super Admin, escalate to
+ * Principal; beyond that, Director"). Escalation eligibility is
+ * computed here (this class teacher's total recheck-request count
+ * against RecheckEscalationConfig), not automatically enforced - a
+ * class teacher can still resolve a request directly even past the
+ * threshold; escalate is an explicit action for when they instead want
+ * to push it up the chain.
+ */
+export const resolveOrEscalateRecheckRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { action, remarks } = req.body; // "RESOLVE" | "ESCALATE"
+
+    const request = await prisma.homeworkRecheckRequest.findUnique({
+      where: { id },
+      include: { submission: { include: { homework: true } } },
+    });
+    if (!request) { sendError(res, "Recheck request not found", 404); return; }
+    if (request.status !== "PENDING") { sendError(res, "This request has already been resolved", 400); return; }
+
+    if (action === "RESOLVE") {
+      const fieldByLevel = {
+        CLASS_TEACHER: "classTeacherRemarks",
+        PRINCIPAL: "principalRemarks",
+        DIRECTOR: "directorRemarks",
+      } as const;
+      const updated = await prisma.homeworkRecheckRequest.update({
+        where: { id },
+        data: { status: "RESOLVED", resolvedAt: new Date(), [fieldByLevel[request.currentLevel]]: remarks },
+      });
+      sendSuccess(res, updated, "Recheck request resolved");
+      return;
+    }
+
+    // ESCALATE: CLASS_TEACHER -> PRINCIPAL -> DIRECTOR. Only allowed if
+    // this teacher's total recheck-request count exceeds the
+    // Super-Admin-configured threshold (absence of a config row means
+    // escalation is not yet enabled at all).
+    if (request.currentLevel === "DIRECTOR") {
+      sendError(res, "This request is already at the final escalation level", 400);
+      return;
+    }
+
+    if (request.currentLevel === "CLASS_TEACHER") {
+      const config = await prisma.recheckEscalationConfig.findFirst();
+      if (!config) {
+        sendError(res, "Escalation is not configured yet - ask a Super Admin to set the threshold first", 400);
+        return;
+      }
+      const teacherId = request.submission.homework.assignedBy;
+      const requestCount = await prisma.homeworkRecheckRequest.count({
+        where: { submission: { homework: { assignedBy: teacherId } } },
+      });
+      if (requestCount <= config.maxRequestsPerTeacherBeforeEscalation) {
+        sendError(res, `This teacher's recheck-request count (${requestCount}) has not exceeded the configured threshold (${config.maxRequestsPerTeacherBeforeEscalation})`, 400);
+        return;
+      }
+    }
+
+    const nextLevel = request.currentLevel === "CLASS_TEACHER" ? "PRINCIPAL" : "DIRECTOR";
+    const updated = await prisma.homeworkRecheckRequest.update({
+      where: { id },
+      data: { currentLevel: nextLevel, classTeacherRemarks: request.currentLevel === "CLASS_TEACHER" ? remarks : request.classTeacherRemarks },
+    });
+    sendSuccess(res, updated, `Escalated to ${nextLevel}`);
+  } catch (error) { sendError(res, "Failed to resolve/escalate recheck request", 500, (error as Error).message); }
+};
+
+/**
+ * Super-Admin-configurable escalation threshold (spec Section 10).
+ * Single-row upsert, same convention as other system-wide config
+ * models in this codebase (GradeSystem, LeaveType).
+ */
+export const upsertRecheckEscalationConfig = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { maxRequestsPerTeacherBeforeEscalation } = req.body;
+    const existing = await prisma.recheckEscalationConfig.findFirst();
+    const config = existing
+      ? await prisma.recheckEscalationConfig.update({
+          where: { id: existing.id },
+          data: { maxRequestsPerTeacherBeforeEscalation, updatedBy: req.user!.userId },
+        })
+      : await prisma.recheckEscalationConfig.create({
+          data: { maxRequestsPerTeacherBeforeEscalation, updatedBy: req.user!.userId },
+        });
+    sendSuccess(res, config, "Recheck escalation threshold saved");
+  } catch (error) { sendError(res, "Failed to save escalation config", 500, (error as Error).message); }
+};
+
+export const getRecheckEscalationConfig = async (_req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const config = await prisma.recheckEscalationConfig.findFirst();
+    sendSuccess(res, config, "Recheck escalation config fetched");
+  } catch (error) { sendError(res, "Failed to fetch escalation config", 500, (error as Error).message); }
+};

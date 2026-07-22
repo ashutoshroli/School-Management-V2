@@ -51,6 +51,16 @@ const makeMockTx = () => {
     branch: {
       findUnique: jest.fn().mockResolvedValue({ code: "MAIN" }),
     },
+    // Backs the 3-day late-fee grace period lookup (spec Section 19)
+    // inside recordFeePayment() - only ever queried when
+    // feeStructure.lateFeeType !== "NONE"; defaults to null here (no
+    // FeeCategory row found), which recordFeePayment treats as "use
+    // the spec's default of 3 grace days" - matching this suite's
+    // existing lateFeeType: "FIXED" test cases below without needing
+    // per-test setup.
+    feeCategory: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     payment: {
       count: jest.fn().mockResolvedValue(payments.length),
       create: jest.fn().mockImplementation(({ data }) => {
@@ -259,8 +269,14 @@ describe("recalculateFeeAssignmentDiscount", () => {
 
     await recalculateFeeAssignmentDiscount(tx, "fa-1");
 
+    // Sibling discount requires manual Principal approval (spec
+    // Section 19) - the query now also filters to approvalStatus:
+    // "APPROVED" (every non-SIBLING discount defaults to APPROVED at
+    // creation, so this is a no-op filter for the fixed-amount
+    // discount this test exercises, but the query shape itself
+    // changed).
     expect(tx.studentDiscount.findMany).toHaveBeenCalledWith({
-      where: { feeAssignmentId: "fa-1", isActive: true },
+      where: { feeAssignmentId: "fa-1", isActive: true, approvalStatus: "APPROVED" },
       select: { value: true, isPercent: true },
     });
     expect(tx.feeAssignment.update).toHaveBeenCalledWith({ where: { id: "fa-1" }, data: { discount: 150 } });

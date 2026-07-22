@@ -1,21 +1,25 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
 import { markAttendance, bulkMarkAttendance, cardTapAttendance, getAttendanceCalendar, getDateAttendance, selfMarkAttendance, getStaffAttendanceReport, exportStaffAttendanceReportCsv } from "../controllers/staffAttendance.controller";
-import { getLeaveTypes, getLeaveTypeById, applyLeave, getLeaveApplications, updateLeaveStatus, bulkUpdateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType } from "../controllers/leave.controller";
+import { getLeaveTypes, getLeaveTypeById, applyLeave, getLeaveApplications, updateLeaveStatus, bulkUpdateLeaveStatus, getLeaveBalance, createLeaveType, updateLeaveType, deleteLeaveType, advanceLeaveApproval, assignSubstituteTeacher, suggestSubstituteTeachers } from "../controllers/leave.controller";
 import { upsertSalaryStructure, bulkAssignSalaryStructure, assignSalaryStructureToStaff, getSalaryStructure, runPayroll, getPayslips, approvePayslip, markPaid, getStaffPayslip, getPayslipPdf } from "../controllers/payroll.controller";
 import { getHolidays, createHoliday, deleteHoliday } from "../controllers/holiday.controller";
 import { createJobVacancy, getJobVacancies, updateJobVacancy, deleteJobVacancy, getJobApplications, updateJobApplicationStatus } from "../controllers/jobVacancy.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { markStaffAttendanceSchema, bulkMarkStaffAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
-import { applyLeaveSchema, updateLeaveStatusSchema, bulkUpdateLeaveStatusSchema, createLeaveTypeSchema, updateLeaveTypeSchema } from "../validators/leave.validator";
+import { applyLeaveSchema, updateLeaveStatusSchema, bulkUpdateLeaveStatusSchema, createLeaveTypeSchema, updateLeaveTypeSchema, advanceLeaveApprovalSchema, assignSubstituteTeacherSchema } from "../validators/leave.validator";
 import { upsertSalaryStructureSchema, bulkAssignSalaryStructureSchema, assignSalaryStructureToStaffSchema, runPayrollSchema } from "../validators/payroll.validator";
 import { createHolidaySchema } from "../validators/holiday.validator";
 import { createJobVacancySchema, updateJobVacancySchema, updateJobApplicationStatusSchema } from "../validators/jobVacancy.validator";
 
 const router = Router();
 const ADMIN = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN];
-const STAFF_ROLES = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.TEACHER, UserRole.ACCOUNTANT, UserRole.LIBRARIAN, UserRole.TRANSPORT_MANAGER, UserRole.WARDEN, UserRole.STAFF];
+const STAFF_ROLES = [UserRole.SUPER_ADMIN, UserRole.BRANCH_ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL, UserRole.TEACHER, UserRole.ACCOUNTANT, UserRole.LIBRARIAN, UserRole.TRANSPORT_MANAGER, UserRole.WARDEN, UserRole.STAFF];
+// Leave-approval-chain actors (spec Section 7: Staff -> VP -> Principal
+// -> Director) - VP/Principal advance the chain, ADMIN (Director) can
+// always act too as the top of the chain / override.
+const LEAVE_APPROVERS = [...ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL];
 
 // ===== STAFF ATTENDANCE =====
 router.post("/attendance/mark", authenticate, authorize(...ADMIN), validate(markStaffAttendanceSchema), markAttendance);
@@ -43,6 +47,12 @@ router.get("/leave/applications", authenticate, getLeaveApplications);
 router.patch("/leave/:id/status", authenticate, authorize(...ADMIN), validate(updateLeaveStatusSchema), updateLeaveStatus);
 router.patch("/leave/status/bulk", authenticate, authorize(...ADMIN), validate(bulkUpdateLeaveStatusSchema), bulkUpdateLeaveStatus);
 router.get("/leave/balance/:staffId", authenticate, getLeaveBalance);
+// 2-level approval chain (spec Section 7) - VP/Principal advance an
+// application through its chain; ADMIN (Director) can act at any
+// level as an override/top-of-chain authority.
+router.patch("/leave/:id/advance", authenticate, authorize(...LEAVE_APPROVERS), validate(advanceLeaveApprovalSchema), advanceLeaveApproval);
+router.post("/leave/substitute", authenticate, authorize(...LEAVE_APPROVERS), validate(assignSubstituteTeacherSchema), assignSubstituteTeacher);
+router.get("/leave/substitute/suggest", authenticate, authorize(...LEAVE_APPROVERS), suggestSubstituteTeachers);
 
 // ===== PAYROLL =====
 router.post("/salary-structure", authenticate, authorize(...ADMIN), validate(upsertSalaryStructureSchema), upsertSalaryStructure);

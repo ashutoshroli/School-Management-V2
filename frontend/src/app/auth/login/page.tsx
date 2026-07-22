@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login, loginWithGoogle } = useAuth();
@@ -20,7 +21,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await login(email, password);
+      await login(email, password, rememberMe);
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.response?.data?.message || "Login failed. Please try again.");
@@ -89,8 +90,17 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Forgot Password */}
-            <div className="text-right">
+            {/* Remember Me + Forgot Password */}
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                Remember Me
+              </label>
               <a href="/auth/forgot-password" className="text-sm text-primary-600 hover:text-primary-700">
                 Forgot password?
               </a>

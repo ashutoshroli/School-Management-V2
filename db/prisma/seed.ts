@@ -37,6 +37,13 @@ async function main() {
       role: UserRole.SUPER_ADMIN,
       organizationId: org.id,
       isActive: true,
+      // Global bypass flag (spec Section 3) - every Super Admin
+      // defaults to true so this account behaves exactly as every
+      // Super Admin always has (unconditional access via
+      // canAccessBranch/authorize); see the User model's doc comment
+      // in schema.prisma for the restricted-Super-Admin use case this
+      // flag exists for.
+      bypassAllChecks: true,
     },
   });
   console.log("Super Admin created:", superAdmin.email);

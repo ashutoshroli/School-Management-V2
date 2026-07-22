@@ -1,6 +1,8 @@
 export type UserRole =
   | "SUPER_ADMIN"
   | "BRANCH_ADMIN"
+  | "PRINCIPAL"
+  | "VICE_PRINCIPAL"
   | "TEACHER"
   | "ACCOUNTANT"
   | "LIBRARIAN"
@@ -44,7 +46,7 @@ export interface AuthState {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   loginWithGoogle: () => void;
   logout: () => void;
   setAuth: (user: User, token: string) => void;

@@ -94,10 +94,26 @@ describe("discount.controller - assignDiscount", () => {
     await assignDiscount(req, res);
 
     expect(res.status).toHaveBeenCalledWith(201);
+    // Sibling discount requires manual Principal approval (spec
+    // Section 19) - starts PENDING, not immediately APPROVED/active
+    // in effect (see recalculateFeeAssignmentDiscount's own filter).
     expect(prisma.studentDiscount.create).toHaveBeenCalledWith({
-      data: { studentId: "s1", feeAssignmentId: "fa-1", type: "SIBLING", name: "Sibling Discount", value: 10, isPercent: true, isActive: true },
+      data: { studentId: "s1", feeAssignmentId: "fa-1", type: "SIBLING", name: "Sibling Discount", value: 10, isPercent: true, isActive: true, approvalStatus: "PENDING" },
     });
     expect(recalculateFeeAssignmentDiscount).toHaveBeenCalledWith(prisma, "fa-1");
+  });
+
+  it("spec Section 19: a non-SIBLING discount (e.g. MERIT_SCHOLARSHIP) is still auto-APPROVED, unchanged from before", async () => {
+    (prisma.student.findUnique as jest.Mock).mockResolvedValue({ branchId: "branch-1" });
+    (prisma.feeAssignment.findUnique as jest.Mock).mockResolvedValue({ studentId: "s1" });
+    (prisma.studentDiscount.create as jest.Mock).mockResolvedValue({ id: "d1" });
+    const req = makeReq({ body: { studentId: "s1", feeAssignmentId: "fa-1", type: "MERIT_SCHOLARSHIP", name: "Merit Scholarship", value: 20, isPercent: true } });
+    const res = makeMockRes();
+
+    await assignDiscount(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect((prisma.studentDiscount.create as jest.Mock).mock.calls[0][0].data.approvalStatus).toBe("APPROVED");
   });
 });
 

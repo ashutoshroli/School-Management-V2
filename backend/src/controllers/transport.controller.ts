@@ -65,7 +65,7 @@ export const getRoutes = async (req: AuthRequest, res: Response): Promise<void> 
 
 export const addStop = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { routeId, name, order, time } = req.body;
+    const { routeId, name, order, time, distanceFromStartKm, monthlyFeeOverride } = req.body;
 
     // SECURITY: this had NO branch-access check at all - the same IDOR
     // class of bug already fixed on createRoute/addVehicle above (and
@@ -76,9 +76,32 @@ export const addStop = async (req: AuthRequest, res: Response): Promise<void> =>
     if (!route) { sendError(res, "Route not found", 404); return; }
     if (!canAccessBranch(req, route.branchId)) { sendError(res, "Route not found", 404); return; }
 
-    const stop = await prisma.transportStop.create({ data: { routeId, name, order, time } });
+    // Stop-wise / distance-wise fee (spec Section 11) - both optional,
+    // backward compatible with the flat TransportRoute.monthlyFee.
+    const stop = await prisma.transportStop.create({ data: { routeId, name, order, time, distanceFromStartKm, monthlyFeeOverride } });
     sendSuccess(res, stop, "Stop added", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Resolves the actual monthly transport fee for a student allocated to
+ * a specific stop (spec Section 19/11 - "Fee: stop-wise / distance-
+ * wise, not flat") - a stop's own monthlyFeeOverride wins if set,
+ * otherwise falls back to the route's flat monthlyFee. Exposed as its
+ * own endpoint so the fee-assignment flow (assignTransportFee,
+ * feeCollection.controller.ts) can call it instead of always reading
+ * TransportRoute.monthlyFee directly.
+ */
+export const getEffectiveStopFee = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { stopId } = req.params;
+    const stop = await prisma.transportStop.findUnique({ where: { id: stopId }, include: { route: true } });
+    if (!stop) { sendError(res, "Stop not found", 404); return; }
+    if (!canAccessBranch(req, stop.route.branchId)) { sendError(res, "Stop not found", 404); return; }
+
+    const effectiveFee = stop.monthlyFeeOverride ?? stop.route.monthlyFee;
+    sendSuccess(res, { stopId, effectiveFee }, "Effective stop fee resolved");
+  } catch (error) { sendError(res, "Failed to resolve stop fee", 500, (error as Error).message); }
 };
 
 export const allocateStudent = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -223,7 +246,7 @@ export const getVehicleById = async (req: AuthRequest, res: Response): Promise<v
 
 export const addVehicle = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { vehicleNo, type, capacity, driverName, driverPhone, driverLicense } = req.body;
+    const { vehicleNo, type, capacity, driverName, driverPhone, driverLicense, ownership, monthlyFixedFee, perKmRate } = req.body;
     // BUG FIX + SECURITY: same as createRoute above - no branch-picker
     // in the "Add Vehicle" form, and no canAccessBranch check existed.
     const branchId = resolveEffectiveBranchId(req, req.body.branchId);
@@ -237,9 +260,110 @@ export const addVehicle = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    const vehicle = await prisma.vehicle.create({ data: { branchId, vehicleNo, type, capacity, driverName, driverPhone, driverLicense, isActive: true } });
+    // Own vs Rented (spec Section 11) - monthlyFixedFee/perKmRate are
+    // only meaningful for RENTED vehicles, ignored otherwise.
+    const vehicle = await prisma.vehicle.create({
+      data: {
+        branchId, vehicleNo, type, capacity, driverName, driverPhone, driverLicense, isActive: true,
+        ownership: ownership || "OWN",
+        ...(ownership === "RENTED" && { monthlyFixedFee, perKmRate }),
+      },
+    });
     sendSuccess(res, vehicle, "Vehicle added", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Live GPS location update (spec Section 11 - "GPS tracking: required,
+ * live location"). Called by whatever GPS device/app integration
+ * reports in for this vehicle; no auth-role restriction beyond a valid
+ * vehicle lookup, since a GPS tracker device itself can't hold a staff
+ * login (mirrors AttendanceDevice's API-key-based, not staff-login-
+ * based, write pattern - though this endpoint is simpler and doesn't
+ * yet have its own per-device API key, a possible future hardening
+ * step).
+ */
+export const updateVehicleLocation = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { lat, lng } = req.body;
+
+    const vehicle = await prisma.vehicle.findUnique({ where: { id } });
+    if (!vehicle) { sendError(res, "Vehicle not found", 404); return; }
+
+    const updated = await prisma.vehicle.update({
+      where: { id },
+      data: { lastLat: lat, lastLng: lng, lastLocationAt: new Date() },
+    });
+    sendSuccess(res, updated, "Location updated");
+  } catch (error) { sendError(res, "Failed to update location", 500, (error as Error).message); }
+};
+
+export const getVehicleLocations = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    const vehicles = await prisma.vehicle.findMany({
+      where: { branchId, isActive: true },
+      select: { id: true, vehicleNo: true, lastLat: true, lastLng: true, lastLocationAt: true },
+    });
+    sendSuccess(res, vehicles, "Vehicle locations fetched");
+  } catch (error) { sendError(res, "Failed to fetch vehicle locations", 500, (error as Error).message); }
+};
+
+/**
+ * Fuel/maintenance log entry (spec Section 11 - "both Own and Rented
+ * vehicle types get a full management system"). Non-diesel-request
+ * maintenance events (service, repair, tyre change, etc); diesel cost
+ * for RENTED vehicles specifically flows through the DieselRequest
+ * approval chain instead (see diesel.controller.ts).
+ */
+export const logVehicleMaintenance = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { vehicleId, type, cost, odometerReading, notes } = req.body;
+    const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId } });
+    if (!vehicle) { sendError(res, "Vehicle not found", 404); return; }
+    if (!canAccessBranch(req, vehicle.branchId)) { sendError(res, "Vehicle not found", 404); return; }
+
+    const log = await prisma.vehicleMaintenanceLog.create({
+      data: { vehicleId, type, cost, odometerReading, notes, loggedBy: req.user!.userId },
+    });
+    sendSuccess(res, log, "Maintenance log recorded", 201);
+  } catch (error) { sendError(res, "Failed to log maintenance", 500, (error as Error).message); }
+};
+
+export const getVehicleMaintenanceLogs = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { vehicleId } = req.params;
+    const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId } });
+    if (!vehicle) { sendError(res, "Vehicle not found", 404); return; }
+    if (!canAccessBranch(req, vehicle.branchId)) { sendError(res, "Vehicle not found", 404); return; }
+
+    const logs = await prisma.vehicleMaintenanceLog.findMany({ where: { vehicleId }, orderBy: { loggedAt: "desc" } });
+    sendSuccess(res, logs, "Maintenance logs fetched");
+  } catch (error) { sendError(res, "Failed to fetch maintenance logs", 500, (error as Error).message); }
+};
+
+/**
+ * Transport In-charge sets the route's measured distance;
+ * dieselDistanceOverride lets the Transport Manager separately
+ * fix/override just the distance used for diesel calculations (spec
+ * Section 11).
+ */
+export const setRouteDistance = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { distance, dieselDistanceOverride } = req.body;
+
+    const route = await prisma.transportRoute.findUnique({ where: { id } });
+    if (!route) { sendError(res, "Route not found", 404); return; }
+    if (!canAccessBranch(req, route.branchId)) { sendError(res, "Route not found", 404); return; }
+
+    const updated = await prisma.transportRoute.update({
+      where: { id },
+      data: { ...(distance !== undefined && { distance }), ...(dieselDistanceOverride !== undefined && { dieselDistanceOverride }) },
+    });
+    sendSuccess(res, updated, "Route distance updated");
+  } catch (error) { sendError(res, "Failed to update route distance", 500, (error as Error).message); }
 };
 
 /**

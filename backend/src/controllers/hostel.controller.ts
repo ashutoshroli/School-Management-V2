@@ -399,3 +399,241 @@ export const getOccupancy = async (req: AuthRequest, res: Response): Promise<voi
     sendSuccess(res, buildings, "Occupancy fetched");
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
+
+/**
+ * Student self-service bed request (spec Section 13): the request flow
+ * differs based on the target room's current state.
+ *  - EMPTY room -> auto-allotted immediately, but PROVISIONAL until
+ *    the room's allotmentCutoffDate passes and the Warden finalizes it
+ *    (see finalizeHostelAllotments below).
+ *  - OCCUPIED room -> goes to the existing roommate first via a
+ *    HostelRoomRequest; only auto-allotted if/when they approve (see
+ *    respondToRoomRequest below).
+ */
+export const requestBed = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { studentId, roomId } = req.body;
+
+    const room = await prisma.hostelRoom.findUnique({ where: { id: roomId }, include: { floor: { include: { building: true } }, allocations: { where: { endDate: null } } } });
+    if (!room) { sendError(res, "Room not found", 404); return; }
+    if (!canAccessBranch(req, room.floor.building.branchId)) { sendError(res, "Room not found", 404); return; }
+
+    const student = await prisma.student.findUnique({ where: { id: studentId } });
+    if (!student || student.branchId !== room.floor.building.branchId) {
+      sendError(res, "Student not found in this branch", 404);
+      return;
+    }
+
+    const existingAllocation = await prisma.hostelAllocation.findUnique({ where: { studentId } });
+    if (existingAllocation && !existingAllocation.endDate) {
+      sendError(res, "This student already has an active room allocation", 400);
+      return;
+    }
+
+    if (room.occupied >= room.capacity) {
+      sendError(res, "Room is already full", 400);
+      return;
+    }
+
+    if (room.occupied === 0) {
+      // Empty room: auto-allot, provisional until the Warden's cutoff
+      // date has been set and passed / Warden finalizes.
+      const alloc = await prisma.hostelAllocation.upsert({
+        where: { studentId },
+        update: { roomId, startDate: new Date(), endDate: null, isProvisional: true },
+        create: { studentId, roomId, startDate: new Date(), isProvisional: true },
+      });
+      await prisma.hostelRoom.update({ where: { id: roomId }, data: { occupied: { increment: 1 } } });
+      sendSuccess(res, alloc, "Room auto-allotted (provisional until Warden finalizes)", 201);
+      return;
+    }
+
+    // Occupied room: ask the existing roommate first.
+    const existingRoommateId = room.allocations[0].studentId;
+    const request = await prisma.hostelRoomRequest.create({
+      data: { studentId, roomId, existingRoommateId, status: "PENDING" },
+    });
+    sendSuccess(res, request, "Request sent to the current roommate for approval", 201);
+  } catch (error) {
+    sendError(res, "Failed to request bed", 500, (error as Error).message);
+  }
+};
+
+/**
+ * The existing roommate approves/rejects a new student's request to
+ * join their occupied room (spec Section 13). Approval auto-allots
+ * the requesting student; rejection leaves them to pick a different
+ * suggested room / custom selection (see getSuggestedRooms below).
+ */
+export const respondToRoomRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { decision } = req.body; // "APPROVE" | "REJECT"
+
+    const request = await prisma.hostelRoomRequest.findUnique({ where: { id }, include: { room: { include: { floor: { include: { building: true } } } } } });
+    if (!request) { sendError(res, "Room request not found", 404); return; }
+    if (request.status !== "PENDING") { sendError(res, "This request has already been decided", 400); return; }
+
+    // Only the existing roommate themselves (or branch staff/warden as
+    // an override) may respond.
+    const roommate = await prisma.student.findUnique({ where: { id: request.existingRoommateId }, select: { userId: true } });
+    const isRoommate = roommate?.userId === req.user!.userId;
+    const isStaffOverride = canAccessBranch(req, request.room.floor.building.branchId) && req.user!.role !== "STUDENT" && req.user!.role !== "PARENT";
+    if (!isRoommate && !isStaffOverride) {
+      sendError(res, "Only the current roommate (or hostel staff) can respond to this request", 403);
+      return;
+    }
+
+    if (decision === "REJECT") {
+      const updated = await prisma.hostelRoomRequest.update({ where: { id }, data: { status: "REJECTED", respondedAt: new Date() } });
+      sendSuccess(res, updated, "Request rejected - the student can pick a different room");
+      return;
+    }
+
+    const room = await prisma.hostelRoom.findUnique({ where: { id: request.roomId } });
+    if (!room || room.occupied >= room.capacity) {
+      sendError(res, "Room is no longer available", 400);
+      return;
+    }
+
+    await prisma.$transaction([
+      prisma.hostelRoomRequest.update({ where: { id }, data: { status: "APPROVED", respondedAt: new Date() } }),
+      prisma.hostelAllocation.upsert({
+        where: { studentId: request.studentId },
+        update: { roomId: request.roomId, startDate: new Date(), endDate: null, isProvisional: false },
+        create: { studentId: request.studentId, roomId: request.roomId, startDate: new Date(), isProvisional: false },
+      }),
+      prisma.hostelRoom.update({ where: { id: request.roomId }, data: { occupied: { increment: 1 } } }),
+    ]);
+
+    sendSuccess(res, null, "Request approved - student allotted to the room");
+  } catch (error) {
+    sendError(res, "Failed to respond to room request", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Next-suggested-available-room list for a student whose roommate
+ * request was rejected (spec Section 13 - "shown next suggested
+ * available room + can do custom room selection"). Custom selection
+ * itself is just calling requestBed again with a hand-picked roomId;
+ * this endpoint only powers the "suggested" part.
+ */
+export const getSuggestedRooms = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    if (!branchId) { sendError(res, "Branch ID required", 400); return; }
+
+    // Prisma has no portable column-to-column ("occupied < capacity")
+    // comparison in a `where` clause (same limitation noted in
+    // inventory.controller.ts's getLowStockAlerts) - fetch candidate
+    // rooms ordered by occupancy and filter in JS instead.
+    const candidateRooms = await prisma.hostelRoom.findMany({
+      where: { floor: { building: { branchId } } },
+      include: { floor: { include: { building: { select: { name: true, type: true } } } } },
+      orderBy: [{ occupied: "asc" }, { roomNo: "asc" }],
+    });
+    const rooms = candidateRooms.filter((r) => r.occupied < r.capacity).slice(0, 10);
+    sendSuccess(res, rooms, "Suggested available rooms fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch suggested rooms", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Warden sets/publishes the provisional-allotment cutoff date for a
+ * room (spec Section 13).
+ */
+export const setAllotmentCutoff = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params; // roomId
+    const { cutoffDate } = req.body;
+
+    const room = await prisma.hostelRoom.findUnique({ where: { id }, include: { floor: { include: { building: true } } } });
+    if (!room) { sendError(res, "Room not found", 404); return; }
+    if (!canAccessBranch(req, room.floor.building.branchId)) { sendError(res, "Room not found", 404); return; }
+
+    const updated = await prisma.hostelRoom.update({ where: { id }, data: { allotmentCutoffDate: new Date(cutoffDate) } });
+    sendSuccess(res, updated, "Allotment cutoff date set");
+  } catch (error) {
+    sendError(res, "Failed to set allotment cutoff", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Warden finalizes ALL provisional allotments in a building (spec
+ * Section 13 - "Final allotment list published only after Warden
+ * completes all approvals"). The Warden can also modify/override
+ * individual allotments (via allocateRoom/deallocateRoom, unchanged)
+ * before or after finalizing.
+ */
+export const finalizeHostelAllotments = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { buildingId } = req.body;
+
+    const building = await prisma.hostelBuilding.findUnique({ where: { id: buildingId } });
+    if (!building) { sendError(res, "Building not found", 404); return; }
+    if (!canAccessBranch(req, building.branchId)) { sendError(res, "Building not found", 404); return; }
+
+    const result = await prisma.hostelAllocation.updateMany({
+      where: { isProvisional: true, room: { floor: { buildingId } } },
+      data: { isProvisional: false, finalizedBy: req.user!.userId, finalizedAt: new Date() },
+    });
+
+    sendSuccess(res, { finalized: result.count }, `${result.count} provisional allotment(s) finalized and published`);
+  } catch (error) {
+    sendError(res, "Failed to finalize allotments", 500, (error as Error).message);
+  }
+};
+
+/**
+ * RFID in/out tap for hostel entry/exit (spec Section 13) - presence
+ * is derived from the LAST tap: an "in" with no subsequent "out" means
+ * currently present/inside. Logs every tap to HostelTapEvent (full
+ * history) and keeps HostelAllocation's denormalized
+ * lastTapDirection/lastTapAt/isCurrentlyIn in sync for fast "who's in
+ * right now" queries.
+ */
+export const hostelTap = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { studentId, direction, deviceId } = req.body; // direction: "IN" | "OUT"
+
+    const allocation = await prisma.hostelAllocation.findUnique({ where: { studentId } });
+    if (!allocation || allocation.endDate) {
+      sendError(res, "This student has no active hostel room allocation", 404); return;
+    }
+
+    await prisma.$transaction([
+      prisma.hostelTapEvent.create({ data: { allocationId: allocation.id, direction, deviceId } }),
+      prisma.hostelAllocation.update({
+        where: { id: allocation.id },
+        data: { lastTapDirection: direction, lastTapAt: new Date(), isCurrentlyIn: direction === "IN" },
+      }),
+    ]);
+
+    sendSuccess(res, { direction }, `Tap recorded - student is now ${direction === "IN" ? "inside" : "outside"} the hostel`);
+  } catch (error) {
+    sendError(res, "Failed to record hostel tap", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Who's currently in the hostel (derived from each allocation's
+ * denormalized isCurrentlyIn, kept in sync by hostelTap above) -
+ * useful for a Warden's live roster view.
+ */
+export const getCurrentlyInHostel = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const branchId = resolveBranchId(req);
+    if (!branchId) { sendError(res, "Branch ID required", 400); return; }
+
+    const allocations = await prisma.hostelAllocation.findMany({
+      where: { endDate: null, isCurrentlyIn: true, room: { floor: { building: { branchId } } } },
+      include: { student: { include: { user: { select: { name: true } } } }, room: { select: { roomNo: true } } },
+      orderBy: { lastTapAt: "desc" },
+    });
+    sendSuccess(res, allocations, "Currently-in-hostel list fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch currently-in list", 500, (error as Error).message);
+  }
+};

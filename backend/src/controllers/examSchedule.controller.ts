@@ -335,6 +335,73 @@ export const updateExamScheduleEntry = async (req: AuthRequest, res: Response): 
 };
 
 /**
+ * Invigilator duty assignment (spec Section 20 - "Invigilator clash
+ * auto-check required: system prevents/flags a teacher from being
+ * double-assigned to exam duty"). Checks for a time-overlapping
+ * assignment for the SAME staff member across every OTHER exam
+ * schedule (not just this one) on the same date - the DB-level
+ * @@unique([examScheduleId, staffId]) only stops a duplicate on the
+ * exact same sitting, so this catches the more realistic
+ * "double-booked at the same time across two different rooms" case.
+ */
+export const assignInvigilator = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { examScheduleId, staffId } = req.body;
+
+    const schedule = await prisma.examSchedule.findUnique({
+      where: { id: examScheduleId },
+      include: { exam: { include: { class: { select: { branchId: true } } } } },
+    });
+    if (!schedule) { sendError(res, "Exam schedule not found", 404); return; }
+    if (!canAccessBranch(req, schedule.exam.class.branchId)) { sendError(res, "Exam schedule not found", 404); return; }
+
+    const dateKey = schedule.examDate.toISOString().slice(0, 10);
+    const sameDaySchedules = await prisma.examSchedule.findMany({
+      where: { examDate: schedule.examDate, id: { not: examScheduleId } },
+      select: { id: true, startTime: true, endTime: true, subject: { select: { name: true } } },
+    });
+
+    const existingDuties = await prisma.examInvigilator.findMany({
+      where: { staffId, examScheduleId: { in: sameDaySchedules.map((s) => s.id) } },
+      include: { examSchedule: { select: { id: true, startTime: true, endTime: true, subject: { select: { name: true } } } } },
+    });
+
+    for (const duty of existingDuties) {
+      if (rangesOverlap(toMinutes(schedule.startTime), toMinutes(schedule.endTime), toMinutes(duty.examSchedule.startTime), toMinutes(duty.examSchedule.endTime))) {
+        sendError(res, `Clash: this teacher is already assigned as invigilator for ${duty.examSchedule.subject.name} at an overlapping time on ${dateKey}`, 400);
+        return;
+      }
+    }
+
+    const assignment = await prisma.examInvigilator.upsert({
+      where: { examScheduleId_staffId: { examScheduleId, staffId } },
+      update: {},
+      create: { examScheduleId, staffId },
+    });
+    sendSuccess(res, assignment, "Invigilator assigned", 201);
+  } catch (error) { sendError(res, "Failed to assign invigilator", 500, (error as Error).message); }
+};
+
+export const removeInvigilator = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { examScheduleId, staffId } = req.params;
+    await prisma.examInvigilator.delete({ where: { examScheduleId_staffId: { examScheduleId, staffId } } });
+    sendSuccess(res, null, "Invigilator removed");
+  } catch (error) { sendError(res, "Failed to remove invigilator", 500, (error as Error).message); }
+};
+
+export const getInvigilators = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { examScheduleId } = req.params;
+    const invigilators = await prisma.examInvigilator.findMany({
+      where: { examScheduleId },
+      include: { staff: { include: { user: { select: { name: true } } } } },
+    });
+    sendSuccess(res, invigilators, "Invigilators fetched");
+  } catch (error) { sendError(res, "Failed to fetch invigilators", 500, (error as Error).message); }
+};
+
+/**
  * Deletes a single schedule entry. Blocked once any question paper has
  * been uploaded against it, or any exam attendance/seat allocation
  * exists - all real workflow state that must not silently disappear.

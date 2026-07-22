@@ -34,15 +34,54 @@ export const assignDiscount = async (req: AuthRequest, res: Response): Promise<v
       return;
     }
 
+    // Sibling discount requires manual Principal approval (spec
+    // Section 19) - starts PENDING and only reduces the fee once
+    // approved (see recalculateFeeAssignmentDiscount's filter). Every
+    // other discount type is auto-APPROVED, unchanged from before.
+    const approvalStatus = type === "SIBLING" ? "PENDING" : "APPROVED";
+
     const discount = await prisma.studentDiscount.create({
-      data: { studentId, feeAssignmentId, type, name, value, isPercent: isPercent || false, isActive: true },
+      data: { studentId, feeAssignmentId, type, name, value, isPercent: isPercent || false, isActive: true, approvalStatus },
     });
 
     await recalculateFeeAssignmentDiscount(prisma, feeAssignmentId);
 
-    sendSuccess(res, discount, "Discount assigned", 201);
+    sendSuccess(res, discount, approvalStatus === "PENDING" ? "Sibling discount requested - pending Principal approval" : "Discount assigned", 201);
   } catch (error) {
     sendError(res, "Failed to assign discount", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Principal approves/rejects a PENDING sibling discount request (spec
+ * Section 19). Restricted at the route level to PRINCIPAL/ADMIN roles.
+ */
+export const respondToDiscountApproval = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { decision } = req.body; // "APPROVE" | "REJECT"
+
+    const discount = await prisma.studentDiscount.findUnique({ where: { id }, include: { student: { select: { branchId: true } } } });
+    if (!discount) { sendError(res, "Discount not found", 404); return; }
+    if (!canAccessBranch(req, discount.student.branchId)) { sendError(res, "Discount not found", 404); return; }
+    if (discount.approvalStatus !== "PENDING") { sendError(res, "This discount has already been decided", 400); return; }
+
+    const updated = await prisma.studentDiscount.update({
+      where: { id },
+      data: {
+        approvalStatus: decision === "APPROVE" ? "APPROVED" : "REJECTED",
+        approvedBy: req.user!.userId,
+        approvedAt: new Date(),
+      },
+    });
+
+    if (updated.feeAssignmentId) {
+      await recalculateFeeAssignmentDiscount(prisma, updated.feeAssignmentId);
+    }
+
+    sendSuccess(res, updated, `Sibling discount ${decision === "APPROVE" ? "approved" : "rejected"}`);
+  } catch (error) {
+    sendError(res, "Failed to respond to discount approval", 500, (error as Error).message);
   }
 };
 

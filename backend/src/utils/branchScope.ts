@@ -67,7 +67,17 @@ export const canAccessBranch = (
   req: AuthRequest,
   resourceBranchId?: string | null
 ): boolean => {
-  if (req.user?.role === UserRole.SUPER_ADMIN) return true;
+  // Global bypass flag (spec Section 3) - a SUPER_ADMIN whose account
+  // has bypassAllChecks explicitly set to false is NOT auto-granted
+  // access here; every other SUPER_ADMIN (bypassAllChecks true/absent,
+  // i.e. every account created before this flag existed) keeps the
+  // original unconditional-access behavior. `bypassAllChecks` defaults
+  // to `true` for new Super Admins at creation time (see
+  // auth.controller.ts's login()/googleCallback(), which copy
+  // User.bypassAllChecks into the JWT) so this is fully backward
+  // compatible - only an account explicitly toggled off ever sees a
+  // real branch check.
+  if (req.user?.role === UserRole.SUPER_ADMIN && req.user?.bypassAllChecks !== false) return true;
   if (!resourceBranchId) return false;
   return resourceBranchId === req.user?.branchId;
 };

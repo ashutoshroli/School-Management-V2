@@ -40,19 +40,32 @@ export const getPublicBranchList = async (_req: Request, res: Response): Promise
 export const createAdmissionInquiry = async (req: Request, res: Response): Promise<void> => {
   try {
     const {
-      branchId, studentName, dateOfBirth, gender, classAppliedFor,
+      branchId, branchPriorityIds, studentName, dateOfBirth, gender, classAppliedFor,
       parentName, parentEmail, parentPhone, address, previousSchool, message,
     } = req.body;
 
-    const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true, isActive: true } });
-    if (!branch || !branch.isActive) {
-      sendError(res, "Invalid branch", 400);
+    // Multi-branch checklist with priority-order cascading (spec
+    // Section 21) - branchPriorityIds is the applicant's full ordered
+    // selection; branchId (kept for backward compatibility with any
+    // existing single-branch caller) is used as a length-1 fallback
+    // when branchPriorityIds is omitted. The FIRST branch in the list
+    // is where the inquiry actually starts.
+    const priorityList: string[] = Array.isArray(branchPriorityIds) && branchPriorityIds.length > 0
+      ? branchPriorityIds
+      : [branchId];
+
+    const branches = await prisma.branch.findMany({ where: { id: { in: priorityList }, isActive: true }, select: { id: true } });
+    const validIds = new Set(branches.map((b) => b.id));
+    if (priorityList.some((id) => !validIds.has(id))) {
+      sendError(res, "One or more selected branches are invalid", 400);
       return;
     }
 
     const inquiry = await prisma.admissionInquiry.create({
       data: {
-        branchId,
+        branchId: priorityList[0],
+        branchPriorityIds: priorityList,
+        currentPriorityIndex: 0,
         studentName,
         dateOfBirth: new Date(dateOfBirth),
         gender,
@@ -69,7 +82,7 @@ export const createAdmissionInquiry = async (req: Request, res: Response): Promi
     // Notify branch admins so they know a new inquiry needs follow-up.
     // Best-effort - a failed notification should never fail the public
     // form submission itself.
-    notifyBranchAdminsOfInquiry(branchId, studentName).catch((err) =>
+    notifyBranchAdminsOfInquiry(priorityList[0], studentName).catch((err) =>
       console.error("Failed to notify branch admins of new admission inquiry:", err)
     );
 
@@ -295,6 +308,32 @@ export const updateAdmissionInquiryStatus = async (req: AuthRequest, res: Respon
       return;
     }
 
+    // Multi-branch priority-order cascading (spec Section 21) - a
+    // REJECTED decision automatically advances the inquiry to the NEXT
+    // branch on the applicant's priority list (if any remain), resetting
+    // status to NEW for that branch to independently review, instead of
+    // simply ending the inquiry. Only applies when more than one branch
+    // was selected; a single-branch inquiry just ends REJECTED as before.
+    if (status === "REJECTED" && inquiry.branchPriorityIds.length > inquiry.currentPriorityIndex + 1) {
+      const nextIndex = inquiry.currentPriorityIndex + 1;
+      const nextBranchId = inquiry.branchPriorityIds[nextIndex];
+      const updated = await prisma.admissionInquiry.update({
+        where: { id },
+        data: {
+          branchId: nextBranchId,
+          currentPriorityIndex: nextIndex,
+          status: "NEW",
+          reviewNotes,
+          reviewedBy: req.user!.userId,
+        },
+      });
+      notifyBranchAdminsOfInquiry(nextBranchId, inquiry.studentName).catch((err) =>
+        console.error("Failed to notify next-priority branch admins of cascaded inquiry:", err)
+      );
+      sendSuccess(res, updated, "Rejected here - inquiry automatically moved to the next branch on the applicant's priority list");
+      return;
+    }
+
     const updated = await prisma.admissionInquiry.update({
       where: { id },
       data: { status, reviewNotes, reviewedBy: req.user!.userId },
@@ -303,6 +342,53 @@ export const updateAdmissionInquiryStatus = async (req: AuthRequest, res: Respon
     sendSuccess(res, updated, "Inquiry updated");
   } catch (error) {
     sendError(res, "Failed to update inquiry", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Entrance test result recording (spec Section 18 - "applies to ALL
+ * classes"). Can be linked to either a pending AdmissionInquiry or a
+ * converted Student - exactly one of the two ids is provided.
+ */
+export const recordEntranceTestResult = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { admissionInquiryId, studentId, testDate, score, maxScore, remarks } = req.body;
+
+    if (!admissionInquiryId && !studentId) {
+      sendError(res, "Either admissionInquiryId or studentId is required", 400);
+      return;
+    }
+
+    let branchId: string;
+    if (admissionInquiryId) {
+      const inquiry = await prisma.admissionInquiry.findUnique({ where: { id: admissionInquiryId } });
+      if (!inquiry) { sendError(res, "Admission inquiry not found", 404); return; }
+      if (!canAccessBranch(req, inquiry.branchId)) { sendError(res, "Admission inquiry not found", 404); return; }
+      branchId = inquiry.branchId;
+    } else {
+      const student = await prisma.student.findUnique({ where: { id: studentId } });
+      if (!student) { sendError(res, "Student not found", 404); return; }
+      if (!canAccessBranch(req, student.branchId)) { sendError(res, "Student not found", 404); return; }
+      branchId = student.branchId;
+    }
+
+    const passed = Number(score) >= Number(maxScore) * 0.4; // 40% pass threshold - branch-configurable in a future iteration if needed
+
+    const result = await prisma.entranceTestResult.create({
+      data: {
+        admissionInquiryId, studentId, branchId,
+        testDate: new Date(testDate), score, maxScore, passed, remarks,
+        recordedBy: req.user!.userId,
+      },
+    });
+
+    if (admissionInquiryId && passed) {
+      await prisma.admissionInquiry.update({ where: { id: admissionInquiryId }, data: { entranceTestCleared: true } });
+    }
+
+    sendSuccess(res, result, "Entrance test result recorded", 201);
+  } catch (error) {
+    sendError(res, "Failed to record entrance test result", 500, (error as Error).message);
   }
 };
 

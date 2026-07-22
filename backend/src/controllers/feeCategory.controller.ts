@@ -50,7 +50,13 @@ export const getFeeCategoryById = async (req: AuthRequest, res: Response): Promi
  */
 export const createFeeCategory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { name, code } = req.body;
+    // isMandatory (spec Section 19 - "mark each as mandatory or
+    // optional") and lateFeeGraceDays (spec Section 19 - "3-day grace
+    // period, configurable per fee category") are both optional here
+    // and default at the schema level (isMandatory: true,
+    // lateFeeGraceDays: 3) so existing category-creation callers are
+    // unaffected.
+    const { name, code, isMandatory, lateFeeGraceDays } = req.body;
     // BUG FIX: the "Add Custom Fee Category" form has no branch-picker,
     // so req.body.branchId always arrived as "" - see
     // resolveEffectiveBranchId's doc comment.
@@ -71,7 +77,11 @@ export const createFeeCategory = async (req: AuthRequest, res: Response): Promis
     if (existing) { sendError(res, "Fee category code already exists", 400); return; }
 
     const category = await prisma.feeCategory.create({
-      data: { branchId, name, code, isSystem: false, isActive: true },
+      data: {
+        branchId, name, code, isSystem: false, isActive: true,
+        ...(isMandatory !== undefined && { isMandatory }),
+        ...(lateFeeGraceDays !== undefined && { lateFeeGraceDays }),
+      },
     });
 
     sendSuccess(res, category, "Fee category created", 201);
@@ -86,7 +96,7 @@ export const createFeeCategory = async (req: AuthRequest, res: Response): Promis
 export const updateFeeCategory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { name, isActive } = req.body;
+    const { name, isActive, isMandatory, lateFeeGraceDays } = req.body;
 
     const category = await prisma.feeCategory.findUnique({ where: { id } });
     if (!category) { sendError(res, "Category not found", 404); return; }
@@ -94,7 +104,12 @@ export const updateFeeCategory = async (req: AuthRequest, res: Response): Promis
 
     const updated = await prisma.feeCategory.update({
       where: { id },
-      data: { ...(name && { name }), ...(isActive !== undefined && { isActive }) },
+      data: {
+        ...(name && { name }),
+        ...(isActive !== undefined && { isActive }),
+        ...(isMandatory !== undefined && { isMandatory }),
+        ...(lateFeeGraceDays !== undefined && { lateFeeGraceDays }),
+      },
     });
 
     sendSuccess(res, updated, "Fee category updated");

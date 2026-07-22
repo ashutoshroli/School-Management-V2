@@ -10,8 +10,8 @@ export const useAuth = create<AuthState>((set) => ({
   isAuthenticated: false,
   isLoading: true,
 
-  login: async (email: string, password: string) => {
-    const response = await api.post("/auth/login", { email, password });
+  login: async (email: string, password: string, rememberMe?: boolean) => {
+    const response = await api.post("/auth/login", { email, password, rememberMe });
     const { accessToken, refreshToken, user } = response.data.data;
 
     localStorage.setItem("token", accessToken);
