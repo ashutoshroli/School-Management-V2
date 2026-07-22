@@ -2,11 +2,21 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     attendanceDevice: { findUnique: jest.fn() },
-    student: { findUnique: jest.fn(), findMany: jest.fn() },
+    student: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     section: { findUnique: jest.fn(), findMany: jest.fn() },
     staff: { findUnique: jest.fn() },
     subjectTeacher: { count: jest.fn(), findMany: jest.fn() },
-    studentAttendance: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), upsert: jest.fn() },
+    studentAttendance: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(), createMany: jest.fn(), update: jest.fn(), upsert: jest.fn() },
+    // Backs assignRollNumbersForFirstAttendance's roll-number
+    // assignment rule (spec Section 18) - markStudentAttendance fires
+    // this off in the background (fire-and-forget, see its own
+    // .catch()) after every save, so every one of these delegates
+    // needs a mock even though the roll-number behavior itself isn't
+    // what most tests in this file are exercising.
+    branch: { findUnique: jest.fn() },
+    mark: { aggregate: jest.fn() },
+    feeAssignment: { count: jest.fn() },
+    periodConfig: { findMany: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
@@ -197,6 +207,15 @@ describe("studentAttendance.controller - markStudentAttendance", () => {
     (prisma.$transaction as jest.Mock).mockImplementation(async (ops: any[]) => Promise.all(ops));
     (prisma.studentAttendance.create as jest.Mock).mockResolvedValue({ id: "att-1" });
     (prisma.studentAttendance.update as jest.Mock).mockResolvedValue({ id: "att-1" });
+    // assignRollNumbersForFirstAttendance (spec Section 18) runs in the
+    // background after every save - default it to a clean, immediate
+    // no-op: prisma.student.findMany (its "candidates still needing a
+    // roll number" query) resolves to an empty list, so the helper
+    // returns before touching branch/mark/feeAssignment at all. This
+    // keeps every existing test in this describe block focused on
+    // markStudentAttendance's own behavior, not roll-number assignment.
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ rollNumberRule: "ALPHABETICAL" });
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([]);
   });
 
   it("returns 400 when sectionId or date is missing", async () => {
