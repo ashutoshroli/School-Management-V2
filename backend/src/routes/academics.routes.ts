@@ -1,30 +1,31 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory, getMyAssignedSections, getDayAttendanceSummary } from "../controllers/studentAttendance.controller";
+import { markStudentAttendance, studentCardTap, getClassAttendance, getStudentAttendanceHistory, getMyAssignedSections, getDayAttendanceSummary, verifyStudentAttendance } from "../controllers/studentAttendance.controller";
 import { getPeriodConfigs, upsertPeriodConfigs } from "../controllers/periodConfig.controller";
-import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot } from "../controllers/timetable.controller";
-import { createExam, getExams, getExamById, updateExam, deleteExam, enterMarks, getExamResults, togglePublish } from "../controllers/exam.controller";
-import { bulkSetExamSchedule, getExamSchedule, getExamScheduleList, updateExamScheduleEntry, deleteExamScheduleEntry } from "../controllers/examSchedule.controller";
+import { getOrCreateTimetable, upsertSlot, getTeacherTimetable, deleteSlot, getTimetableConfig, updateTimetableConfig } from "../controllers/timetable.controller";
+import { createExam, getExams, getExamById, updateExam, deleteExam, enterMarks, getExamResults, togglePublish, createPostponementRequest, acknowledgePostponementRequest, getPostponementRequests, upsertReportCardWeightage, getReportCardWeightages } from "../controllers/exam.controller";
+import { bulkSetExamSchedule, getExamSchedule, getExamScheduleList, updateExamScheduleEntry, deleteExamScheduleEntry, assignInvigilator, removeInvigilator, getInvigilators } from "../controllers/examSchedule.controller";
 import { uploadExamQuestionPaper, getExamQuestionPapers, deleteExamQuestionPaper } from "../controllers/examQuestionPaper.controller";
 import { generateSeatPlan, getSeatPlan, clearSeatPlan, getStudentSeatSlipPdf } from "../controllers/examSeatPlan.controller";
 import { markExamAttendance, getExamAttendance, getExamAttendanceSummary } from "../controllers/examAttendance.controller";
 import { generateAdmitCard, bulkGenerateAdmitCards, getAdmitCards, deleteAdmitCard, getAdmitCardPdf } from "../controllers/admitCard.controller";
 import { getGradeBands, createGradeBand, updateGradeBand, deleteGradeBand } from "../controllers/gradeSystem.controller";
 import { getReportCardPdf } from "../controllers/document.controller";
-import { createHomework, getHomeworks, getHomeworkById, updateHomework, deleteHomework, submitHomework, getSubmissions } from "../controllers/homework.controller";
+import { createHomework, getHomeworks, getHomeworkById, updateHomework, deleteHomework, submitHomework, getSubmissions, gradeHomeworkSubmission, raiseRecheckRequest, getRecheckRequests, resolveOrEscalateRecheckRequest, upsertRecheckEscalationConfig, getRecheckEscalationConfig } from "../controllers/homework.controller";
 import { bulkPromote } from "../controllers/promotion.controller";
 import { authenticate, authorize } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import { uploadExamPaper, handleUploadErrors } from "../middleware/upload";
 import { markStudentAttendanceSchema, cardTapSchema } from "../validators/attendance.validator";
-import { getOrCreateTimetableSchema, upsertSlotSchema } from "../validators/timetable.validator";
-import { createExamSchema, updateExamSchema, enterMarksSchema } from "../validators/exam.validator";
+import { getOrCreateTimetableSchema, upsertSlotSchema, updateTimetableConfigSchema } from "../validators/timetable.validator";
+import { createExamSchema, updateExamSchema, enterMarksSchema, createPostponementRequestSchema, acknowledgePostponementRequestSchema, upsertReportCardWeightageSchema } from "../validators/exam.validator";
+import { assignInvigilatorSchema } from "../validators/examSchedule.validator";
 import { bulkSetExamScheduleSchema, updateExamScheduleEntrySchema } from "../validators/examSchedule.validator";
 import { generateSeatPlanSchema } from "../validators/examSeatPlan.validator";
 import { markExamAttendanceSchema } from "../validators/examAttendance.validator";
 import { generateAdmitCardSchema, bulkGenerateAdmitCardsSchema } from "../validators/admitCard.validator";
 import { createGradeBandSchema, updateGradeBandSchema } from "../validators/gradeSystem.validator";
-import { createHomeworkSchema, updateHomeworkSchema, submitHomeworkSchema } from "../validators/homework.validator";
+import { createHomeworkSchema, updateHomeworkSchema, submitHomeworkSchema, gradeHomeworkSubmissionSchema, raiseRecheckRequestSchema, resolveOrEscalateRecheckRequestSchema, upsertRecheckEscalationConfigSchema } from "../validators/homework.validator";
 import { bulkPromoteSchema } from "../validators/promotion.validator";
 
 const router = Router();
@@ -36,6 +37,8 @@ router.post("/attendance/mark", authenticate, authorize(...TEACHERS), validate(m
 router.post("/attendance/card-tap", validate(cardTapSchema), studentCardTap); // Device auth via API key
 router.get("/attendance/class", authenticate, authorize(...TEACHERS), getClassAttendance);
 router.get("/attendance/my-sections", authenticate, authorize(UserRole.TEACHER), getMyAssignedSections);
+// Class Teacher manual verification, alongside RFID auto-tracking (spec Section 6)
+router.patch("/attendance/:id/verify", authenticate, authorize(...TEACHERS), verifyStudentAttendance);
 router.get("/attendance/day-summary", authenticate, getDayAttendanceSummary);
 // Access control (branch staff OR the student/parent themselves) is
 // enforced inside the controller via canAccessBranch/canAccessStudentRecord.
@@ -50,6 +53,8 @@ router.post("/timetable", authenticate, authorize(...ADMIN), validate(getOrCreat
 router.post("/timetable/slot", authenticate, authorize(...ADMIN), validate(upsertSlotSchema), upsertSlot);
 router.get("/timetable/teacher/:teacherId", authenticate, getTeacherTimetable);
 router.delete("/timetable/slot/:id", authenticate, authorize(...ADMIN), deleteSlot);
+router.get("/timetable/config/:branchId", authenticate, authorize(...ADMIN), getTimetableConfig);
+router.put("/timetable/config/:branchId", authenticate, authorize(...ADMIN), validate(updateTimetableConfigSchema), updateTimetableConfig);
 
 // Exam Timetable ("date sheet") - per-subject date/time/room/maxMarks.
 // IMPORTANT: These MUST be defined BEFORE the /exams/:id routes to avoid route conflicts.
@@ -59,6 +64,20 @@ router.get("/exams/schedule", authenticate, getExamScheduleList); // Get all sch
 router.get("/exams/:examId/schedule", authenticate, getExamSchedule);
 router.put("/exams/schedule/:id", authenticate, authorize(...ADMIN), validate(updateExamScheduleEntrySchema), updateExamScheduleEntry);
 router.delete("/exams/schedule/:id", authenticate, authorize(...ADMIN), deleteExamScheduleEntry);
+
+// Invigilator duty assignment + clash check (spec Section 20)
+router.post("/exams/invigilators", authenticate, authorize(...ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), validate(assignInvigilatorSchema), assignInvigilator);
+router.get("/exams/schedule/:examScheduleId/invigilators", authenticate, getInvigilators);
+router.delete("/exams/schedule/:examScheduleId/invigilators/:staffId", authenticate, authorize(...ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), removeInvigilator);
+
+// Exam postponement request flow (spec Section 9)
+router.post("/exams/postponement", authenticate, authorize(...ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), validate(createPostponementRequestSchema), createPostponementRequest);
+router.get("/exams/postponement", authenticate, authorize(...TEACHERS, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), getPostponementRequests);
+router.patch("/exams/postponement/:id/acknowledge", authenticate, authorize(...TEACHERS, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), validate(acknowledgePostponementRequestSchema), acknowledgePostponementRequest);
+
+// Report card weightage per exam type (spec Section 9 - set by Principal)
+router.put("/exams/report-card-weightage", authenticate, authorize(...ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), validate(upsertReportCardWeightageSchema), upsertReportCardWeightage);
+router.get("/exams/report-card-weightage/:branchId", authenticate, getReportCardWeightages);
 
 // Exam Question Papers (PDF/DOCX, teacher-scoped to their own subject/class)
 // IMPORTANT: "/exams/question-papers" MUST be defined BEFORE "/exams/:id"
@@ -121,6 +140,14 @@ router.put("/homework/:id", authenticate, authorize(...TEACHERS), validate(updat
 router.delete("/homework/:id", authenticate, authorize(...TEACHERS), deleteHomework);
 router.post("/homework/submit", authenticate, authorize(UserRole.STUDENT), validate(submitHomeworkSchema), submitHomework);
 router.get("/homework/:homeworkId/submissions", authenticate, authorize(...TEACHERS), getSubmissions);
+router.patch("/homework/submissions/:id/grade", authenticate, authorize(...TEACHERS), validate(gradeHomeworkSubmissionSchema), gradeHomeworkSubmission);
+
+// Homework recheck-request escalation flow (spec Section 10)
+router.post("/homework/recheck", authenticate, authorize(UserRole.STUDENT, UserRole.PARENT), validate(raiseRecheckRequestSchema), raiseRecheckRequest);
+router.get("/homework/recheck", authenticate, authorize(...TEACHERS, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), getRecheckRequests);
+router.patch("/homework/recheck/:id", authenticate, authorize(...TEACHERS, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), validate(resolveOrEscalateRecheckRequestSchema), resolveOrEscalateRecheckRequest);
+router.get("/homework/recheck/config", authenticate, authorize(UserRole.SUPER_ADMIN), getRecheckEscalationConfig);
+router.put("/homework/recheck/config", authenticate, authorize(UserRole.SUPER_ADMIN), validate(upsertRecheckEscalationConfigSchema), upsertRecheckEscalationConfig);
 
 // Promotion
 router.post("/promote", authenticate, authorize(...ADMIN), validate(bulkPromoteSchema), bulkPromote);
