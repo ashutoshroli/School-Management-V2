@@ -20,6 +20,34 @@ app.use(requestId);
 
 // Security middleware
 app.use(helmet());
+
+// Permissive CORS for the RFID attendance-device endpoints, registered
+// BEFORE the app-wide cors() below. These 3 routes are meant to be called
+// by external, non-browser-frontend tools (a standalone HTML console, a
+// Termux/curl-based reader simulator, an actual RFID reader's firmware)
+// that are never served from `config.frontendUrl` - including pages opened
+// as a local `file://` (which sends `Origin: null`). The app-wide cors()
+// middleware below only allows `config.frontendUrl` and, being mounted
+// first would otherwise be the one to answer (and wrongly restrict) the
+// OPTIONS preflight for these paths, since the `cors` package short-
+// circuits OPTIONS requests itself. Mounting this permissive instance on
+// the exact 3 paths first means it answers their preflight (and sets
+// their response headers) instead, while every other route is untouched
+// and still governed solely by the stricter instance below.
+// `credentials` is left at its default (false) - device registration
+// authenticates via a `Bearer` JWT (an `Authorization` header, not a
+// cookie) and card-tap via the `X-Device-Api-Key` header, so no cookie-
+// based/credentialed CORS mode is needed here, and not enabling it avoids
+// any risk of introducing cross-site cookie use on these public paths.
+const deviceCors = cors({
+  origin: true,
+  methods: ["POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Device-Api-Key"],
+});
+app.use("/api/facilities/attendance-devices", deviceCors);
+app.use("/api/academics/attendance/card-tap", deviceCors);
+app.use("/api/hr/attendance/card-tap", deviceCors);
+
 app.use(
   cors({
     origin: config.frontendUrl,
