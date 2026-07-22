@@ -77,4 +77,14 @@ EXPOSE 5000
 # environment - it isn't available during `docker build`. This mirrors
 # what backend/scripts/build.sh does for the non-Docker deploy path,
 # just shifted from build-time to start-time.
-CMD ["sh", "-c", "cd db && npx prisma db push --accept-data-loss --skip-generate && cd ../backend && node dist/server.js"]
+#
+# `prisma db execute` runs fix-duplicate-class-teachers.sql FIRST, every
+# single startup, before `db push` - see that file's own header comment
+# for the exact P2002 crash-loop this prevents (a database that already
+# has more than one Section sharing the same classTeacherId will make
+# `db push` fail applying Section.classTeacherId's @unique constraint,
+# forever, on every restart, until the duplicate rows are cleaned up).
+# Idempotent (a clean database/re-run finds nothing to fix), so this is
+# safe to leave in place permanently rather than removing it once the
+# immediate crash is resolved.
+CMD ["sh", "-c", "cd db && npx prisma db execute --file prisma/fix-duplicate-class-teachers.sql --schema prisma/schema.prisma && npx prisma db push --accept-data-loss --skip-generate && cd ../backend && node dist/server.js"]
