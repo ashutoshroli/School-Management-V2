@@ -1,9 +1,57 @@
 import { Response } from "express";
+import { UserRole } from "@prisma/client";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
 import { resolveBranchId, canAccessBranch } from "../utils/branchScope";
 import { canAccessStaffRecord } from "../utils/staffAccess";
+
+/**
+ * Role-wise AND branch-wise leave quota resolution (spec Section 7) -
+ * checks for a LeaveRoleQuota override for this exact
+ * (branchId, role, leaveTypeId) combination first, falling back to
+ * LeaveType.maxDays (the original single-quota behavior) when no
+ * override has been configured. Fully backward compatible: a branch
+ * that never configures LeaveRoleQuota rows behaves exactly as before.
+ */
+const resolveLeaveQuota = async (branchId: string, role: UserRole, leaveTypeId: string, fallbackMaxDays: number): Promise<number> => {
+  const override = await prisma.leaveRoleQuota.findUnique({
+    where: { branchId_role_leaveTypeId: { branchId, role, leaveTypeId } },
+  });
+  return override?.maxDays ?? fallbackMaxDays;
+};
+
+/**
+ * Determines the starting approval level for a NEW leave application
+ * (spec Section 7 - "2-level approval chain: Staff -> VP -> Principal;
+ * VP/Principal's own leave -> Director; Director approves his own
+ * leave himself"). BRANCH_ADMIN is treated as "Director" per the
+ * spec's terminology (there is no separate DIRECTOR UserRole in this
+ * codebase - BRANCH_ADMIN/Admin IS the branch's Director, see the
+ * spec's Roles & Permissions section).
+ */
+const resolveInitialApprovalLevel = (role: UserRole): "VP" | "PRINCIPAL" | "DIRECTOR" | "DONE" => {
+  if (role === UserRole.BRANCH_ADMIN || role === UserRole.SUPER_ADMIN) return "DONE"; // self-approved
+  if (role === UserRole.VICE_PRINCIPAL || role === UserRole.PRINCIPAL) return "DIRECTOR";
+  return "VP";
+};
+
+/**
+ * Marks attendance ON_LEAVE for every date in [fromDate, toDate] -
+ * shared by every path that fully approves a leave application
+ * (chain-based advanceLeaveApproval, the admin-override
+ * updateLeaveStatus/bulkUpdateLeaveStatus, and self-approval on apply).
+ */
+const markAttendanceOnLeave = async (staffId: string, fromDate: Date, toDate: Date): Promise<void> => {
+  for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
+    const dateOnly = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    await prisma.staffAttendance.upsert({
+      where: { staffId_date: { staffId, date: dateOnly } },
+      update: { status: "ON_LEAVE" },
+      create: { staffId, date: dateOnly, status: "ON_LEAVE", source: "MANUAL" },
+    });
+  }
+};
 
 /**
  * Get leave types. `includeInactive=true` is for the admin-facing
@@ -117,6 +165,15 @@ export const deleteLeaveType = async (req: AuthRequest, res: Response): Promise<
 
 /**
  * Apply for leave (staff self-service)
+ *
+ * Sets the 2-level approval chain's starting point (spec Section 7)
+ * based on the applicant's OWN role: a plain Staff/Teacher starts at
+ * VP, a VP/Principal's own leave starts at DIRECTOR, and a
+ * BRANCH_ADMIN/SUPER_ADMIN ("Director") self-approves immediately -
+ * see resolveInitialApprovalLevel's doc comment. Leave quota is
+ * resolved role-wise AND branch-wise (LeaveRoleQuota override, falling
+ * back to LeaveType.maxDays) instead of always using the single
+ * system-wide quota.
  */
 export const applyLeave = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -134,23 +191,208 @@ export const applyLeave = async (req: AuthRequest, res: Response): Promise<void>
     const leaveType = await prisma.leaveType.findUnique({ where: { id: leaveTypeId } });
     if (!leaveType) { sendError(res, "Invalid leave type", 400); return; }
 
+    const maxDays = await resolveLeaveQuota(staff.branchId, req.user!.role, leaveTypeId, leaveType.maxDays);
+
     const yearStart = new Date(new Date().getFullYear(), 0, 1);
     const used = await prisma.leaveApplication.aggregate({
       where: { staffId: staff.id, leaveTypeId, status: { in: ["APPROVED", "PENDING"] }, fromDate: { gte: yearStart } },
       _sum: { days: true },
     });
     const usedDays = used._sum.days || 0;
-    if (usedDays + days > leaveType.maxDays) {
-      sendError(res, `Insufficient balance. Used: ${usedDays}, Requesting: ${days}, Max: ${leaveType.maxDays}`, 400);
+    if (usedDays + days > maxDays) {
+      sendError(res, `Insufficient balance. Used: ${usedDays}, Requesting: ${days}, Max: ${maxDays}`, 400);
       return;
     }
 
+    const initialLevel = resolveInitialApprovalLevel(req.user!.role);
+    const isSelfApproved = initialLevel === "DONE";
+
     const application = await prisma.leaveApplication.create({
-      data: { staffId: staff.id, leaveTypeId, fromDate: from, toDate: to, days, reason, status: "PENDING" },
+      data: {
+        staffId: staff.id, leaveTypeId, fromDate: from, toDate: to, days, reason,
+        status: isSelfApproved ? "APPROVED" : "PENDING",
+        currentApprovalLevel: initialLevel,
+        ...(isSelfApproved && { approvedBy: userId }),
+      },
     });
 
-    sendSuccess(res, application, "Leave applied successfully", 201);
+    // Director approving his own leave (spec Section 7) auto-marks
+    // attendance ON_LEAVE immediately, same as any other fully-
+    // approved application.
+    if (isSelfApproved) {
+      await markAttendanceOnLeave(staff.id, from, to);
+    }
+
+    sendSuccess(res, application, isSelfApproved ? "Leave self-approved" : "Leave applied successfully", 201);
   } catch (error) { sendError(res, "Failed to apply leave", 500, (error as Error).message); }
+};
+
+/**
+ * Advance a leave application through the 2-level approval chain
+ * (spec Section 7) - replaces the old single-step updateLeaveStatus
+ * for the normal chain flow (updateLeaveStatus/bulkUpdateLeaveStatus
+ * below are kept as a direct admin-override escape hatch, still
+ * useful for a Branch Admin who needs to force a decision outside the
+ * chain). A REJECTED decision at ANY level immediately ends the chain
+ * (status REJECTED) - rejection never cascades further up.
+ *
+ * VP action (currentApprovalLevel === VP): approving advances to
+ * PRINCIPAL; rejecting ends it.
+ * Principal action (currentApprovalLevel === PRINCIPAL): approving
+ * marks the application fully APPROVED (marks attendance ON_LEAVE);
+ * rejecting ends it.
+ * Director action (currentApprovalLevel === DIRECTOR, i.e. a VP's or
+ * Principal's own leave): approving marks it fully APPROVED directly
+ * (no further level); rejecting ends it.
+ */
+export const advanceLeaveApproval = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { decision, remarks } = req.body; // "APPROVE" | "REJECT"
+
+    const application = await prisma.leaveApplication.findUnique({
+      where: { id },
+      include: { staff: { select: { branchId: true } } },
+    });
+    if (!application) { sendError(res, "Leave application not found", 404); return; }
+    if (!canAccessBranch(req, application.staff.branchId)) { sendError(res, "Leave application not found", 404); return; }
+    if (application.status !== "PENDING") { sendError(res, "This application has already been decided", 400); return; }
+
+    const approverId = req.user!.userId;
+    const level = application.currentApprovalLevel;
+
+    if (decision === "REJECT") {
+      const updated = await prisma.leaveApplication.update({
+        where: { id },
+        data: {
+          status: "REJECTED",
+          remarks,
+          approvedBy: approverId,
+          ...(level === "VP" && { vpApprovedBy: approverId, vpApprovedAt: new Date(), vpRemarks: remarks }),
+          ...(level === "PRINCIPAL" && { principalApprovedBy: approverId, principalApprovedAt: new Date(), principalRemarks: remarks }),
+        },
+      });
+      sendSuccess(res, updated, "Leave rejected");
+      return;
+    }
+
+    if (level === "VP") {
+      const updated = await prisma.leaveApplication.update({
+        where: { id },
+        data: { currentApprovalLevel: "PRINCIPAL", vpApprovedBy: approverId, vpApprovedAt: new Date(), vpRemarks: remarks },
+      });
+      sendSuccess(res, updated, "Approved by VP - forwarded to Principal");
+      return;
+    }
+
+    if (level === "PRINCIPAL" || level === "DIRECTOR") {
+      const updated = await prisma.leaveApplication.update({
+        where: { id },
+        data: {
+          status: "APPROVED",
+          currentApprovalLevel: "DONE",
+          approvedBy: approverId,
+          ...(level === "PRINCIPAL" && { principalApprovedBy: approverId, principalApprovedAt: new Date(), principalRemarks: remarks }),
+        },
+      });
+      await markAttendanceOnLeave(application.staffId, application.fromDate, application.toDate);
+      sendSuccess(res, updated, "Leave fully approved");
+      return;
+    }
+
+    sendError(res, "This application has already completed its approval chain", 400);
+  } catch (error) {
+    sendError(res, "Failed to advance leave approval", 500, (error as Error).message);
+  }
+};
+
+/**
+ * Substitute/cover-teacher assignment for one period on one day arising
+ * from an approved LeaveApplication (spec Section 7) - supports both
+ * manual assignment (this endpoint, called directly with a chosen
+ * substituteStaffId) and system auto-suggest (see
+ * suggestSubstituteTeachers below, which a caller can use to populate
+ * a picker before calling this to confirm one).
+ */
+export const assignSubstituteTeacher = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { leaveApplicationId, date, timetableSlotId, substituteStaffId, isAutoSuggested } = req.body;
+
+    const application = await prisma.leaveApplication.findUnique({
+      where: { id: leaveApplicationId },
+      include: { staff: { select: { branchId: true } } },
+    });
+    if (!application) { sendError(res, "Leave application not found", 404); return; }
+    if (!canAccessBranch(req, application.staff.branchId)) { sendError(res, "Leave application not found", 404); return; }
+    if (application.status !== "APPROVED") { sendError(res, "Substitutes can only be assigned for an approved leave", 400); return; }
+
+    const substitute = await prisma.staff.findUnique({ where: { id: substituteStaffId }, select: { branchId: true } });
+    if (!substitute || substitute.branchId !== application.staff.branchId) {
+      sendError(res, "Substitute teacher must belong to the same branch", 400);
+      return;
+    }
+
+    const assignment = await prisma.leaveSubstituteAssignment.upsert({
+      where: { timetableSlotId_date: { timetableSlotId, date: new Date(date) } },
+      update: { substituteStaffId, isAutoSuggested: !!isAutoSuggested, leaveApplicationId },
+      create: { leaveApplicationId, date: new Date(date), timetableSlotId, substituteStaffId, isAutoSuggested: !!isAutoSuggested },
+    });
+    sendSuccess(res, assignment, "Substitute teacher assigned", 201);
+  } catch (error) {
+    sendError(res, "Failed to assign substitute teacher", 500, (error as Error).message);
+  }
+};
+
+/**
+ * System auto-suggest for substitute teachers (spec Section 7 -
+ * "supports both system auto-suggest and manual assignment") - for one
+ * specific timetable slot (day+period), suggests staff members who are
+ * (a) free at that exact day/period (no timetable slot of their own
+ * then) and (b) not already on approved leave themselves that day.
+ * Returns a plain suggestion list; assignSubstituteTeacher above still
+ * needs to be called separately to actually confirm one.
+ */
+export const suggestSubstituteTeachers = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { timetableSlotId, date } = req.query;
+    if (!timetableSlotId || !date) { sendError(res, "timetableSlotId and date are required", 400); return; }
+
+    const slot = await prisma.timetableSlot.findUnique({
+      where: { id: timetableSlotId as string },
+      include: { timetable: { select: { section: { select: { branchId: true } } } } },
+    });
+    if (!slot) { sendError(res, "Timetable slot not found", 404); return; }
+    const branchId = slot.timetable.section.branchId;
+    if (!canAccessBranch(req, branchId)) { sendError(res, "Timetable slot not found", 404); return; }
+
+    const attendanceDate = new Date(date as string);
+
+    const [busyTeachers, onLeaveStaff] = await Promise.all([
+      prisma.timetableSlot.findMany({
+        where: { day: slot.day, period: slot.period, teacherId: { not: null } },
+        select: { teacherId: true },
+      }),
+      prisma.leaveApplication.findMany({
+        where: { status: "APPROVED", fromDate: { lte: attendanceDate }, toDate: { gte: attendanceDate } },
+        select: { staffId: true },
+      }),
+    ]);
+    const unavailableIds = new Set([
+      ...busyTeachers.map((t) => t.teacherId as string),
+      ...onLeaveStaff.map((l) => l.staffId),
+    ]);
+
+    const available = await prisma.staff.findMany({
+      where: { branchId, isActive: true, type: "TEACHING", id: { notIn: [...unavailableIds] } },
+      include: { user: { select: { name: true } } },
+      orderBy: { user: { name: "asc" } },
+      take: 20,
+    });
+
+    sendSuccess(res, available, "Suggested substitute teachers fetched");
+  } catch (error) {
+    sendError(res, "Failed to suggest substitute teachers", 500, (error as Error).message);
+  }
 };
 
 /**

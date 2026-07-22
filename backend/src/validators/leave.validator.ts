@@ -35,6 +35,23 @@ export const createLeaveTypeSchema = z.object({
   }),
 });
 
+export const advanceLeaveApprovalSchema = z.object({
+  body: z.object({
+    decision: z.enum(["APPROVE", "REJECT"]),
+    remarks: z.string().optional(),
+  }),
+});
+
+export const assignSubstituteTeacherSchema = z.object({
+  body: z.object({
+    leaveApplicationId: z.string().min(1, "leaveApplicationId is required"),
+    date: z.coerce.date({ errorMap: () => ({ message: "Valid date is required" }) }),
+    timetableSlotId: z.string().min(1, "timetableSlotId is required"),
+    substituteStaffId: z.string().min(1, "substituteStaffId is required"),
+    isAutoSuggested: z.boolean().optional(),
+  }),
+});
+
 export const updateLeaveTypeSchema = z.object({
   body: z.object({
     name: z.string().min(1).optional(),
