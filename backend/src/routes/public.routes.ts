@@ -5,6 +5,9 @@ import {
   createPublicFeePaymentOrder,
   verifyPublicFeePayment,
   getPublicNotices,
+  getPublicGallery,
+  getPublicRequirements,
+  submitPublicFeedback,
 } from "../controllers/publicPortal.controller";
 import { getPublicJobVacancies, applyToJobVacancy } from "../controllers/jobVacancy.controller";
 import { validate } from "../middleware/validate";
@@ -15,6 +18,7 @@ import {
   verifyPublicFeePaymentSchema,
 } from "../validators/publicPortal.validator";
 import { applyToJobVacancySchema } from "../validators/jobVacancy.validator";
+import { submitPublicFeedbackSchema } from "../validators/publicContent.validator";
 
 /**
  * All routes in this file are PUBLIC (no `authenticate`) on purpose -
@@ -44,5 +48,10 @@ router.post("/jobs/:id/apply", publicSubmitLimiter, validate(applyToJobVacancySc
 
 // Public notice board
 router.get("/notices", getPublicNotices);
+
+// Public Gallery, Requirements page, Feedback Form (spec Section 21)
+router.get("/gallery", getPublicGallery);
+router.get("/requirements/:branchId", getPublicRequirements);
+router.post("/feedback", publicSubmitLimiter, validate(submitPublicFeedbackSchema), submitPublicFeedback);
 
 export default router;

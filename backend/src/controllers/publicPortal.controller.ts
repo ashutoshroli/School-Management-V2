@@ -341,6 +341,68 @@ export const verifyPublicFeePayment = async (req: Request, res: Response): Promi
 };
 
 /**
+ * GET /api/public/gallery
+ * Public photo gallery (spec Section 21) - staff-managed content
+ * (see galleryAdmin.controller.ts), publicly readable without auth.
+ */
+export const getPublicGallery = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const branchId = req.query.branchId as string | undefined;
+    const category = req.query.category as string | undefined;
+
+    const images = await prisma.galleryImage.findMany({
+      where: { ...(branchId && { branchId }), ...(category && { category }) },
+      select: { id: true, title: true, imageUrl: true, category: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    sendSuccess(res, images, "Gallery images fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch gallery", 500, (error as Error).message);
+  }
+};
+
+/**
+ * GET /api/public/requirements/:branchId
+ * Admission eligibility/document Requirements page content (spec
+ * Section 21) - staff-editable, publicly readable.
+ */
+export const getPublicRequirements = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { branchId } = req.params;
+    const page = await prisma.requirementsPage.findUnique({ where: { branchId } });
+    sendSuccess(res, page || { branchId, content: "" }, "Requirements page fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch requirements page", 500, (error as Error).message);
+  }
+};
+
+/**
+ * POST /api/public/feedback
+ * Public Feedback Form submission (spec Section 21) - anonymous
+ * public submit, staff reviews (same shape as AdmissionInquiry/
+ * JobApplication).
+ */
+export const submitPublicFeedback = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { branchId, name, email, phone, subject, message } = req.body;
+
+    const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true, isActive: true } });
+    if (!branch || !branch.isActive) {
+      sendError(res, "Invalid branch", 400);
+      return;
+    }
+
+    const feedback = await prisma.publicFeedback.create({
+      data: { branchId, name, email, phone, subject, message },
+    });
+    sendSuccess(res, { id: feedback.id }, "Thank you for your feedback!", 201);
+  } catch (error) {
+    sendError(res, "Failed to submit feedback", 500, (error as Error).message);
+  }
+};
+
+/**
  * GET /api/public/notices
  * Public notice board - only notices explicitly opted in via
  * `Notice.isPublic: true` and not yet expired.
