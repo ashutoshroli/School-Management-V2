@@ -65,8 +65,13 @@ export const recalculateFeeAssignmentDiscount = async (
   });
   if (!assignment) return;
 
+  // Sibling discount is NOT automatic - requires manual Principal
+  // approval (spec Section 19). A SIBLING-type discount only
+  // contributes to the total here once approvalStatus is APPROVED;
+  // every other discount type defaults to APPROVED at creation
+  // (unchanged prior behavior) so this filter is a no-op for them.
   const activeDiscounts = await tx.studentDiscount.findMany({
-    where: { feeAssignmentId, isActive: true },
+    where: { feeAssignmentId, isActive: true, approvalStatus: "APPROVED" },
     select: { value: true, isPercent: true },
   });
 
@@ -150,15 +155,26 @@ export const recordFeePayment = async (
 ) => {
   const { branchId, studentId, feeAssignmentId, amount, paymentMode, transactionId, chequeNo, chequeDate, bankName, remarks, waiveLateFee } = params;
 
-  // Calculate late fee
+  // Calculate late fee - 3-day grace period after the due date before
+  // any late fee starts applying (spec Section 19), configurable PER
+  // FEE CATEGORY via FeeCategory.lateFeeGraceDays (defaults to 3).
+  // daysLate is counted from the END of the grace window, not from the
+  // due date itself, so e.g. a 3-day grace + FIXED Rs 50/day type only
+  // starts charging on day 4 after the due date, not day 1.
   let lateFeeCharged = 0;
   if (!waiveLateFee) {
     const struct = assignment.feeStructure;
     const now = new Date();
     if (struct.lateFeeType !== "NONE") {
+      const category = await tx.feeCategory.findUnique({ where: { id: struct.feeCategoryId }, select: { lateFeeGraceDays: true } });
+      const graceDays = category?.lateFeeGraceDays ?? 3;
+
       const dueDate = new Date(now.getFullYear(), now.getMonth(), struct.dueDay);
-      if (now > dueDate) {
-        const daysLate = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+      const graceEndDate = new Date(dueDate);
+      graceEndDate.setDate(graceEndDate.getDate() + graceDays);
+
+      if (now > graceEndDate) {
+        const daysLate = Math.floor((now.getTime() - graceEndDate.getTime()) / (1000 * 60 * 60 * 24));
         if (struct.lateFeeType === "FIXED") {
           lateFeeCharged = Number(struct.lateFeeValue) * daysLate;
         } else {
