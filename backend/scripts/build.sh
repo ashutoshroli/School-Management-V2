@@ -30,6 +30,16 @@ rm -rf backend/node_modules/@prisma/client backend/node_modules/.prisma
 cp -r db/node_modules/@prisma/client backend/node_modules/@prisma/client
 cp -r db/node_modules/.prisma backend/node_modules/.prisma
 
+echo "==> Fixing any duplicate Section.classTeacherId rows (see fix-duplicate-class-teachers.sql)"
+# MUST run before `db push` below - a database with more than one
+# Section already sharing the same classTeacherId (from before that
+# column became @unique) makes `db push` fail outright with a P2002
+# unique-constraint error and never recovers on its own, since db push
+# re-runs (and re-fails, identically) on every deploy/restart. This
+# cleanup is idempotent - a clean database or a re-run finds nothing
+# to fix - so it's safe to always run, not just the first time.
+(cd db && npx prisma db execute --file prisma/fix-duplicate-class-teachers.sql --schema prisma/schema.prisma)
+
 echo "==> Syncing database schema"
 # NOTE: this repo's db/prisma/migrations/ directory is gitignored (no
 # migration history is committed), so `prisma migrate deploy` has
