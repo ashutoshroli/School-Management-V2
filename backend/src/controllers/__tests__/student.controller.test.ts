@@ -25,6 +25,10 @@ jest.mock("../../config/database", () => ({
     // roster so auto-generated roll numbers start at "1" unless a
     // test overrides it.
     student: { count: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
+    // Backs createStudent's non-blocking seat-capacity warning check
+    // (spec Section 18) - defaults (via beforeEach below) to a section
+    // with plenty of capacity so existing tests see no warning.
+    section: { findUnique: jest.fn() },
     user: { update: jest.fn() },
     $transaction: jest.fn(),
   },
@@ -66,6 +70,10 @@ describe("student.controller - createStudent", () => {
     (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ code: "MAIN" });
     (prisma.student.count as jest.Mock).mockResolvedValue(0);
     (prisma.student.findMany as jest.Mock).mockResolvedValue([]);
+    // Default: plenty of capacity, so the non-blocking seat-capacity
+    // warning (spec Section 18) never fires for the existing tests
+    // below, which don't exercise that behavior.
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue({ capacity: 40, name: "A" });
     (prisma.student.findUnique as jest.Mock).mockResolvedValue({
       id: "student-1",
       user: { name: "Ravi Kumar", email: "ravi@test.com", phone: null },
@@ -275,6 +283,57 @@ describe("student.controller - createStudent", () => {
 
     expect(res.status).toHaveBeenCalledWith(201);
     expect(capturedCardId).toBe("RFID-12345");
+  });
+});
+
+describe("student.controller - createStudent (seat-capacity warning, spec Section 18)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (prisma.branch.findUnique as jest.Mock).mockResolvedValue({ code: "MAIN" });
+    (prisma.student.count as jest.Mock).mockResolvedValue(41); // over capacity after this admission
+    (prisma.student.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.student.findUnique as jest.Mock).mockResolvedValue({
+      id: "student-1",
+      branchId: "branch-1",
+      user: { name: "Ravi Kumar", email: "ravi@test.com", phone: null },
+      class: { name: "Class 5" },
+      section: { name: "A" },
+      parents: [],
+    });
+    (prisma.section.findUnique as jest.Mock).mockResolvedValue({ capacity: 40, name: "A" });
+    (prisma.$transaction as jest.Mock).mockImplementation(async (callback: any) => {
+      const tx = {
+        branch: prisma.branch,
+        student: { ...prisma.student, create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: "student-1", ...data })) },
+        user: { create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: "user-1", ...data })), findUnique: jest.fn().mockResolvedValue(null) },
+        parent: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
+        studentParent: { create: jest.fn().mockResolvedValue({}) },
+      };
+      return callback(tx);
+    });
+  });
+
+  it("returns a non-blocking seatCapacityWarning when the section is now over capacity, but still admits the student (201)", async () => {
+    const req = makeReq({ body: { ...baseBody } });
+    const res = makeMockRes();
+
+    await createStudent(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.seatCapacityWarning).toContain("over capacity");
+  });
+
+  it("returns seatCapacityWarning: null when the section still has room", async () => {
+    (prisma.student.count as jest.Mock).mockResolvedValue(10);
+    const req = makeReq({ body: { ...baseBody } });
+    const res = makeMockRes();
+
+    await createStudent(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(201);
+    const payload = (res.json as jest.Mock).mock.calls[0][0].data;
+    expect(payload.seatCapacityWarning).toBeNull();
   });
 });
 

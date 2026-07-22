@@ -4,7 +4,14 @@ jest.mock("../../config/database", () => ({
   __esModule: true,
   default: {
     libraryBook: { create: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn(), update: jest.fn() },
-    libraryIssue: { findMany: jest.fn(), createMany: jest.fn() },
+    libraryIssue: { findMany: jest.fn(), createMany: jest.fn(), groupBy: jest.fn() },
+    // Backs resolveLibraryConfig's branch-config lookup (spec Section
+    // 12) - defaults (via beforeEach below) to no row found, so
+    // resolveLibraryConfig falls back to its hardcoded defaults
+    // (studentIssueLimit: 3) exactly as it does for any branch that
+    // has never configured one, matching this suite's pre-existing
+    // expectations.
+    libraryConfig: { findUnique: jest.fn() },
     $transaction: jest.fn(),
   },
 }));
@@ -200,6 +207,8 @@ describe("library.controller - bulkIssueBook", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) => Promise.all(ops));
+    (prisma.libraryConfig.findUnique as jest.Mock).mockResolvedValue(null); // no branch config -> default studentIssueLimit: 3
+    (prisma.libraryIssue.groupBy as jest.Mock).mockResolvedValue([]); // nobody already has any books issued
   });
 
   it("returns 404 when the book does not exist", async () => {
