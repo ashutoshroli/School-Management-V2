@@ -7,6 +7,12 @@ export interface JwtPayload {
   role: UserRole;
   organizationId?: string;
   branchId?: string;
+  // Super Admin "global bypass flag" (spec Section 3) - baked into the
+  // JWT at login time from User.bypassAllChecks so canAccessBranch/
+  // authorize-style checks can read it without a DB round trip on
+  // every request. Only ever meaningful for a SUPER_ADMIN role token;
+  // every other role's checks are unaffected by this value.
+  bypassAllChecks?: boolean;
 }
 
 declare global {

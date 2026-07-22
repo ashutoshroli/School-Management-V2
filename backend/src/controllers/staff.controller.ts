@@ -16,6 +16,7 @@ import { logAuditFromRequest } from "../services/auditLog.service";
  */
 const BRANCH_ADMIN_ASSIGNABLE_ROLES: UserRole[] = [
   UserRole.PRINCIPAL,
+  UserRole.VICE_PRINCIPAL,
   UserRole.TEACHER,
   UserRole.ACCOUNTANT,
   UserRole.LIBRARIAN,

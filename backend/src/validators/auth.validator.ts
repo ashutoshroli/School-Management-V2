@@ -4,6 +4,9 @@ export const loginSchema = z.object({
   body: z.object({
     email: z.string().email("Valid email required"),
     password: z.string().min(6, "Password must be at least 6 characters"),
+    // "Remember Me" option (spec Section 3) - optional, defaults to
+    // false (the original session-length behavior) when omitted.
+    rememberMe: z.boolean().optional(),
   }),
 });
 

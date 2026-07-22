@@ -12,7 +12,15 @@ import { AuthRequest, JwtPayload } from "../types";
  */
 export const login = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    // "Remember Me" option (spec Section 3) - when true, the issued
+    // refresh token/session uses a longer TTL (30 days) than the
+    // normal default (7 days) below. Purely a per-login choice; also
+    // persisted onto the user as their last preference (see the
+    // rememberMePreferred write further down) so a future login
+    // screen could default the checkbox to their last choice, though
+    // the current login screen simply sends whatever the checkbox is
+    // set to on each attempt.
+    const { email, password, rememberMe } = req.body;
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -37,10 +45,10 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Update last login
+    // Update last login + remembered "Remember Me" preference
     await prisma.user.update({
       where: { id: user.id },
-      data: { lastLogin: new Date() },
+      data: { lastLogin: new Date(), rememberMePreferred: !!rememberMe },
     });
 
     // SUPER_ADMIN has no linked Staff record (they're not staff at any
@@ -75,10 +83,15 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       role: user.role,
       organizationId: user.organizationId || undefined,
       branchId,
+      bypassAllChecks: user.bypassAllChecks,
     };
 
     // Generate both access and refresh tokens
     const { accessToken, refreshToken } = generateTokenPair(payload);
+
+    // "Remember Me" (spec Section 3): 30 days instead of the normal 7
+    // -day session length when checked.
+    const sessionTtlMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
 
     // Store refresh token in database for session tracking
     await prisma.loginSession.create({
@@ -87,7 +100,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         token: refreshToken,
         deviceInfo: req.headers["user-agent"]?.substring(0, 255) || null,
         ipAddress: req.ip || req.socket.remoteAddress || null,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        expiresAt: new Date(Date.now() + sessionTtlMs),
       },
     });
 
@@ -163,6 +176,7 @@ export const googleCallback = async (req: Request, res: Response): Promise<void>
       role: user.role,
       organizationId: user.organizationId || undefined,
       branchId,
+      bypassAllChecks: user.bypassAllChecks,
     };
 
     // Generate both access and refresh tokens
@@ -276,6 +290,7 @@ export const switchBranch = async (req: AuthRequest, res: Response): Promise<voi
       role: req.user.role,
       organizationId: req.user.organizationId,
       branchId: branch.id,
+      bypassAllChecks: req.user.bypassAllChecks,
     };
 
     // Generate new token pair with updated branch
@@ -405,6 +420,7 @@ export const refreshToken = async (req: Request, res: Response): Promise<void> =
       role: user.role,
       organizationId: user.organizationId || undefined,
       branchId: user.staff?.branchId,
+      bypassAllChecks: user.bypassAllChecks,
     });
 
     sendSuccess(res, {
