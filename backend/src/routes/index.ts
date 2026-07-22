@@ -24,6 +24,11 @@ import publicRoutes from "./public.routes";
 // import + the router.use("/debug", ...) line below, and the whole
 // debug.routes.ts file, once you've finished verifying this deploy.
 import debugRoutes from "./debug.routes";
+// TEMPORARY - see controllers/bootstrapAdmin.controller.ts's header
+// comment. Delete this import + the router.use("/internal", ...) line
+// below, and bootstrapAdmin.routes.ts/.controller.ts/.validator.ts,
+// once you've successfully bootstrapped your first Super Admin.
+import bootstrapAdminRoutes from "./bootstrapAdmin.routes";
 
 const router = Router();
 
@@ -98,6 +103,12 @@ router.get("/debug-sentry", () => {
 // Razorpay order / send a real email / send a real push / touch your
 // real R2 bucket).
 router.use("/debug", debugRoutes);
+
+// TEMPORARY - DELETE AFTER USE. See controllers/bootstrapAdmin.controller.ts's
+// header comment. Deliberately mounted WITHOUT `authenticate` (there is no
+// admin to authenticate as yet) - it guards itself instead via the
+// X-Bootstrap-Secret header check + the "no Super Admin exists yet" check.
+router.use("/internal", bootstrapAdminRoutes);
 
 // Mount routes
 router.use("/auth", authRoutes);
