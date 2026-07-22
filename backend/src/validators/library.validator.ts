@@ -31,3 +31,40 @@ export const bulkIssueBookSchema = z.object({
     dueDate: z.coerce.date({ errorMap: () => ({ message: "Valid dueDate is required" }) }),
   }),
 });
+
+
+export const issueBookToStaffSchema = z.object({
+  body: z.object({
+    bookId: z.string().min(1, "bookId is required"),
+    staffId: z.string().min(1, "staffId is required"),
+    dueDate: z.coerce.date({ errorMap: () => ({ message: "Valid dueDate is required" }) }),
+  }),
+});
+
+export const markLostOrDamagedSchema = z.object({
+  body: z.object({
+    status: z.enum(["LOST", "DAMAGED"]),
+  }),
+});
+
+export const waiveLibraryCostSchema = z.object({
+  body: z.object({
+    waiveType: z.enum(["FINE", "LOST_DAMAGE"]),
+    amount: z.union([z.number(), z.string()]).transform((v) => Number(v)),
+    isPercent: z.boolean().optional(),
+  }),
+});
+
+export const upsertLibraryConfigSchema = z.object({
+  body: z.object({
+    branchId: z.string().optional(),
+    finePerDay: z.union([z.number(), z.string()]).transform((v) => Number(v)).optional(),
+    lostDamageCostMode: z.enum(["FIXED", "PERCENTAGE"]).optional(),
+    flatLostCost: z.union([z.number(), z.string()]).transform((v) => Number(v)).optional(),
+    flatDamagedCost: z.union([z.number(), z.string()]).transform((v) => Number(v)).optional(),
+    defaultLostCostPct: z.union([z.number(), z.string()]).transform((v) => Number(v)).optional(),
+    defaultDamagedCostPct: z.union([z.number(), z.string()]).transform((v) => Number(v)).optional(),
+    studentIssueLimit: z.number().int().min(1).optional(),
+    staffIssueLimit: z.number().int().min(1).optional(),
+  }),
+});

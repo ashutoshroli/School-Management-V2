@@ -1,17 +1,17 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, getIssuedBooks, deleteBook } from "../controllers/library.controller";
-import { addItem, getItems, getItemById, purchaseStock, issueStock, getLowStockAlerts, deleteItem } from "../controllers/inventory.controller";
-import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, getVehicleById, addVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute } from "../controllers/transport.controller";
-import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding, bulkAddFloors, bulkAddRooms } from "../controllers/hostel.controller";
+import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, getIssuedBooks, deleteBook, issueBookToStaff, markLostOrDamaged, waiveLibraryCost, getLibraryConfig, upsertLibraryConfig } from "../controllers/library.controller";
+import { addItem, getItems, getItemById, purchaseStock, issueStock, getLowStockAlerts, deleteItem, returnIssuedStock, raiseInventoryPurchaseRequest, advanceInventoryPurchaseRequest, getInventoryPurchaseRequests, getApplianceExpiryAlerts } from "../controllers/inventory.controller";
+import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, getVehicleById, addVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute, updateVehicleLocation, getVehicleLocations, logVehicleMaintenance, getVehicleMaintenanceLogs, setRouteDistance, getEffectiveStopFee } from "../controllers/transport.controller";
+import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding, bulkAddFloors, bulkAddRooms, requestBed, respondToRoomRequest, getSuggestedRooms, setAllotmentCutoff, finalizeHostelAllotments, hostelTap, getCurrentlyInHostel } from "../controllers/hostel.controller";
 import { createSchoolBuilding, getSchoolBuildings, addSchoolFloor, addSchoolRoom, updateSchoolRoom, deleteSchoolRoom, deleteSchoolBuilding, getSchoolOccupancySummary, bulkAddSchoolFloors, bulkAddSchoolRooms, addRoomCabin, getRoomCabins, updateRoomCabin, deleteRoomCabin } from "../controllers/schoolBuilding.controller";
 import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
 import { validate } from "../middleware/validate";
-import { addBookSchema, issueBookSchema, bulkIssueBookSchema } from "../validators/library.validator";
-import { addItemSchema, purchaseStockSchema, issueStockSchema } from "../validators/inventory.validator";
-import { createRouteSchema, addStopSchema, allocateStudentSchema, addVehicleSchema, assignVehicleToRouteSchema } from "../validators/transport.validator";
-import { createBuildingSchema, addFloorSchema, addRoomSchema, allocateRoomSchema, bulkAllocateRoomSchema, bulkAddFloorsSchema, bulkAddRoomsSchema } from "../validators/hostel.validator";
+import { addBookSchema, issueBookSchema, bulkIssueBookSchema, issueBookToStaffSchema, markLostOrDamagedSchema, waiveLibraryCostSchema, upsertLibraryConfigSchema } from "../validators/library.validator";
+import { addItemSchema, purchaseStockSchema, issueStockSchema, returnIssuedStockSchema, raiseInventoryPurchaseRequestSchema, advanceInventoryPurchaseRequestSchema } from "../validators/inventory.validator";
+import { createRouteSchema, addStopSchema, allocateStudentSchema, addVehicleSchema, assignVehicleToRouteSchema, updateVehicleLocationSchema, logVehicleMaintenanceSchema, setRouteDistanceSchema } from "../validators/transport.validator";
+import { createBuildingSchema, addFloorSchema, addRoomSchema, allocateRoomSchema, bulkAllocateRoomSchema, bulkAddFloorsSchema, bulkAddRoomsSchema, requestBedSchema, respondToRoomRequestSchema, setAllotmentCutoffSchema, finalizeHostelAllotmentsSchema, hostelTapSchema } from "../validators/hostel.validator";
 import { createSchoolBuildingSchema, addSchoolFloorSchema, addSchoolRoomSchema, updateSchoolRoomSchema, bulkAddSchoolFloorsSchema, bulkAddSchoolRoomsSchema, addRoomCabinSchema, updateRoomCabinSchema } from "../validators/schoolBuilding.validator";
 import { createDeviceSchema, updateDeviceSchema } from "../validators/attendanceDevice.validator";
 
@@ -29,6 +29,12 @@ router.post("/library/issue/bulk", authorize(...ADMIN, UserRole.LIBRARIAN), vali
 router.patch("/library/return/:id", authorize(...ADMIN, UserRole.LIBRARIAN), returnBook);
 router.get("/library/issued", authorize(...ADMIN, UserRole.LIBRARIAN), getIssuedBooks);
 router.delete("/library/books/:id", authorize(...ADMIN, UserRole.LIBRARIAN), deleteBook);
+router.post("/library/issue/staff", authorize(...ADMIN, UserRole.LIBRARIAN), validate(issueBookToStaffSchema), issueBookToStaff);
+router.patch("/library/issue/:id/lost-damaged", authorize(...ADMIN, UserRole.LIBRARIAN), validate(markLostOrDamagedSchema), markLostOrDamaged);
+// Waiver restricted to Principal/Admin per spec Section 12.
+router.patch("/library/issue/:id/waive", authorize(...ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), validate(waiveLibraryCostSchema), waiveLibraryCost);
+router.get("/library/config", authorize(...ADMIN, UserRole.LIBRARIAN), getLibraryConfig);
+router.put("/library/config", authorize(...ADMIN), validate(upsertLibraryConfigSchema), upsertLibraryConfig);
 
 // === INVENTORY ===
 router.post("/inventory/items", authorize(...ADMIN), branchAccess, validate(addItemSchema), addItem);
@@ -38,6 +44,12 @@ router.post("/inventory/purchase", authorize(...ADMIN), validate(purchaseStockSc
 router.post("/inventory/issue", authorize(...ADMIN), validate(issueStockSchema), issueStock);
 router.get("/inventory/low-stock", authorize(...ADMIN), getLowStockAlerts);
 router.delete("/inventory/items/:id", authorize(...ADMIN), deleteItem);
+router.patch("/inventory/issue/:id/return", authorize(...ADMIN), validate(returnIssuedStockSchema), returnIssuedStock);
+// Purchase/reorder approval chain (spec Section 17)
+router.post("/inventory/purchase-requests", authorize(...ADMIN), validate(raiseInventoryPurchaseRequestSchema), raiseInventoryPurchaseRequest);
+router.get("/inventory/purchase-requests", authorize(...ADMIN), getInventoryPurchaseRequests);
+router.patch("/inventory/purchase-requests/:id/advance", authorize(...ADMIN), validate(advanceInventoryPurchaseRequestSchema), advanceInventoryPurchaseRequest);
+router.get("/inventory/appliance-alerts", authorize(...ADMIN), getApplianceExpiryAlerts);
 
 // === TRANSPORT ===
 router.post("/transport/routes", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), branchAccess, validate(createRouteSchema), createRoute);
@@ -52,6 +64,15 @@ router.delete("/transport/vehicles/:id", authorize(...ADMIN, UserRole.TRANSPORT_
 router.delete("/transport/routes/:id", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), deleteRoute);
 router.post("/transport/vehicle-routes", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), validate(assignVehicleToRouteSchema), assignVehicleToRoute);
 router.delete("/transport/vehicle-routes/:vehicleId/:routeId", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), unassignVehicleFromRoute);
+// GPS live location (spec Section 11)
+router.patch("/transport/vehicles/:id/location", validate(updateVehicleLocationSchema), updateVehicleLocation);
+router.get("/transport/vehicles/locations", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), getVehicleLocations);
+// Fuel/maintenance tracking for both Own and Rented vehicles (spec Section 11)
+router.post("/transport/vehicles/maintenance", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), validate(logVehicleMaintenanceSchema), logVehicleMaintenance);
+router.get("/transport/vehicles/:vehicleId/maintenance", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), getVehicleMaintenanceLogs);
+// Route distance measurement + diesel-distance override (spec Section 11)
+router.patch("/transport/routes/:id/distance", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER), validate(setRouteDistanceSchema), setRouteDistance);
+router.get("/transport/stops/:stopId/effective-fee", authorize(...ADMIN, UserRole.TRANSPORT_MANAGER, UserRole.ACCOUNTANT), getEffectiveStopFee);
 
 // === HOSTEL ===
 router.post("/hostel/buildings", authorize(...ADMIN, UserRole.WARDEN), branchAccess, validate(createBuildingSchema), createBuilding);
@@ -65,6 +86,15 @@ router.get("/hostel/occupancy", getOccupancy);
 router.delete("/hostel/buildings/:id", authorize(...ADMIN, UserRole.WARDEN), deleteBuilding);
 router.post("/hostel/floors/bulk", authorize(...ADMIN, UserRole.WARDEN), validate(bulkAddFloorsSchema), bulkAddFloors);
 router.post("/hostel/rooms/bulk", authorize(...ADMIN, UserRole.WARDEN), validate(bulkAddRoomsSchema), bulkAddRooms);
+// Roommate-approval bed allotment flow (spec Section 13)
+router.post("/hostel/request-bed", authorize(...ADMIN, UserRole.WARDEN, UserRole.STUDENT, UserRole.PARENT), validate(requestBedSchema), requestBed);
+router.patch("/hostel/room-requests/:id/respond", authorize(...ADMIN, UserRole.WARDEN, UserRole.STUDENT, UserRole.PARENT), validate(respondToRoomRequestSchema), respondToRoomRequest);
+router.get("/hostel/suggested-rooms", authorize(...ADMIN, UserRole.WARDEN, UserRole.STUDENT, UserRole.PARENT), getSuggestedRooms);
+router.patch("/hostel/rooms/:id/allotment-cutoff", authorize(...ADMIN, UserRole.WARDEN), validate(setAllotmentCutoffSchema), setAllotmentCutoff);
+router.post("/hostel/finalize-allotments", authorize(...ADMIN, UserRole.WARDEN), validate(finalizeHostelAllotmentsSchema), finalizeHostelAllotments);
+// RFID in/out (spec Section 13)
+router.post("/hostel/tap", validate(hostelTapSchema), hostelTap);
+router.get("/hostel/currently-in", authorize(...ADMIN, UserRole.WARDEN), getCurrentlyInHostel);
 
 // === SCHOOL BUILDINGS (general-purpose: classrooms/labs/offices/etc) ===
 router.post("/school-buildings", authorize(...ADMIN), branchAccess, validate(createSchoolBuildingSchema), createSchoolBuilding);
