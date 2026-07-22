@@ -7,9 +7,24 @@ import { canAccessBranch } from "../utils/branchScope";
 /**
  * Create exam
  */
+/**
+ * Creation-rights scoping (spec Section 9):
+ *  - PRINCIPAL/VICE_PRINCIPAL/ADMIN - any scope (whole class, or
+ *    narrower via sectionId/subjectId if provided).
+ *  - TEACHER, when marked as the class teacher of the given sectionId -
+ *    custom exam for their OWN CLASS (section) only.
+ *  - TEACHER, otherwise - exam for their OWN assigned class-subject
+ *    only (must provide subjectId, and must actually teach it there).
+ * createdByRole/createdBy are recorded for audit/business-rule use
+ * (e.g. "Class/Subject Teacher created exams need no approval" -
+ * already true unconditionally for every exam here since nothing in
+ * this codebase gates publishing on it, but the field lets a future
+ * approval rule for PRINCIPAL-created exams be added without another
+ * migration).
+ */
 export const createExam = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { academicYearId, classId, name, type, startDate, endDate } = req.body;
+    const { academicYearId, classId, sectionId, subjectId, name, type, startDate, endDate } = req.body;
 
     // BUG FIX: Exam.academicYearId/classId are required (non-nullable)
     // relations, but the frontend's "Academic Year" field wasn't marked
@@ -23,11 +38,174 @@ export const createExam = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
+    let createdByRole: "PRINCIPAL" | "CLASS_TEACHER" | "SUBJECT_TEACHER" = "PRINCIPAL";
+    if (req.user!.role === "TEACHER") {
+      const staff = await prisma.staff.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+      if (!staff) { sendError(res, "Staff record not found", 404); return; }
+
+      if (sectionId) {
+        const section = await prisma.section.findUnique({ where: { id: sectionId }, select: { classTeacherId: true } });
+        if (section?.classTeacherId === staff.id) {
+          createdByRole = "CLASS_TEACHER";
+        } else {
+          sendError(res, "You may only create a custom exam for a section where you are the Class Teacher", 403);
+          return;
+        }
+      } else if (subjectId) {
+        const isAssigned = await prisma.subjectTeacher.count({
+          where: { staffId: staff.id, subjectId, OR: [{ classId }, { classId: null }] },
+        });
+        if (isAssigned === 0) {
+          sendError(res, "You may only create an exam for a class-subject you are assigned to teach", 403);
+          return;
+        }
+        createdByRole = "SUBJECT_TEACHER";
+      } else {
+        sendError(res, "A Teacher must specify either sectionId (as Class Teacher) or subjectId (as Subject Teacher) to create an exam", 400);
+        return;
+      }
+    }
+
+    // No fixed gap rule between exams - branch-wise custom gap setting
+    // instead (spec Section 20). Only a WARNING is surfaced (not a
+    // block) via the response's `gapWarning` field, consistent with
+    // every other "warning, not hard block" rule in this spec.
+    let gapWarning: string | null = null;
+    if (startDate) {
+      const cls = await prisma.class.findUnique({ where: { id: classId }, select: { branchId: true } });
+      const branch = cls ? await prisma.branch.findUnique({ where: { id: cls.branchId }, select: { examMinGapDays: true } }) : null;
+      const minGapDays = branch?.examMinGapDays || 0;
+      if (minGapDays > 0) {
+        const newStart = new Date(startDate);
+        const nearby = await prisma.exam.findMany({ where: { classId, startDate: { not: null } }, select: { name: true, startDate: true } });
+        for (const other of nearby) {
+          const gapDays = Math.abs((newStart.getTime() - new Date(other.startDate!).getTime()) / (1000 * 60 * 60 * 24));
+          if (gapDays < minGapDays) {
+            gapWarning = `This exam starts only ${Math.round(gapDays)} day(s) after "${other.name}" - branch policy recommends at least ${minGapDays} day(s) gap`;
+            break;
+          }
+        }
+      }
+    }
+
     const exam = await prisma.exam.create({
-      data: { academicYearId, classId, name, type, startDate: startDate ? new Date(startDate) : null, endDate: endDate ? new Date(endDate) : null },
+      data: {
+        academicYearId, classId, sectionId, subjectId, name, type,
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
+        createdByRole, createdBy: req.user!.userId,
+      },
     });
-    sendSuccess(res, exam, "Exam created", 201);
+    sendSuccess(res, { ...exam, gapWarning }, "Exam created", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Principal schedules an exam over an existing class/subject teacher's
+ * exam -> a postponement request is sent to that teacher (spec Section
+ * 9). If the teacher doesn't respond by respondDeadline, it
+ * auto-approves (see acknowledgePostponementRequest's timeout check
+ * below) and the teacher's exam is POSTPONED (not cancelled) - the
+ * teacher then sets a new date via the same endpoint once they do act.
+ */
+export const createPostponementRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { examId, affectedStaffId, reason, respondDeadline } = req.body;
+
+    const exam = await prisma.exam.findUnique({ where: { id: examId }, include: { class: { select: { branchId: true } } } });
+    if (!exam) { sendError(res, "Exam not found", 404); return; }
+    if (!canAccessBranch(req, exam.class.branchId)) { sendError(res, "Exam not found", 404); return; }
+
+    const request = await prisma.examPostponementRequest.create({
+      data: {
+        examId, affectedStaffId, reason,
+        requestedBy: req.user!.userId,
+        respondDeadline: new Date(respondDeadline),
+        status: "PENDING",
+      },
+    });
+    sendSuccess(res, request, "Postponement request sent to the affected teacher", 201);
+  } catch (error) { sendError(res, "Failed to create postponement request", 500, (error as Error).message); }
+};
+
+/**
+ * The affected teacher acknowledges the postponement and sets a new
+ * date for their exam - or, if respondDeadline has already passed
+ * without any response, the request is treated as auto-approved right
+ * here (lazy timeout check rather than a background job) and the
+ * exam is marked POSTPONED even without a newExamDate yet (the teacher
+ * can still set one afterward via the same endpoint).
+ */
+export const acknowledgePostponementRequest = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { newExamDate } = req.body;
+
+    const request = await prisma.examPostponementRequest.findUnique({ where: { id }, include: { exam: { include: { class: { select: { branchId: true } } } } } });
+    if (!request) { sendError(res, "Postponement request not found", 404); return; }
+    if (!canAccessBranch(req, request.exam.class.branchId)) { sendError(res, "Postponement request not found", 404); return; }
+
+    const isPastDeadline = new Date() > new Date(request.respondDeadline);
+    const status = request.status === "PENDING" && isPastDeadline ? "AUTO_APPROVED" : "POSTPONED";
+
+    const updated = await prisma.examPostponementRequest.update({
+      where: { id },
+      data: {
+        status: newExamDate ? "POSTPONED" : status,
+        respondedAt: new Date(),
+        ...(newExamDate && { newExamDate: new Date(newExamDate) }),
+      },
+    });
+
+    if (updated.status === "POSTPONED" || updated.status === "AUTO_APPROVED") {
+      await prisma.exam.update({ where: { id: request.examId }, data: { startDate: newExamDate ? new Date(newExamDate) : request.exam.startDate } });
+    }
+
+    sendSuccess(res, updated, isPastDeadline && request.status === "PENDING" ? "Deadline had passed - auto-approved and exam postponed" : "Postponement acknowledged");
+  } catch (error) { sendError(res, "Failed to acknowledge postponement request", 500, (error as Error).message); }
+};
+
+export const getPostponementRequests = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const affectedStaffId = req.query.affectedStaffId as string | undefined;
+    const where: any = {};
+    if (affectedStaffId) where.affectedStaffId = affectedStaffId;
+
+    const requests = await prisma.examPostponementRequest.findMany({
+      where,
+      include: { exam: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    sendSuccess(res, requests, "Postponement requests fetched");
+  } catch (error) { sendError(res, "Failed to fetch postponement requests", 500, (error as Error).message); }
+};
+
+/**
+ * Report card weightage per exam type, branch-wide (spec Section 9) -
+ * set by Principal.
+ */
+export const upsertReportCardWeightage = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { branchId, examType, weightPct } = req.body;
+    if (!canAccessBranch(req, branchId)) { sendError(res, "Access denied", 403); return; }
+
+    const updated = await prisma.reportCardWeightage.upsert({
+      where: { branchId_examType: { branchId, examType } },
+      update: { weightPct },
+      create: { branchId, examType, weightPct },
+    });
+    sendSuccess(res, updated, "Report card weightage saved");
+  } catch (error) { sendError(res, "Failed to save report card weightage", 500, (error as Error).message); }
+};
+
+export const getReportCardWeightages = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { branchId } = req.params;
+    if (!canAccessBranch(req, branchId)) { sendError(res, "Access denied", 403); return; }
+
+    const weightages = await prisma.reportCardWeightage.findMany({ where: { branchId } });
+    sendSuccess(res, weightages, "Report card weightages fetched");
+  } catch (error) { sendError(res, "Failed to fetch report card weightages", 500, (error as Error).message); }
 };
 
 /**

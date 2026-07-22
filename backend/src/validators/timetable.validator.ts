@@ -15,8 +15,17 @@ export const upsertSlotSchema = z.object({
     period: z.number().int().min(1, "period must be a positive integer"),
     subjectId: z.string().optional(),
     teacherId: z.string().optional(),
+    roomId: z.string().optional(),
     startTime: z.string().min(1, "startTime is required"),
     endTime: z.string().min(1, "endTime is required"),
     isBreak: z.boolean().optional(),
+  }),
+});
+
+export const updateTimetableConfigSchema = z.object({
+  body: z.object({
+    roomClashMode: z.enum(["WARNING", "BLOCK"]).optional(),
+    examMinGapDays: z.number().int().min(0).optional(),
+    attendanceWeekCycleDays: z.number().int().min(1).optional(),
   }),
 });

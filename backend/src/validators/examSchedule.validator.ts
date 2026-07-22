@@ -37,3 +37,11 @@ export const updateExamScheduleEntrySchema = z.object({
     roomId: z.string().nullable().optional(),
   }),
 });
+
+
+export const assignInvigilatorSchema = z.object({
+  body: z.object({
+    examScheduleId: z.string().min(1, "examScheduleId is required"),
+    staffId: z.string().min(1, "staffId is required"),
+  }),
+});
