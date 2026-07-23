@@ -32,6 +32,15 @@ export const config = {
     callbackUrl: process.env.GOOGLE_CALLBACK_URL || "http://localhost:5000/api/auth/google/callback",
   },
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
+  // TEMPORARY - only used by the one-time POST /api/internal/bootstrap-admin
+  // route (routes/bootstrapAdmin.routes.ts) to create the very first Super
+  // Admin on a deployment whose DB isn't reachable from outside (e.g.
+  // Render free-tier's internal-only Postgres connection string). Leave
+  // unset to keep that route disabled (it fails closed with a 503 rather
+  // than accepting an empty/missing header as a match - see the
+  // controller). Remove this along with the rest of the bootstrap
+  // endpoint once it's no longer needed.
+  bootstrapSecret: process.env.BOOTSTRAP_SECRET || "",
   razorpay: {
     keyId: process.env.RAZORPAY_KEY_ID || "",
     keySecret: process.env.RAZORPAY_KEY_SECRET || "",

@@ -42,6 +42,15 @@ services:
         value: 7d
       - key: FRONTEND_URL
         sync: false
+      # TEMPORARY - only used by the one-time POST /api/internal/bootstrap-admin
+      # endpoint (see backend/src/controllers/bootstrapAdmin.controller.ts) to
+      # create your first Super Admin when the DB has no external/local
+      # access (Render free-tier Postgres only exposes an internal
+      # connection string). Set this to any long random value (e.g.
+      # `openssl rand -hex 32`) in the Render dashboard, call the endpoint
+      # once, then remove both this env var and the endpoint itself.
+      - key: BOOTSTRAP_SECRET
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
