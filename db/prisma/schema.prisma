@@ -54,9 +54,17 @@ model Branch {
   rollNumberRule           RollNumberRule @default(ALPHABETICAL)
   // Timetable clash-detection mode for ROOM double-booking (spec
   // Section 20) - branch-configurable warning-only vs hard block.
-  // Teacher-clash is always a hard block (unchanged, pre-existing
-  // behavior in timetable.controller.ts's upsertSlot).
   roomClashMode            ClashMode      @default(WARNING)
+  // Timetable clash-detection mode for TEACHER double-booking (spec
+  // Section 20) - same branch-configurable warning-vs-block choice as
+  // roomClashMode above. Defaults to BLOCK (not WARNING) because a
+  // teacher clash was ALWAYS a hard block before this field existed
+  // (timetable.controller.ts's upsertSlot never had a
+  // warning-only path for it) - this default preserves that exact
+  // pre-existing behavior for every branch that never touches this
+  // new setting, while still letting a branch opt into warning-only
+  // if they want the same flexibility they already have for rooms.
+  teacherClashMode         ClashMode      @default(BLOCK)
   // No fixed gap rule between exams (spec Section 20) - branch-custom
   // minimum number of days required between two exams for the same
   // class. 0 = no gap enforced (default, fully backward compatible).
@@ -128,7 +136,8 @@ enum RollNumberRule {
 }
 
 // Timetable clash-detection mode (spec Section 20) - branch-configurable
-// warning-vs-block for room double-booking.
+// warning-vs-block, used by both Branch.roomClashMode (room
+// double-booking) and Branch.teacherClashMode (teacher double-booking).
 enum ClashMode {
   WARNING
   BLOCK
