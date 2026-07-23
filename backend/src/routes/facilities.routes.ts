@@ -3,7 +3,7 @@ import { UserRole } from "@prisma/client";
 import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, getIssuedBooks, deleteBook, issueBookToStaff, markLostOrDamaged, waiveLibraryCost, getLibraryConfig, upsertLibraryConfig, getStaffIssuedBooks, returnStaffBook } from "../controllers/library.controller";
 import { addItem, getItems, getItemById, purchaseStock, issueStock, getLowStockAlerts, deleteItem, returnIssuedStock, raiseInventoryPurchaseRequest, advanceInventoryPurchaseRequest, getInventoryPurchaseRequests, getApplianceExpiryAlerts } from "../controllers/inventory.controller";
 import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, getVehicleById, addVehicle, updateVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute, updateVehicleLocation, getVehicleLocations, logVehicleMaintenance, getVehicleMaintenanceLogs, setRouteDistance, getEffectiveStopFee } from "../controllers/transport.controller";
-import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding, bulkAddFloors, bulkAddRooms, requestBed, respondToRoomRequest, getSuggestedRooms, setAllotmentCutoff, finalizeHostelAllotments, hostelTap, getCurrentlyInHostel } from "../controllers/hostel.controller";
+import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding, bulkAddFloors, bulkAddRooms, requestBed, respondToRoomRequest, getSuggestedRooms, setAllotmentCutoff, finalizeHostelAllotments, hostelTap, getCurrentlyInHostel, getRoomRequests, getMyHostelStatus } from "../controllers/hostel.controller";
 import { createSchoolBuilding, getSchoolBuildings, addSchoolFloor, addSchoolRoom, updateSchoolRoom, deleteSchoolRoom, deleteSchoolBuilding, getSchoolOccupancySummary, bulkAddSchoolFloors, bulkAddSchoolRooms, addRoomCabin, getRoomCabins, updateRoomCabin, deleteRoomCabin } from "../controllers/schoolBuilding.controller";
 import { createDevice, getDevices, updateDevice, regenerateApiKey, deleteDevice } from "../controllers/attendanceDevice.controller";
 import { authenticate, authorize, branchAccess } from "../middleware/auth";
@@ -93,6 +93,8 @@ router.post("/hostel/rooms/bulk", authorize(...ADMIN, UserRole.WARDEN), validate
 router.post("/hostel/request-bed", authorize(...ADMIN, UserRole.WARDEN, UserRole.STUDENT, UserRole.PARENT), validate(requestBedSchema), requestBed);
 router.patch("/hostel/room-requests/:id/respond", authorize(...ADMIN, UserRole.WARDEN, UserRole.STUDENT, UserRole.PARENT), validate(respondToRoomRequestSchema), respondToRoomRequest);
 router.get("/hostel/suggested-rooms", authorize(...ADMIN, UserRole.WARDEN, UserRole.STUDENT, UserRole.PARENT), getSuggestedRooms);
+router.get("/hostel/room-requests", authorize(...ADMIN, UserRole.WARDEN, UserRole.STUDENT, UserRole.PARENT), getRoomRequests);
+router.get("/hostel/my-status", authorize(UserRole.STUDENT, UserRole.PARENT), getMyHostelStatus);
 router.patch("/hostel/rooms/:id/allotment-cutoff", authorize(...ADMIN, UserRole.WARDEN), validate(setAllotmentCutoffSchema), setAllotmentCutoff);
 router.post("/hostel/finalize-allotments", authorize(...ADMIN, UserRole.WARDEN), validate(finalizeHostelAllotmentsSchema), finalizeHostelAllotments);
 // RFID in/out (spec Section 13)
