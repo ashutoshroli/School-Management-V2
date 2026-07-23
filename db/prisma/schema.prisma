@@ -2429,6 +2429,16 @@ enum RoomStatus {
 enum SchoolRoomType {
   CLASSROOM
   LAB
+  // Subject-specific lab subtypes (spec Section 18B) - distinct from
+  // the generic LAB above so a school can name/filter e.g. "which
+  // floor is the Chemistry Lab on" without relying on the free-text
+  // `name` field for it. LAB itself stays available as the fallback
+  // for any lab not covered by these specific subjects (a general
+  // Science Lab, a Robotics Lab, etc).
+  PHYSICS_LAB
+  CHEMISTRY_LAB
+  BIOLOGY_LAB
+  COMPUTER_LAB
   OFFICE
   CHAMBER
   // Dedicated multi-occupant teacher room - functionally like CHAMBER/
@@ -2439,6 +2449,21 @@ enum SchoolRoomType {
   // folded into the generic CHAMBER or STAFF_ROOM buckets.
   TEACHER_CHAMBER
   STAFF_ROOM
+  // Named administrative chamber/office subtypes (spec Section 18B) -
+  // distinct from the generic CHAMBER/OFFICE above so these
+  // role-specific spaces (relevant for wayfinding, e.g. "where's the
+  // Principal's Chamber?") show up clearly in the Room Type list/
+  // filters instead of being folded into the generic buckets.
+  PRINCIPAL_CHAMBER
+  PRINCIPAL_WAITING_ROOM
+  VICE_PRINCIPAL_CHAMBER
+  HOD_OFFICE
+  FRONT_OFFICE
+  ACCOUNTS_OFFICE
+  RECEPTION
+  SERVER_ROOM
+  CONFERENCE_ROOM
+  TRANSPORT_OFFICE
   LIBRARY
   AUDITORIUM
   SPORTS_ROOM
