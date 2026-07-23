@@ -1,11 +1,44 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus, Signpost, Link2, Link2Off, Eye } from "lucide-react";
+import { Bus, Plus, MapPin, Trash2, IndianRupee, CheckCircle2, Users, Search, UserPlus, UserMinus, Signpost, Link2, Link2Off, Eye, Pencil, Navigation, ShieldAlert, Ruler, Wrench } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
+
+// Own vs Rented + compliance-date fields exist on Vehicle (spec Section
+// 11) but had no UI at all before this - see the "Add Vehicle" modal
+// and vehicle card badges below.
+const VEHICLE_TYPES = ["Bus", "Van", "Auto"];
+
+/** "expired" (red) / "expiring" (amber, within 30 days) / "ok" (no badge needed) / null (no date set). */
+function expiryStatus(date: string | null | undefined): "expired" | "expiring" | "ok" | null {
+  if (!date) return null;
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  const daysLeft = (d.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  if (daysLeft < 0) return "expired";
+  if (daysLeft <= 30) return "expiring";
+  return "ok";
+}
+
+function ExpiryBadge({ label, date }: { label: string; date: string | null | undefined }) {
+  const status = expiryStatus(date);
+  if (!date) return null;
+  const styles =
+    status === "expired"
+      ? "bg-red-100 text-red-700"
+      : status === "expiring"
+      ? "bg-amber-100 text-amber-700"
+      : "bg-gray-100 text-gray-600";
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${styles}`}>
+      {(status === "expired" || status === "expiring") && <ShieldAlert className="h-3 w-3" />}
+      {label}: {formatDate(date)}
+    </span>
+  );
+}
 
 export default function TransportPage() {
   const { canDelete } = usePermissions();
@@ -38,10 +71,47 @@ export default function TransportPage() {
 
   // Add Stop (populates TransportStop for a route, shown as chips on
   // the route card above and usable as `stopName` when allocating
-  // students).
+  // students). distanceFromStartKm/monthlyFeeOverride let a stop's fee
+  // be set/derived per-stop instead of always using the route's flat
+  // monthlyFee (spec Section 11 - "Fee: stop-wise / distance-wise, not
+  // flat") - the backend already accepted these, the form just never
+  // sent them.
   const [stopRoute, setStopRoute] = useState<any>(null);
-  const [stopForm, setStopForm] = useState({ name: "", order: "", time: "" });
+  const [stopForm, setStopForm] = useState({ name: "", order: "", time: "", distanceFromStartKm: "", monthlyFeeOverride: "" });
   const [addingStop, setAddingStop] = useState(false);
+
+  // Route distance + diesel-distance override (spec Section 11) - the
+  // setRouteDistance endpoint existed with no UI at all.
+  const [distanceRoute, setDistanceRoute] = useState<any>(null);
+  const [distanceForm, setDistanceForm] = useState({ distance: "", dieselDistanceOverride: "" });
+  const [savingDistance, setSavingDistance] = useState(false);
+
+  // Add Vehicle - the addVehicle endpoint (with driver + ownership +
+  // rental-fee + compliance-date fields) existed with NO form/modal in
+  // the UI at all before this - vehicles could only be created via the
+  // demo-data seeder or a direct API call.
+  const [showVehicleModal, setShowVehicleModal] = useState(false);
+  const [vehicleForm, setVehicleForm] = useState({
+    vehicleNo: "", type: "Bus", capacity: "",
+    driverName: "", driverPhone: "", driverLicense: "",
+    ownership: "OWN", monthlyFixedFee: "", perKmRate: "",
+    insuranceExpiry: "", fitnessExpiry: "", pucExpiry: "",
+  });
+  const [savingVehicle, setSavingVehicle] = useState(false);
+
+  // Maintenance log (fuel/service/repair) - logVehicleMaintenance /
+  // getVehicleMaintenanceLogs existed with no UI at all before this.
+  const [maintenanceVehicle, setMaintenanceVehicle] = useState<any>(null);
+  const [maintenanceLogs, setMaintenanceLogs] = useState<any[]>([]);
+  const [maintenanceLoading, setMaintenanceLoading] = useState(false);
+  const [maintenanceForm, setMaintenanceForm] = useState({ type: "", cost: "", odometerReading: "", notes: "" });
+  const [savingMaintenance, setSavingMaintenance] = useState(false);
+
+  // Live GPS locations panel (spec Section 11) - getVehicleLocations
+  // existed with no UI at all before this.
+  const [showLocations, setShowLocations] = useState(false);
+  const [vehicleLocations, setVehicleLocations] = useState<any[]>([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
 
   // Assign/unassign a vehicle to route(s) - populates the VehicleRoute
   // join table, which previously had no endpoint that could ever
@@ -68,6 +138,157 @@ export default function TransportPage() {
       setVehicleDetail(null);
     } finally {
       setVehicleDetailLoading(false);
+    }
+  };
+
+  // Add/Edit Vehicle - one modal handles both (editingVehicleId is null
+  // for "Add", or the vehicle's id for "Edit"). vehicleNo is only ever
+  // sent on create - see updateVehicleSchema's doc comment on the
+  // backend for why it's excluded from edits.
+  const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null);
+
+  /** Converts a backend ISO datetime (or null) to a "YYYY-MM-DD" string for an <input type="date">. */
+  const toDateInputValue = (date: string | null | undefined): string => {
+    if (!date) return "";
+    const d = new Date(date);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toISOString().slice(0, 10);
+  };
+
+  const openAddVehicleModal = () => {
+    setEditingVehicleId(null);
+    setVehicleForm({
+      vehicleNo: "", type: "Bus", capacity: "",
+      driverName: "", driverPhone: "", driverLicense: "",
+      ownership: "OWN", monthlyFixedFee: "", perKmRate: "",
+      insuranceExpiry: "", fitnessExpiry: "", pucExpiry: "",
+    });
+    setShowVehicleModal(true);
+  };
+
+  const openEditVehicleModal = (v: any) => {
+    setEditingVehicleId(v.id);
+    setVehicleForm({
+      vehicleNo: v.vehicleNo || "",
+      type: v.type || "Bus",
+      capacity: v.capacity != null ? String(v.capacity) : "",
+      driverName: v.driverName || "",
+      driverPhone: v.driverPhone || "",
+      driverLicense: v.driverLicense || "",
+      ownership: v.ownership || "OWN",
+      monthlyFixedFee: v.monthlyFixedFee != null ? String(v.monthlyFixedFee) : "",
+      perKmRate: v.perKmRate != null ? String(v.perKmRate) : "",
+      insuranceExpiry: toDateInputValue(v.insuranceExpiry),
+      fitnessExpiry: toDateInputValue(v.fitnessExpiry),
+      pucExpiry: toDateInputValue(v.pucExpiry),
+    });
+    setShowVehicleModal(true);
+  };
+
+  const handleSaveVehicle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingVehicle(true);
+    try {
+      const payload: any = {
+        type: vehicleForm.type,
+        capacity: parseInt(vehicleForm.capacity, 10),
+        driverName: vehicleForm.driverName || undefined,
+        driverPhone: vehicleForm.driverPhone || undefined,
+        driverLicense: vehicleForm.driverLicense || undefined,
+        ownership: vehicleForm.ownership,
+        monthlyFixedFee: vehicleForm.ownership === "RENTED" && vehicleForm.monthlyFixedFee ? parseFloat(vehicleForm.monthlyFixedFee) : undefined,
+        perKmRate: vehicleForm.ownership === "RENTED" && vehicleForm.perKmRate ? parseFloat(vehicleForm.perKmRate) : undefined,
+        insuranceExpiry: vehicleForm.insuranceExpiry || undefined,
+        fitnessExpiry: vehicleForm.fitnessExpiry || undefined,
+        pucExpiry: vehicleForm.pucExpiry || undefined,
+      };
+      if (editingVehicleId) {
+        await api.patch(`/facilities/transport/vehicles/${editingVehicleId}`, payload);
+      } else {
+        await api.post("/facilities/transport/vehicles", { ...payload, vehicleNo: vehicleForm.vehicleNo });
+      }
+      setShowVehicleModal(false);
+      await fetch();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to save vehicle");
+    } finally {
+      setSavingVehicle(false);
+    }
+  };
+
+  // Maintenance log (fuel/service/repair)
+  const openMaintenanceModal = async (v: any) => {
+    setMaintenanceVehicle(v);
+    setMaintenanceForm({ type: "", cost: "", odometerReading: "", notes: "" });
+    setMaintenanceLoading(true);
+    try {
+      const res = await api.get(`/facilities/transport/vehicles/${v.id}/maintenance`);
+      setMaintenanceLogs(res.data.data || []);
+    } catch {
+      setMaintenanceLogs([]);
+    } finally {
+      setMaintenanceLoading(false);
+    }
+  };
+
+  const handleAddMaintenance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!maintenanceVehicle) return;
+    setSavingMaintenance(true);
+    try {
+      await api.post("/facilities/transport/vehicles/maintenance", {
+        vehicleId: maintenanceVehicle.id,
+        type: maintenanceForm.type,
+        cost: parseFloat(maintenanceForm.cost),
+        odometerReading: maintenanceForm.odometerReading ? parseInt(maintenanceForm.odometerReading, 10) : undefined,
+        notes: maintenanceForm.notes || undefined,
+      });
+      const res = await api.get(`/facilities/transport/vehicles/${maintenanceVehicle.id}/maintenance`);
+      setMaintenanceLogs(res.data.data || []);
+      setMaintenanceForm({ type: "", cost: "", odometerReading: "", notes: "" });
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to log maintenance");
+    } finally {
+      setSavingMaintenance(false);
+    }
+  };
+
+  // Live GPS locations panel
+  const openLocationsPanel = async () => {
+    setShowLocations(true);
+    setLocationsLoading(true);
+    try {
+      const res = await api.get("/facilities/transport/vehicles/locations");
+      setVehicleLocations(res.data.data || []);
+    } catch {
+      setVehicleLocations([]);
+    } finally {
+      setLocationsLoading(false);
+    }
+  };
+
+  // Route distance + diesel-distance override
+  const openDistanceModal = (route: any) => {
+    setDistanceRoute(route);
+    setDistanceForm({
+      distance: route.distance != null ? String(route.distance) : "",
+      dieselDistanceOverride: route.dieselDistanceOverride != null ? String(route.dieselDistanceOverride) : "",
+    });
+  };
+
+  const handleSaveDistance = async () => {
+    if (!distanceRoute) return;
+    setSavingDistance(true);
+    try {
+      await api.patch(`/facilities/transport/routes/${distanceRoute.id}/distance`, {
+        distance: distanceForm.distance ? parseFloat(distanceForm.distance) : undefined,
+        dieselDistanceOverride: distanceForm.dieselDistanceOverride ? parseFloat(distanceForm.dieselDistanceOverride) : undefined,
+      });
+      await fetch();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to update route distance");
+    } finally {
+      setSavingDistance(false);
     }
   };
 
@@ -102,6 +323,10 @@ export default function TransportPage() {
     if (routeVehicle) {
       const fresh = vehicles.find((v) => v.id === routeVehicle.id);
       if (fresh) setRouteVehicle(fresh);
+    }
+    if (distanceRoute) {
+      const fresh = routes.find((r) => r.id === distanceRoute.id);
+      if (fresh) setDistanceRoute(fresh);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routes, vehicles]);
@@ -143,7 +368,7 @@ export default function TransportPage() {
     // Default the new stop's order to "one after the last stop" so
     // admins don't have to manually track the running sequence.
     const nextOrder = route.stops?.length ? Math.max(...route.stops.map((s: any) => s.order)) + 1 : 0;
-    setStopForm({ name: "", order: String(nextOrder), time: "" });
+    setStopForm({ name: "", order: String(nextOrder), time: "", distanceFromStartKm: "", monthlyFeeOverride: "" });
   };
 
   const handleAddStop = async (e: React.FormEvent) => {
@@ -156,9 +381,13 @@ export default function TransportPage() {
         name: stopForm.name,
         order: parseInt(stopForm.order, 10),
         time: stopForm.time,
+        // Stop-wise / distance-wise fee (spec Section 11) - previously
+        // never sent even though the backend already accepted them.
+        distanceFromStartKm: stopForm.distanceFromStartKm ? parseFloat(stopForm.distanceFromStartKm) : undefined,
+        monthlyFeeOverride: stopForm.monthlyFeeOverride ? parseFloat(stopForm.monthlyFeeOverride) : undefined,
       });
       await fetch();
-      setStopForm((f) => ({ name: "", order: String((parseInt(f.order, 10) || 0) + 1), time: "" }));
+      setStopForm((f) => ({ name: "", order: String((parseInt(f.order, 10) || 0) + 1), time: "", distanceFromStartKm: "", monthlyFeeOverride: "" }));
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to add stop");
     } finally {
@@ -267,7 +496,11 @@ export default function TransportPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Bus className="h-6 w-6 text-primary-600" /> Transport</h1>
-        <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Add Route</button>
+        <div className="flex items-center gap-2">
+          <button onClick={openLocationsPanel} className="btn-secondary flex items-center gap-2"><Navigation className="h-4 w-4" /> Live Locations</button>
+          <button onClick={openAddVehicleModal} className="btn-secondary flex items-center gap-2"><Plus className="h-4 w-4" /> Add Vehicle</button>
+          <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2"><Plus className="h-4 w-4" /> Add Route</button>
+        </div>
       </div>
 
       {loading ? <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary-600 border-t-transparent rounded-full" /></div> : (
@@ -288,12 +521,18 @@ export default function TransportPage() {
                   <span className="text-green-700 font-medium">{formatCurrency(r.monthlyFee)}/month</span>
                   <span className="text-gray-500">{r._count?.allocations || 0} students</span>
                 </div>
+                {/* Route distance + diesel-distance override (spec Section 11) - previously set-only via a direct API call, never shown or editable here. */}
+                <div className="flex items-center gap-1 text-xs text-gray-400 mt-1">
+                  <Ruler className="h-3 w-3" />
+                  {r.distance != null ? `${r.distance} km` : "Distance not set"}
+                  {r.dieselDistanceOverride != null && ` (diesel calc: ${r.dieselDistanceOverride} km)`}
+                </div>
                 {r.stops?.length > 0 && (
                   <div className="mt-3 pt-2 border-t"><p className="text-xs text-gray-400 mb-1">Stops ({r.stops.length}):</p>
                     <div className="flex flex-wrap gap-1">{r.stops.map((s: any) => <span key={s.id} className="text-xs px-2 py-0.5 bg-gray-100 rounded">{s.name}</span>)}</div>
                   </div>
                 )}
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="mt-3 grid grid-cols-3 gap-2">
                   <button
                     onClick={() => openManageModal(r)}
                     className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-50 rounded-lg py-1.5 flex items-center justify-center gap-1"
@@ -305,6 +544,12 @@ export default function TransportPage() {
                     className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-50 rounded-lg py-1.5 flex items-center justify-center gap-1"
                   >
                     <Signpost className="h-3.5 w-3.5" /> Add Stop
+                  </button>
+                  <button
+                    onClick={() => openDistanceModal(r)}
+                    className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-50 rounded-lg py-1.5 flex items-center justify-center gap-1"
+                  >
+                    <Ruler className="h-3.5 w-3.5" /> Distance
                   </button>
                 </div>
                 <button
@@ -326,9 +571,22 @@ export default function TransportPage() {
                   <div key={v.id} className="bg-gray-50 p-3 rounded-lg text-sm">
                     <div className="flex items-start justify-between">
                       <div>
-                        <p className="font-medium">{v.vehicleNo}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium">{v.vehicleNo}</p>
+                          {/* Own vs Rented (spec Section 11) - never shown anywhere before this. */}
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${v.ownership === "RENTED" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>
+                            {v.ownership === "RENTED" ? "Rented" : "Own"}
+                          </span>
+                        </div>
                         <p className="text-xs text-gray-500">{v.type} | Capacity: {v.capacity}</p>
-                        {v.driverName && <p className="text-xs text-gray-400">Driver: {v.driverName}</p>}
+                        {v.driverName && <p className="text-xs text-gray-400">Driver: {v.driverName}{v.driverPhone ? ` (${v.driverPhone})` : ""}</p>}
+                        {v.ownership === "RENTED" && (v.monthlyFixedFee || v.perKmRate) && (
+                          <p className="text-xs text-gray-400">
+                            {v.monthlyFixedFee && `Fixed: ${formatCurrency(v.monthlyFixedFee)}/mo`}
+                            {v.monthlyFixedFee && v.perKmRate && " | "}
+                            {v.perKmRate && `${formatCurrency(v.perKmRate)}/km`}
+                          </p>
+                        )}
                       </div>
                       {canDelete && (
                         <button onClick={() => deleteVehicle(v.id, v.vehicleNo)} title="Delete Vehicle" className="text-red-400 hover:text-red-600">
@@ -336,6 +594,14 @@ export default function TransportPage() {
                         </button>
                       )}
                     </div>
+                    {/* Compliance-date expiry badges (spec Section 11) - never shown anywhere before this. */}
+                    {(v.insuranceExpiry || v.fitnessExpiry || v.pucExpiry) && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        <ExpiryBadge label="Insurance" date={v.insuranceExpiry} />
+                        <ExpiryBadge label="Fitness" date={v.fitnessExpiry} />
+                        <ExpiryBadge label="PUC" date={v.pucExpiry} />
+                      </div>
+                    )}
                     {v.routes?.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {v.routes.map((vr: any) => (
@@ -355,6 +621,18 @@ export default function TransportPage() {
                         className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-100 bg-white rounded-lg py-1 flex items-center justify-center gap-1"
                       >
                         <Link2 className="h-3.5 w-3.5" /> Routes
+                      </button>
+                      <button
+                        onClick={() => openEditVehicleModal(v)}
+                        className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-100 bg-white rounded-lg py-1 flex items-center justify-center gap-1"
+                      >
+                        <Pencil className="h-3.5 w-3.5" /> Edit
+                      </button>
+                      <button
+                        onClick={() => openMaintenanceModal(v)}
+                        className="text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 hover:bg-gray-100 bg-white rounded-lg py-1 flex items-center justify-center gap-1"
+                      >
+                        <Wrench className="h-3.5 w-3.5" /> Maintenance
                       </button>
                     </div>
                   </div>
@@ -478,6 +756,9 @@ export default function TransportPage() {
                     <span className="flex items-center gap-2">
                       <span className="text-xs font-mono text-gray-400 w-6">#{s.order}</span>
                       <span className="font-medium">{s.name}</span>
+                      {/* Stop-wise fee/distance (spec Section 11) - never shown anywhere before this. */}
+                      {s.distanceFromStartKm != null && <span className="text-xs text-gray-400">{s.distanceFromStartKm} km</span>}
+                      {s.monthlyFeeOverride != null && <span className="text-xs text-green-700">{formatCurrency(s.monthlyFeeOverride)}/mo</span>}
                     </span>
                     <span className="text-xs text-gray-500">{s.time}</span>
                   </div>
@@ -504,6 +785,16 @@ export default function TransportPage() {
                 <input type="time" className="input-field" value={stopForm.time} onChange={(e) => setStopForm({ ...stopForm, time: e.target.value })} required />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">Distance from Start (km)</label>
+                <input type="number" step="0.01" min={0} className="input-field" value={stopForm.distanceFromStartKm} onChange={(e) => setStopForm({ ...stopForm, distanceFromStartKm: e.target.value })} placeholder="Optional" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Monthly Fee Override (Rs)</label>
+                <input type="number" step="0.01" min={0} className="input-field" value={stopForm.monthlyFeeOverride} onChange={(e) => setStopForm({ ...stopForm, monthlyFeeOverride: e.target.value })} placeholder={`Defaults to route's ${formatCurrency(stopRoute?.monthlyFee || 0)}`} />
+              </div>
+            </div>
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={() => setStopRoute(null)} className="btn-secondary">Close</button>
               <button type="submit" disabled={addingStop} className="btn-primary disabled:opacity-50">
@@ -511,6 +802,178 @@ export default function TransportPage() {
               </button>
             </div>
           </form>
+        </div>
+      </Modal>
+
+      <Modal isOpen={!!distanceRoute} onClose={() => setDistanceRoute(null)} title={`Route Distance - ${distanceRoute?.name || ""}`}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Set the measured distance for this route, and optionally a separate distance used only for diesel-cost calculations
+            (if it differs from the route's actual distance).
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Distance (km)</label>
+              <input type="number" step="0.01" min={0} className="input-field" value={distanceForm.distance} onChange={(e) => setDistanceForm({ ...distanceForm, distance: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Diesel-Calc Distance Override (km)</label>
+              <input type="number" step="0.01" min={0} className="input-field" value={distanceForm.dieselDistanceOverride} onChange={(e) => setDistanceForm({ ...distanceForm, dieselDistanceOverride: e.target.value })} placeholder="Optional" />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setDistanceRoute(null)} className="btn-secondary">Close</button>
+            <button type="button" onClick={handleSaveDistance} disabled={savingDistance} className="btn-primary disabled:opacity-50">
+              {savingDistance ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showVehicleModal} onClose={() => setShowVehicleModal(false)} title={editingVehicleId ? "Edit Vehicle" : "Add Vehicle"}>
+        <form onSubmit={handleSaveVehicle} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Vehicle No *</label>
+              <input
+                className="input-field disabled:bg-gray-100"
+                value={vehicleForm.vehicleNo}
+                onChange={(e) => setVehicleForm({ ...vehicleForm, vehicleNo: e.target.value })}
+                disabled={!!editingVehicleId}
+                title={editingVehicleId ? "Vehicle number cannot be changed after creation" : undefined}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Type *</label>
+              <select className="input-field" value={vehicleForm.type} onChange={(e) => setVehicleForm({ ...vehicleForm, type: e.target.value })} required>
+                {VEHICLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div><label className="block text-sm font-medium mb-1">Capacity *</label><input type="number" min={1} className="input-field" value={vehicleForm.capacity} onChange={(e) => setVehicleForm({ ...vehicleForm, capacity: e.target.value })} required /></div>
+
+          <div className="pt-2 border-t">
+            <h4 className="text-sm font-semibold text-gray-600 mb-2">Driver Details</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <div><label className="block text-sm font-medium mb-1">Name</label><input className="input-field" value={vehicleForm.driverName} onChange={(e) => setVehicleForm({ ...vehicleForm, driverName: e.target.value })} /></div>
+              <div><label className="block text-sm font-medium mb-1">Phone</label><input className="input-field" value={vehicleForm.driverPhone} onChange={(e) => setVehicleForm({ ...vehicleForm, driverPhone: e.target.value })} /></div>
+              <div><label className="block text-sm font-medium mb-1">License No</label><input className="input-field" value={vehicleForm.driverLicense} onChange={(e) => setVehicleForm({ ...vehicleForm, driverLicense: e.target.value })} /></div>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t">
+            <h4 className="text-sm font-semibold text-gray-600 mb-2">Ownership</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">Own / Rented</label>
+                <select className="input-field" value={vehicleForm.ownership} onChange={(e) => setVehicleForm({ ...vehicleForm, ownership: e.target.value })}>
+                  <option value="OWN">Own</option>
+                  <option value="RENTED">Rented</option>
+                </select>
+              </div>
+              {vehicleForm.ownership === "RENTED" && (
+                <>
+                  <div><label className="block text-sm font-medium mb-1">Monthly Fixed Fee (Rs)</label><input type="number" step="0.01" min={0} className="input-field" value={vehicleForm.monthlyFixedFee} onChange={(e) => setVehicleForm({ ...vehicleForm, monthlyFixedFee: e.target.value })} /></div>
+                  <div><label className="block text-sm font-medium mb-1">Per-Km Rate (Rs)</label><input type="number" step="0.01" min={0} className="input-field" value={vehicleForm.perKmRate} onChange={(e) => setVehicleForm({ ...vehicleForm, perKmRate: e.target.value })} /></div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="pt-2 border-t">
+            <h4 className="text-sm font-semibold text-gray-600 mb-2">Compliance Dates</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <div><label className="block text-sm font-medium mb-1">Insurance Expiry</label><input type="date" className="input-field" value={vehicleForm.insuranceExpiry} onChange={(e) => setVehicleForm({ ...vehicleForm, insuranceExpiry: e.target.value })} /></div>
+              <div><label className="block text-sm font-medium mb-1">Fitness Expiry</label><input type="date" className="input-field" value={vehicleForm.fitnessExpiry} onChange={(e) => setVehicleForm({ ...vehicleForm, fitnessExpiry: e.target.value })} /></div>
+              <div><label className="block text-sm font-medium mb-1">PUC Expiry</label><input type="date" className="input-field" value={vehicleForm.pucExpiry} onChange={(e) => setVehicleForm({ ...vehicleForm, pucExpiry: e.target.value })} /></div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setShowVehicleModal(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={savingVehicle} className="btn-primary disabled:opacity-50">
+              {savingVehicle ? "Saving..." : editingVehicleId ? "Save Changes" : "Add Vehicle"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={!!maintenanceVehicle} onClose={() => setMaintenanceVehicle(null)} title={`Maintenance Log - ${maintenanceVehicle?.vehicleNo || ""}`} size="lg">
+        <div className="space-y-4">
+          <div>
+            <h4 className="text-sm font-semibold text-gray-600 mb-2">History</h4>
+            {maintenanceLoading ? (
+              <div className="flex justify-center py-4"><div className="animate-spin h-5 w-5 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+            ) : maintenanceLogs.length > 0 ? (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {maintenanceLogs.map((log: any) => (
+                  <div key={log.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                    <div>
+                      <p className="font-medium">{log.type}</p>
+                      <p className="text-xs text-gray-500">
+                        {formatDate(log.loggedAt)}
+                        {log.odometerReading != null && ` \u2022 ${log.odometerReading} km`}
+                        {log.notes && ` \u2022 ${log.notes}`}
+                      </p>
+                    </div>
+                    <span className="text-sm font-medium text-red-600">{formatCurrency(log.cost)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">No maintenance/fuel entries logged yet.</p>
+            )}
+          </div>
+
+          <form onSubmit={handleAddMaintenance} className="pt-3 border-t space-y-3">
+            <h4 className="text-sm font-semibold text-gray-600">Log New Entry</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">Type *</label>
+                <input className="input-field" placeholder="Service, Repair, Fuel, Tyre Change..." value={maintenanceForm.type} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, type: e.target.value })} required />
+              </div>
+              <div><label className="block text-sm font-medium mb-1">Cost (Rs) *</label><input type="number" step="0.01" min={0} className="input-field" value={maintenanceForm.cost} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, cost: e.target.value })} required /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="block text-sm font-medium mb-1">Odometer Reading (km)</label><input type="number" min={0} className="input-field" value={maintenanceForm.odometerReading} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, odometerReading: e.target.value })} /></div>
+              <div><label className="block text-sm font-medium mb-1">Notes</label><input className="input-field" value={maintenanceForm.notes} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, notes: e.target.value })} /></div>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setMaintenanceVehicle(null)} className="btn-secondary">Close</button>
+              <button type="submit" disabled={savingMaintenance} className="btn-primary disabled:opacity-50">
+                {savingMaintenance ? "Logging..." : "Log Entry"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showLocations} onClose={() => setShowLocations(false)} title="Live Vehicle Locations" size="lg">
+        <div className="space-y-2">
+          {locationsLoading ? (
+            <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" /></div>
+          ) : vehicleLocations.length > 0 ? (
+            vehicleLocations.map((v: any) => (
+              <div key={v.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                <span className="font-medium flex items-center gap-2"><Navigation className="h-3.5 w-3.5 text-gray-400" /> {v.vehicleNo}</span>
+                {v.lastLat != null && v.lastLng != null ? (
+                  <span className="text-xs text-gray-500">
+                    {v.lastLat}, {v.lastLng}
+                    {v.lastLocationAt && ` \u2022 as of ${formatDate(v.lastLocationAt)}`}
+                  </span>
+                ) : (
+                  <span className="text-xs text-gray-400">No location reported yet</span>
+                )}
+              </div>
+            ))
+          ) : (
+            <p className="text-sm text-gray-400">No active vehicles found.</p>
+          )}
+          <div className="flex justify-end pt-4 border-t">
+            <button type="button" onClick={() => setShowLocations(false)} className="btn-secondary">Close</button>
+          </div>
         </div>
       </Modal>
 
@@ -617,6 +1080,24 @@ export default function TransportPage() {
               <div><p className="text-gray-500">Driver Phone</p><p className="font-medium">{vehicleDetail.driverPhone || "-"}</p></div>
               <div><p className="text-gray-500">Driver License</p><p className="font-medium">{vehicleDetail.driverLicense || "-"}</p></div>
               <div><p className="text-gray-500">Status</p><p className="font-medium">{vehicleDetail.isActive ? "Active" : "Inactive"}</p></div>
+              <div><p className="text-gray-500">Ownership</p><p className="font-medium">{vehicleDetail.ownership === "RENTED" ? "Rented" : "Own"}</p></div>
+              {vehicleDetail.ownership === "RENTED" && (
+                <div><p className="text-gray-500">Rental Terms</p><p className="font-medium">
+                  {vehicleDetail.monthlyFixedFee ? `${formatCurrency(vehicleDetail.monthlyFixedFee)}/mo` : "-"}
+                  {vehicleDetail.perKmRate ? ` + ${formatCurrency(vehicleDetail.perKmRate)}/km` : ""}
+                </p></div>
+              )}
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-gray-600 mb-2">Compliance</h4>
+              <div className="flex flex-wrap gap-1.5">
+                <ExpiryBadge label="Insurance" date={vehicleDetail.insuranceExpiry} />
+                <ExpiryBadge label="Fitness" date={vehicleDetail.fitnessExpiry} />
+                <ExpiryBadge label="PUC" date={vehicleDetail.pucExpiry} />
+                {!vehicleDetail.insuranceExpiry && !vehicleDetail.fitnessExpiry && !vehicleDetail.pucExpiry && (
+                  <p className="text-sm text-gray-400">No compliance dates set.</p>
+                )}
+              </div>
             </div>
             <div>
               <h4 className="text-sm font-semibold text-gray-600 mb-2">Assigned Routes</h4>

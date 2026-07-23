@@ -34,6 +34,13 @@ export const allocateStudentSchema = z.object({
   }),
 });
 
+// Accepts either a full ISO datetime or a plain "YYYY-MM-DD" (what an
+// <input type="date"> sends) for the 3 compliance-date fields below.
+const dateInput = z
+  .string()
+  .refine((v) => !Number.isNaN(new Date(v).getTime()), { message: "Must be a valid date" })
+  .transform((v) => new Date(v));
+
 export const addVehicleSchema = z.object({
   body: z.object({
     branchId: z.string().optional(),
@@ -46,6 +53,36 @@ export const addVehicleSchema = z.object({
     ownership: z.enum(["OWN", "RENTED"]).optional(),
     monthlyFixedFee: money.optional(),
     perKmRate: money.optional(),
+    // Compliance dates (spec Section 11) - these columns existed on
+    // the Vehicle model since it was first added, but neither this
+    // schema nor addVehicle's destructuring ever accepted them, so
+    // they could only ever be set via a raw DB write. Optional/
+    // backward compatible - a vehicle with none of these set behaves
+    // exactly as before.
+    insuranceExpiry: dateInput.optional(),
+    fitnessExpiry: dateInput.optional(),
+    pucExpiry: dateInput.optional(),
+  }),
+});
+
+// Same shape as addVehicleSchema, but every field optional (a partial
+// update) and with vehicleNo excluded - it's the unique lookup key
+// elsewhere in this codebase's URLs/relations and isn't meant to be
+// changed after creation via this endpoint.
+export const updateVehicleSchema = z.object({
+  body: z.object({
+    type: z.string().min(1).optional(),
+    capacity: z.number().int().min(1).optional(),
+    driverName: z.string().optional(),
+    driverPhone: z.string().optional(),
+    driverLicense: z.string().optional(),
+    ownership: z.enum(["OWN", "RENTED"]).optional(),
+    monthlyFixedFee: money.optional(),
+    perKmRate: money.optional(),
+    insuranceExpiry: dateInput.optional(),
+    fitnessExpiry: dateInput.optional(),
+    pucExpiry: dateInput.optional(),
+    isActive: z.boolean().optional(),
   }),
 });
 
