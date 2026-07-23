@@ -107,6 +107,13 @@ export default function ExamsPage() {
       academicYearId: e.academicYearId,
       startDate: e.startDate ? new Date(e.startDate).toISOString().slice(0, 10) : "",
       endDate: e.endDate ? new Date(e.endDate).toISOString().slice(0, 10) : "",
+      // sectionId/subjectId are never sent by updateExam (see
+      // handleSubmit's editingId branch), but the form's state shape
+      // (inferred from EMPTY_FORM) requires both keys to be present -
+      // omitting them here is a TypeScript strict-mode error, not just
+      // a runtime no-op.
+      sectionId: "",
+      subjectId: "",
     });
     setShowModal(true);
   };
