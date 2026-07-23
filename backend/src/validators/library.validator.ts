@@ -44,6 +44,9 @@ export const issueBookToStaffSchema = z.object({
 export const markLostOrDamagedSchema = z.object({
   body: z.object({
     status: z.enum(["LOST", "DAMAGED"]),
+    // "STUDENT" (default) -> LibraryIssue, "STAFF" -> StaffLibraryIssue.
+    // See markLostOrDamaged's doc comment in the controller.
+    issueType: z.enum(["STUDENT", "STAFF"]).optional(),
   }),
 });
 
@@ -52,6 +55,7 @@ export const waiveLibraryCostSchema = z.object({
     waiveType: z.enum(["FINE", "LOST_DAMAGE"]),
     amount: z.union([z.number(), z.string()]).transform((v) => Number(v)),
     isPercent: z.boolean().optional(),
+    issueType: z.enum(["STUDENT", "STAFF"]).optional(),
   }),
 });
 
