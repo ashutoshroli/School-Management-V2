@@ -266,6 +266,68 @@ export const deleteExam = async (req: AuthRequest, res: Response): Promise<void>
 };
 
 /**
+ * GET /api/academics/exams/my-creation-scope
+ * A logged-in TEACHER's own exam-creation scope (spec Section 9) -
+ * populates the "Create Exam" form's Section/Subject picker for a
+ * Class Teacher or Subject Teacher, since createExam's role-check
+ * above requires exactly one of `sectionId` (as Class Teacher, for a
+ * section they are the classTeacherId of) or `subjectId` (as Subject
+ * Teacher, for a subject they have a SubjectTeacher row for - either
+ * class-specific or school-wide default). Without this, the frontend
+ * had no way to know which sections/subjects a given teacher is even
+ * allowed to pick, short of hardcoding "try everything and see what
+ * 403s" - and until this Phase, TEACHER couldn't even reach this
+ * route at all (see the authorize() fix in academics.routes.ts).
+ *
+ * Not meaningful for ADMIN/PRINCIPAL/VICE_PRINCIPAL (they can create
+ * a whole-class exam with neither field), so this is TEACHER-only -
+ * see the route's own authorize() list.
+ */
+export const getMyExamCreationScope = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const staff = await prisma.staff.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (!staff) { sendError(res, "Staff record not found", 404); return; }
+
+    const [classTeacherSections, subjectAssignments] = await Promise.all([
+      prisma.section.findMany({
+        where: { classTeacherId: staff.id },
+        select: { id: true, name: true, classId: true, class: { select: { name: true } } },
+      }),
+      prisma.subjectTeacher.findMany({
+        where: { staffId: staff.id },
+        select: {
+          subjectId: true,
+          classId: true,
+          subject: { select: { name: true, code: true } },
+          class: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    sendSuccess(
+      res,
+      {
+        classTeacherSections: classTeacherSections.map((s) => ({
+          sectionId: s.id, sectionName: s.name, classId: s.classId, className: s.class.name,
+        })),
+        // classId: null here means "school-wide default for this
+        // subject" (see createExam's own OR clause) - kept as null so
+        // the frontend can pair it with whichever classId the admin's
+        // main classId dropdown already has selected, rather than
+        // this list only ever being useful for one hardcoded class.
+        subjectAssignments: subjectAssignments.map((a) => ({
+          subjectId: a.subjectId, subjectName: a.subject.name, subjectCode: a.subject.code,
+          classId: a.classId, className: a.class?.name || null,
+        })),
+      },
+      "Exam creation scope fetched"
+    );
+  } catch (error) {
+    sendError(res, "Failed to fetch exam creation scope", 500, (error as Error).message);
+  }
+};
+
+/**
  * Get single exam detail - Exam has no branchId of its own (see
  * schema.prisma), so branch-scoping is checked via its Class instead,
  * same as every other Exam mutation in this controller relies on
