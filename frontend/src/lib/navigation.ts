@@ -1,12 +1,24 @@
 import { NavItem, UserRole } from "@/types";
 
+// BUG FIX (spec compliance audit, Phase 1): PRINCIPAL and
+// VICE_PRINCIPAL were missing from BOTH of these arrays entirely -
+// despite being real, valid UserRole values (see @/types) with their
+// own dedicated backend permissions throughout this app (leave
+// approval, exam/timetable creation, invigilator assignment, report
+// card weightage, etc). A logged-in Principal/VP previously couldn't
+// even see the Dashboard, Notices, Notifications, Staff Attendance, or
+// Leaves links in the sidebar - only the handful of newer modules
+// (Branch Transfer, Room Bookings, Mess, Lab, Appraisal) that happened
+// to explicitly list them. This was a navigation-only gap - the
+// backend routes were never blocking these roles, the sidebar just
+// never offered the link.
 const ALL_ROLES: UserRole[] = [
-  "SUPER_ADMIN", "BRANCH_ADMIN", "TEACHER", "ACCOUNTANT",
+  "SUPER_ADMIN", "BRANCH_ADMIN", "PRINCIPAL", "VICE_PRINCIPAL", "TEACHER", "ACCOUNTANT",
   "LIBRARIAN", "TRANSPORT_MANAGER", "WARDEN", "STAFF", "STUDENT", "PARENT",
 ];
 
 const ADMIN_ROLES: UserRole[] = ["SUPER_ADMIN", "BRANCH_ADMIN"];
-const STAFF_ROLES: UserRole[] = ["SUPER_ADMIN", "BRANCH_ADMIN", "TEACHER", "ACCOUNTANT", "LIBRARIAN", "TRANSPORT_MANAGER", "WARDEN", "STAFF"];
+const STAFF_ROLES: UserRole[] = ["SUPER_ADMIN", "BRANCH_ADMIN", "PRINCIPAL", "VICE_PRINCIPAL", "TEACHER", "ACCOUNTANT", "LIBRARIAN", "TRANSPORT_MANAGER", "WARDEN", "STAFF"];
 const PARENT_PORTAL_ROLES: UserRole[] = ["STUDENT", "PARENT"];
 
 export const navigation: NavItem[] = [
@@ -181,7 +193,10 @@ export const navigation: NavItem[] = [
     label: "Exams",
     href: "/dashboard/exams",
     icon: "FileText",
-    roles: [...ADMIN_ROLES, "TEACHER"],
+    // PRINCIPAL/VICE_PRINCIPAL added (spec Section 9 - Principal has
+    // "any scope" exam creation rights; they were previously excluded
+    // from this link entirely, same class of bug as Timetable below).
+    roles: [...ADMIN_ROLES, "PRINCIPAL", "VICE_PRINCIPAL", "TEACHER"],
   },
   {
     label: "Question Papers",
@@ -219,7 +234,11 @@ export const navigation: NavItem[] = [
     label: "Timetable",
     href: "/dashboard/timetable",
     icon: "Calendar",
-    roles: [...ADMIN_ROLES, "TEACHER", "STUDENT", "PARENT"],
+    // PRINCIPAL/VICE_PRINCIPAL added (spec Section 20 - "Class
+    // Timetable creation rights: Principal" - they were previously
+    // excluded from this link entirely, so the one role the spec
+    // names as the timetable creator couldn't even open the page).
+    roles: [...ADMIN_ROLES, "PRINCIPAL", "VICE_PRINCIPAL", "TEACHER", "STUDENT", "PARENT"],
   },
   {
     label: "Homework",
