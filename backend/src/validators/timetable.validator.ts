@@ -25,6 +25,7 @@ export const upsertSlotSchema = z.object({
 export const updateTimetableConfigSchema = z.object({
   body: z.object({
     roomClashMode: z.enum(["WARNING", "BLOCK"]).optional(),
+    teacherClashMode: z.enum(["WARNING", "BLOCK"]).optional(),
     examMinGapDays: z.number().int().min(0).optional(),
     attendanceWeekCycleDays: z.number().int().min(1).optional(),
   }),

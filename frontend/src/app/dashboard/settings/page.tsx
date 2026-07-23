@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle, DatabaseZap, Plus, Trash2, GraduationCap, Pencil, Clock, CalendarDays } from "lucide-react";
+import { Settings as SettingsIcon, User, Lock, Building2, Loader2, Sparkles, CheckCircle2, AlertTriangle, DatabaseZap, Plus, Trash2, GraduationCap, Pencil, Clock, CalendarDays, SlidersHorizontal } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { resolveUploadUrl } from "@/lib/uploads";
@@ -60,6 +60,13 @@ export default function SettingsPage() {
 
   const isAdmin = user?.role === "SUPER_ADMIN" || user?.role === "BRANCH_ADMIN";
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  // Timetable/Exam clash-config access (spec Section 20) - PRINCIPAL/
+  // VICE_PRINCIPAL are added alongside isAdmin here (not a replacement)
+  // since the backend's own TIMETABLE_CREATORS role list for
+  // GET/PUT /academics/timetable/config already includes them - this
+  // just matches that on the frontend instead of hiding the panel from
+  // the one role (Principal) the spec names as the timetable creator.
+  const canConfigureTimetable = isAdmin || user?.role === "PRINCIPAL" || user?.role === "VICE_PRINCIPAL";
 
   // Structural "Demo Data" (Super Admin only) - creates/removes the
   // demo organization/branch/classes/subjects/fee categories/chart of
@@ -315,6 +322,58 @@ export default function SettingsPage() {
     }
   };
 
+  // Timetable/Exam clash config (spec Section 20 - room/teacher clash
+  // WARNING-vs-BLOCK, exam min-gap-days) + custom attendance week-
+  // cycle length (spec Section 6) - branch-wide settings that
+  // previously had a working backend endpoint (getTimetableConfig/
+  // updateTimetableConfig) but NO frontend anywhere to view or change
+  // them; every branch was stuck on whatever the schema's hardcoded
+  // defaults were (room clash WARNING, teacher clash BLOCK, 0-day exam
+  // gap, 7-day week cycle) with no way to configure otherwise short of
+  // a raw API call.
+  const [timetableConfig, setTimetableConfig] = useState<{
+    roomClashMode: string; teacherClashMode: string; examMinGapDays: number; attendanceWeekCycleDays: number;
+  } | null>(null);
+  const [timetableConfigLoading, setTimetableConfigLoading] = useState(false);
+  const [savingTimetableConfig, setSavingTimetableConfig] = useState(false);
+  const [timetableConfigMessage, setTimetableConfigMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Uses the logged-in user's own JWT-derived branchId (see useAuth's
+  // `user.branchId`) rather than the `branch` state above - `branch`
+  // is only ever populated for isAdmin (fetchOwnBranch's own gate,
+  // unchanged) via the ADMIN-only GET /branches endpoint, which would
+  // 403 for a PRINCIPAL/VICE_PRINCIPAL. user.branchId is already
+  // resolved into every role's JWT at login time (see auth.
+  // controller.ts's login()), so it works for all of
+  // canConfigureTimetable's roles without an extra branch-scoped call.
+  const fetchTimetableConfig = async () => {
+    if (!canConfigureTimetable || !user?.branchId) return;
+    setTimetableConfigLoading(true);
+    try {
+      const res = await api.get(`/academics/timetable/config/${user.branchId}`);
+      setTimetableConfig(res.data.data);
+    } catch {
+      setTimetableConfig(null);
+    } finally {
+      setTimetableConfigLoading(false);
+    }
+  };
+
+  const handleSaveTimetableConfig = async () => {
+    if (!timetableConfig || !user?.branchId) return;
+    setTimetableConfigMessage(null);
+    setSavingTimetableConfig(true);
+    try {
+      const res = await api.put(`/academics/timetable/config/${user.branchId}`, timetableConfig);
+      setTimetableConfig(res.data.data);
+      setTimetableConfigMessage({ type: "success", text: "Timetable/exam settings saved" });
+    } catch (err: any) {
+      setTimetableConfigMessage({ type: "error", text: err.response?.data?.message || "Failed to save settings" });
+    } finally {
+      setSavingTimetableConfig(false);
+    }
+  };
+
   // Holiday calendar (declared non-working days, see Holiday model doc
   // comment) - attendance reports exclude these from the "should have
   // been present" denominator.
@@ -409,6 +468,11 @@ export default function SettingsPage() {
     fetchHolidays();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    fetchTimetableConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.branchId]);
 
   const handleAvatarUploaded = (data: any) => {
     if (user && token) {
@@ -755,6 +819,97 @@ export default function SettingsPage() {
                   {savingPeriods ? "Saving..." : "Save Schedule"}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Timetable/Exam clash config (spec Sections 6/20) - Admins
+              plus Principal/Vice Principal (canConfigureTimetable),
+              matching the backend's TIMETABLE_CREATORS role list for
+              GET/PUT /academics/timetable/config/:branchId. */}
+          {canConfigureTimetable && (
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                <SlidersHorizontal className="h-5 w-5 text-orange-600" /> Timetable &amp; Exam Settings
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Choose whether a room or teacher double-booking in the timetable should be blocked outright or only
+                shown as a warning, set a minimum gap (in days) required between two exams for the same class, and
+                customize the attendance week-cycle length.
+              </p>
+
+              {timetableConfigMessage && (
+                <div
+                  className={`mb-4 text-sm rounded-lg px-3 py-2 ${
+                    timetableConfigMessage.type === "success" ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"
+                  }`}
+                >
+                  {timetableConfigMessage.text}
+                </div>
+              )}
+
+              {timetableConfigLoading ? (
+                <div className="flex justify-center py-6">
+                  <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+                </div>
+              ) : !timetableConfig ? (
+                <p className="text-sm text-gray-400">Unable to load timetable/exam settings.</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Room Clash Mode</label>
+                      <select
+                        className="input-field"
+                        value={timetableConfig.roomClashMode}
+                        onChange={(e) => setTimetableConfig({ ...timetableConfig, roomClashMode: e.target.value })}
+                      >
+                        <option value="WARNING">Warning only</option>
+                        <option value="BLOCK">Block</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Teacher Clash Mode</label>
+                      <select
+                        className="input-field"
+                        value={timetableConfig.teacherClashMode}
+                        onChange={(e) => setTimetableConfig({ ...timetableConfig, teacherClashMode: e.target.value })}
+                      >
+                        <option value="WARNING">Warning only</option>
+                        <option value="BLOCK">Block</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Min Gap Between Exams (days)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        className="input-field"
+                        value={timetableConfig.examMinGapDays}
+                        onChange={(e) => setTimetableConfig({ ...timetableConfig, examMinGapDays: parseInt(e.target.value) || 0 })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Attendance Week-Cycle (days)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        className="input-field"
+                        value={timetableConfig.attendanceWeekCycleDays}
+                        onChange={(e) => setTimetableConfig({ ...timetableConfig, attendanceWeekCycleDays: parseInt(e.target.value) || 1 })}
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleSaveTimetableConfig}
+                    disabled={savingTimetableConfig}
+                    className="btn-primary flex items-center gap-2 text-sm disabled:opacity-60"
+                  >
+                    {savingTimetableConfig && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {savingTimetableConfig ? "Saving..." : "Save Settings"}
+                  </button>
+                </>
+              )}
             </div>
           )}
 

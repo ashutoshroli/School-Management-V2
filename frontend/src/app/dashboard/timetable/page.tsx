@@ -142,7 +142,7 @@ export default function TimetablePage() {
     e.preventDefault();
     setSavingSlot(true);
     try {
-      await api.post("/academics/timetable/slot", {
+      const res = await api.post("/academics/timetable/slot", {
         timetableId: timetable.id,
         day: slotDay,
         period: slotPeriod,
@@ -154,6 +154,19 @@ export default function TimetablePage() {
       });
       setShowSlotModal(false);
       await fetchTimetable();
+      // Room/Teacher clash WARNING mode (spec Section 20 - a branch
+      // can configure either clash type as warning-only instead of a
+      // hard block) - the backend has always returned these two
+      // fields on a successful save, but the frontend previously
+      // never read or displayed them, so a warning-mode branch's
+      // admin would save a genuinely clashing slot with zero
+      // indication anything was off (BLOCK mode still surfaces via
+      // the existing catch below, since that returns a 400 error
+      // instead).
+      const { roomClashWarning, teacherClashWarning } = res.data.data || {};
+      if (roomClashWarning || teacherClashWarning) {
+        alert([roomClashWarning, teacherClashWarning].filter(Boolean).join("\n"));
+      }
     } catch (err: any) {
       alert(err.response?.data?.message || "Failed to save slot");
     } finally {
