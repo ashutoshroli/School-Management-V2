@@ -83,7 +83,7 @@ export const addSchoolFloor = async (req: AuthRequest, res: Response): Promise<v
 
 export const addSchoolRoom = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { floorId, roomNo, name, type, capacity, directionFromGate, assignedStaffId, department } = req.body;
+    const { floorId, roomNo, name, type, capacity, directionFromGate, assignedStaffId, department, status } = req.body;
 
     const floor = await prisma.schoolFloor.findUnique({ where: { id: floorId }, include: { building: true } });
     if (!floor) { sendError(res, "Floor not found", 404); return; }
@@ -102,7 +102,7 @@ export const addSchoolRoom = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const room = await prisma.schoolRoom.create({
-      data: { floorId, roomNo, name, type, capacity: capacity || 0, directionFromGate, assignedStaffId, department },
+      data: { floorId, roomNo, name, type, capacity: capacity || 0, directionFromGate, assignedStaffId, department, ...(status && { status }) },
     });
     sendSuccess(res, room, "Room added", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
@@ -111,7 +111,7 @@ export const addSchoolRoom = async (req: AuthRequest, res: Response): Promise<vo
 export const updateSchoolRoom = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { roomNo, name, type, capacity, directionFromGate, assignedStaffId, department } = req.body;
+    const { roomNo, name, type, capacity, directionFromGate, assignedStaffId, department, status } = req.body;
 
     const room = await prisma.schoolRoom.findUnique({ where: { id }, include: { floor: { include: { building: true } } } });
     if (!room) { sendError(res, "Room not found", 404); return; }
@@ -135,6 +135,7 @@ export const updateSchoolRoom = async (req: AuthRequest, res: Response): Promise
         ...(directionFromGate !== undefined && { directionFromGate }),
         ...(assignedStaffId !== undefined && { assignedStaffId }),
         ...(department !== undefined && { department }),
+        ...(status !== undefined && { status }),
       },
     });
     sendSuccess(res, updated, "Room updated");
@@ -276,6 +277,7 @@ export const bulkAddSchoolRooms = async (req: AuthRequest, res: Response): Promi
         directionFromGate: r.directionFromGate || null,
         assignedStaffId: r.assignedStaffId || null,
         department: r.department || null,
+        ...(r.status && { status: r.status }),
       })),
     });
 
@@ -393,12 +395,14 @@ export const getSchoolOccupancySummary = async (req: AuthRequest, res: Response)
     });
 
     const byType: Record<string, number> = {};
+    const byStatus: Record<string, number> = {};
     let totalCapacity = 0;
     let totalOccupied = 0;
     const classroomDetail = [];
 
     for (const room of rooms) {
       byType[room.type] = (byType[room.type] || 0) + 1;
+      byStatus[room.status] = (byStatus[room.status] || 0) + 1;
 
       if (room.type === "CLASSROOM") {
         // Only CLASSROOM-type rooms count toward the `classrooms`
@@ -426,6 +430,7 @@ export const getSchoolOccupancySummary = async (req: AuthRequest, res: Response)
       {
         totalRooms: rooms.length,
         roomTypeBreakdown: byType,
+        roomStatusBreakdown: byStatus,
         classrooms: { totalCapacity, totalOccupied, totalVacant: Math.max(totalCapacity - totalOccupied, 0), detail: classroomDetail },
       },
       "Occupancy summary fetched"

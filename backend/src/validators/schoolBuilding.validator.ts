@@ -1,10 +1,17 @@
 import { z } from "zod";
 
+// BUG FIX: TEACHER_CHAMBER was missing from this list even though it
+// has existed in the SchoolRoomType enum (schema.prisma) and in the
+// frontend's own ROOM_TYPES dropdown (buildings/page.tsx) all along -
+// z.enum() rejects any value not explicitly listed here, so saving a
+// room with type "TEACHER_CHAMBER" always 400'd at validation before
+// the request ever reached the controller.
 const ROOM_TYPES = [
   "CLASSROOM",
   "LAB",
   "OFFICE",
   "CHAMBER",
+  "TEACHER_CHAMBER",
   "STAFF_ROOM",
   "LIBRARY",
   "AUDITORIUM",
@@ -15,6 +22,10 @@ const ROOM_TYPES = [
   "MEDICAL_ROOM",
   "OTHER",
 ] as const;
+
+// Room operational status (spec Section 18B) - see RoomStatus enum's
+// doc comment in schema.prisma.
+const ROOM_STATUSES = ["ACTIVE", "MAINTENANCE", "VACANT"] as const;
 
 export const createSchoolBuildingSchema = z.object({
   body: z.object({
@@ -42,6 +53,7 @@ export const addSchoolRoomSchema = z.object({
     directionFromGate: z.string().optional(),
     assignedStaffId: z.string().optional(),
     department: z.string().optional(),
+    status: z.enum(ROOM_STATUSES).optional(),
   }),
 });
 
@@ -54,6 +66,7 @@ export const updateSchoolRoomSchema = z.object({
     directionFromGate: z.string().optional(),
     assignedStaffId: z.string().nullable().optional(),
     department: z.string().nullable().optional(),
+    status: z.enum(ROOM_STATUSES).optional(),
   }),
 });
 
@@ -74,6 +87,7 @@ const bulkRoomEntrySchema = z.object({
   directionFromGate: z.string().optional(),
   assignedStaffId: z.string().optional(),
   department: z.string().optional(),
+  status: z.enum(ROOM_STATUSES).optional(),
 });
 
 export const bulkAddSchoolRoomsSchema = z.object({

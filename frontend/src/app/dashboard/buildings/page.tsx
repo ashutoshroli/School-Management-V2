@@ -11,6 +11,17 @@ const ROOM_TYPES = [
   "AUDITORIUM", "SPORTS_ROOM", "TOILET", "STORE", "CANTEEN", "MEDICAL_ROOM", "OTHER",
 ];
 
+// Room operational status (spec Section 18B) - see RoomStatus enum's
+// doc comment in schema.prisma. Independent of ROOM_TYPES above (a
+// room's type never changes; its status can).
+const ROOM_STATUSES = ["ACTIVE", "MAINTENANCE", "VACANT"];
+
+const STATUS_BADGE_STYLE: Record<string, string> = {
+  ACTIVE: "bg-green-100 text-green-700",
+  MAINTENANCE: "bg-amber-100 text-amber-700",
+  VACANT: "bg-gray-200 text-gray-600",
+};
+
 // General-purpose (non-hostel) school building structure - Building ->
 // Floor -> Room, for classrooms/labs/offices/etc. Mirrors the Hostel
 // page's exact UX shape (see /dashboard/hostel/page.tsx) since the
@@ -37,7 +48,7 @@ export default function SchoolBuildingsPage() {
 
   // Bulk Add Rooms - a whole list of rooms on one floor in one call.
   const [bulkRoomFloor, setBulkRoomFloor] = useState<{ buildingName: string; floor: any } | null>(null);
-  const [bulkRoomRows, setBulkRoomRows] = useState<any[]>([{ roomNo: "", name: "", type: "CLASSROOM", capacity: "0" }]);
+  const [bulkRoomRows, setBulkRoomRows] = useState<any[]>([{ roomNo: "", name: "", type: "CLASSROOM", capacity: "0", status: "ACTIVE" }]);
   const [addingBulkRooms, setAddingBulkRooms] = useState(false);
 
   // Multi-cabin chambers (RoomCabin) - only for CHAMBER/OFFICE/
@@ -54,9 +65,15 @@ export default function SchoolBuildingsPage() {
   const [roomFloor, setRoomFloor] = useState<{ buildingName: string; floor: any } | null>(null);
   const [editingRoom, setEditingRoom] = useState<any>(null);
   const [roomForm, setRoomForm] = useState({
-    roomNo: "", name: "", type: "CLASSROOM", capacity: "0", directionFromGate: "", assignedStaffId: "", department: "",
+    roomNo: "", name: "", type: "CLASSROOM", capacity: "0", directionFromGate: "", assignedStaffId: "", department: "", status: "ACTIVE",
   });
   const [savingRoom, setSavingRoom] = useState(false);
+
+  // Room status filter (spec Section 18B) - client-side filter over
+  // the already-fetched buildings tree, so a facilities admin can
+  // quickly see e.g. every room currently under MAINTENANCE across
+  // every building without a separate endpoint/round trip.
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
   // Occupancy summary
   const [showOccupancy, setShowOccupancy] = useState(false);
@@ -115,7 +132,7 @@ export default function SchoolBuildingsPage() {
   const openAddRoom = (buildingName: string, floor: any) => {
     setRoomFloor({ buildingName, floor });
     setEditingRoom(null);
-    setRoomForm({ roomNo: "", name: "", type: "CLASSROOM", capacity: "0", directionFromGate: "", assignedStaffId: "", department: "" });
+    setRoomForm({ roomNo: "", name: "", type: "CLASSROOM", capacity: "0", directionFromGate: "", assignedStaffId: "", department: "", status: "ACTIVE" });
   };
 
   const openEditRoom = (buildingName: string, floor: any, room: any) => {
@@ -124,6 +141,7 @@ export default function SchoolBuildingsPage() {
     setRoomForm({
       roomNo: room.roomNo, name: room.name || "", type: room.type, capacity: String(room.capacity),
       directionFromGate: room.directionFromGate || "", assignedStaffId: room.assignedStaffId || "", department: room.department || "",
+      status: room.status || "ACTIVE",
     });
   };
 
@@ -138,6 +156,7 @@ export default function SchoolBuildingsPage() {
       directionFromGate: roomForm.directionFromGate || undefined,
       assignedStaffId: roomForm.assignedStaffId || undefined,
       department: roomForm.department || undefined,
+      status: roomForm.status,
     };
     try {
       if (editingRoom) {
@@ -189,7 +208,7 @@ export default function SchoolBuildingsPage() {
     setBulkRoomRows([{ roomNo: "", name: "", type: "CLASSROOM", capacity: "0" }]);
   };
 
-  const addBulkRoomRow = () => setBulkRoomRows([...bulkRoomRows, { roomNo: "", name: "", type: "CLASSROOM", capacity: "0" }]);
+  const addBulkRoomRow = () => setBulkRoomRows([...bulkRoomRows, { roomNo: "", name: "", type: "CLASSROOM", capacity: "0", status: "ACTIVE" }]);
   const removeBulkRoomRow = (i: number) => setBulkRoomRows(bulkRoomRows.filter((_, idx) => idx !== i));
   const updateBulkRoomRow = (i: number, field: string, value: string) =>
     setBulkRoomRows(bulkRoomRows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
@@ -206,7 +225,7 @@ export default function SchoolBuildingsPage() {
     try {
       await api.post("/facilities/school-buildings/rooms/bulk", {
         floorId: bulkRoomFloor.floor.id,
-        rooms: rows.map((r) => ({ roomNo: r.roomNo, name: r.name || undefined, type: r.type, capacity: parseInt(r.capacity, 10) || 0 })),
+        rooms: rows.map((r) => ({ roomNo: r.roomNo, name: r.name || undefined, type: r.type, capacity: parseInt(r.capacity, 10) || 0, status: r.status || "ACTIVE" })),
       });
       setBulkRoomFloor(null);
       fetchBuildings();
@@ -279,11 +298,18 @@ export default function SchoolBuildingsPage() {
   };
 
   const roomColor = (room: any) => {
+    // A MAINTENANCE room is visually flagged regardless of type/
+    // occupancy - facilities should notice it before anything else.
+    if (room.status === "MAINTENANCE") return "bg-amber-50 border-amber-300";
     if (room.type !== "CLASSROOM") return "bg-gray-50 border-gray-200";
     const occupied = (room.sections || []).reduce((sum: number, s: any) => sum + (s._count?.students || 0), 0);
     if (room.capacity === 0) return "bg-gray-50 border-gray-200";
     return occupied >= room.capacity ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200";
   };
+
+  // Rooms matching the current status filter, across every building/
+  // floor - "ALL" (default) shows everything unchanged.
+  const roomMatchesFilter = (room: any) => statusFilter === "ALL" || (room.status || "ACTIVE") === statusFilter;
 
   return (
     <div>
@@ -292,6 +318,17 @@ export default function SchoolBuildingsPage() {
           <Building className="h-6 w-6 text-primary-600" /> School Buildings
         </h1>
         <div className="flex items-center gap-2">
+          <select
+            className="input-field w-auto"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            title="Filter rooms by status"
+          >
+            <option value="ALL">All Statuses</option>
+            {ROOM_STATUSES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
           <button onClick={openOccupancy} className="btn-secondary flex items-center gap-2">
             <BarChart3 className="h-4 w-4" /> Occupancy
           </button>
@@ -359,8 +396,9 @@ export default function SchoolBuildingsPage() {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                    {f.rooms?.map((r: any) => {
+                    {f.rooms?.filter(roomMatchesFilter).map((r: any) => {
                       const occupied = (r.sections || []).reduce((sum: number, s: any) => sum + (s._count?.students || 0), 0);
+                      const status = r.status || "ACTIVE";
                       return (
                         <div key={r.id} className={`p-2 rounded-lg text-center text-xs border relative group ${roomColor(r)}`}>
                           {canEdit && (
@@ -373,6 +411,9 @@ export default function SchoolBuildingsPage() {
                           {r.type === "CLASSROOM" && r.capacity > 0 && <p className="text-gray-500">{occupied}/{r.capacity}</p>}
                           {r.type === "CHAMBER" && r.assignedStaff && <p className="text-gray-500 truncate">{r.assignedStaff.user?.name}</p>}
                           <p className="text-[10px] text-gray-400">{r.type.replace(/_/g, " ")}</p>
+                          <span className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded-full mt-1 ${STATUS_BADGE_STYLE[status] || STATUS_BADGE_STYLE.ACTIVE}`}>
+                            {status}
+                          </span>
                           {(r.type === "CHAMBER" || r.type === "OFFICE" || r.type === "STAFF_ROOM" || r.type === "TEACHER_CHAMBER") && (
                             <button onClick={() => openCabins(r)} title="Manage cabins (multiple teachers sharing this room)" className="text-primary-500 hover:text-primary-700 text-[10px] mt-1 flex items-center justify-center gap-0.5 w-full">
                               <Users className="h-3 w-3" /> Cabins
@@ -388,6 +429,9 @@ export default function SchoolBuildingsPage() {
                     })}
                     {(!f.rooms || f.rooms.length === 0) && (
                       <p className="text-xs text-gray-400 col-span-full">No rooms yet - click &quot;Add Room&quot; above</p>
+                    )}
+                    {f.rooms && f.rooms.length > 0 && f.rooms.filter(roomMatchesFilter).length === 0 && (
+                      <p className="text-xs text-gray-400 col-span-full">No rooms match the &quot;{statusFilter}&quot; filter on this floor</p>
                     )}
                   </div>
                 </div>
@@ -466,12 +510,15 @@ export default function SchoolBuildingsPage() {
           <div className="space-y-2 max-h-72 overflow-y-auto">
             {bulkRoomRows.map((r, i) => (
               <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                <input className="input-field col-span-3" placeholder="Room No *" value={r.roomNo} onChange={(e) => updateBulkRoomRow(i, "roomNo", e.target.value)} />
+                <input className="input-field col-span-2" placeholder="Room No *" value={r.roomNo} onChange={(e) => updateBulkRoomRow(i, "roomNo", e.target.value)} />
                 <input className="input-field col-span-3" placeholder="Name" value={r.name} onChange={(e) => updateBulkRoomRow(i, "name", e.target.value)} />
-                <select className="input-field col-span-3" value={r.type} onChange={(e) => updateBulkRoomRow(i, "type", e.target.value)}>
+                <select className="input-field col-span-2" value={r.type} onChange={(e) => updateBulkRoomRow(i, "type", e.target.value)}>
                   {ROOM_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
                 </select>
                 <input type="number" min={0} className="input-field col-span-2" placeholder="Capacity" value={r.capacity} onChange={(e) => updateBulkRoomRow(i, "capacity", e.target.value)} />
+                <select className="input-field col-span-2" value={r.status || "ACTIVE"} onChange={(e) => updateBulkRoomRow(i, "status", e.target.value)}>
+                  {ROOM_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
                 <button type="button" onClick={() => removeBulkRoomRow(i)} className="col-span-1 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
               </div>
             ))}
@@ -556,6 +603,12 @@ export default function SchoolBuildingsPage() {
             </div>
           </div>
           <div>
+            <label className="block text-sm font-medium mb-1">Status</label>
+            <select className="input-field" value={roomForm.status} onChange={(e) => setRoomForm({ ...roomForm, status: e.target.value })}>
+              {ROOM_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
             <label className="block text-sm font-medium mb-1">Direction from Main Gate</label>
             <input className="input-field" value={roomForm.directionFromGate} onChange={(e) => setRoomForm({ ...roomForm, directionFromGate: e.target.value })} placeholder="e.g. Left wing, 2nd door" />
           </div>
@@ -616,6 +669,19 @@ export default function SchoolBuildingsPage() {
                 ))}
               </div>
             </div>
+
+            {occupancy.roomStatusBreakdown && (
+              <div>
+                <h4 className="text-sm font-semibold text-gray-600 mb-2">Room Status Breakdown</h4>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(occupancy.roomStatusBreakdown).map(([status, count]) => (
+                    <span key={status} className={`text-xs px-2 py-1 rounded-full ${STATUS_BADGE_STYLE[status] || STATUS_BADGE_STYLE.ACTIVE}`}>
+                      {status}: {count as number}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div>
               <h4 className="text-sm font-semibold text-gray-600 mb-2">Classroom Detail</h4>
