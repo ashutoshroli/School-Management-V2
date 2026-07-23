@@ -13,6 +13,15 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+/**
+ * Fallback non-break periods-per-day when a branch hasn't configured
+ * its own PeriodConfig list yet - matches the frontend's own
+ * getDefaultPeriods() default schedule (8 rows, 2 of them breaks ->
+ * 6 non-break periods), so a freshly-onboarded branch's payroll ratio
+ * lines up with what its attendance-marking UI would show by default.
+ */
+const DEFAULT_PERIODS_PER_DAY = 6;
+
 interface SalaryTemplateInput {
   basic: number | string;
   da?: number | string;
@@ -330,6 +339,20 @@ export const runPayroll = async (req: AuthRequest, res: Response): Promise<void>
 
     // Get working days in month (assume 26)
     const workingDays = 26;
+
+    // Per-period-completion % (spec Section 6) - replaces the old
+    // whole-day-count ratio. Salary is pro-rated against the actual
+    // number of non-break periods completed in the month rather than
+    // whole days, so the late-entry/early-exit penalty rule (Phase 5's
+    // StaffAttendance.periodsDeducted) has something to actually
+    // subtract from - a whole-day ratio has no unit smaller than a day
+    // to deduct a "period" from. Falls back to
+    // DEFAULT_PERIODS_PER_DAY when the branch hasn't configured its
+    // own PeriodConfig list yet (see that constant's doc comment).
+    const nonBreakPeriodCount = await prisma.periodConfig.count({ where: { branchId, isBreak: false } });
+    const periodsPerDay = nonBreakPeriodCount > 0 ? nonBreakPeriodCount : DEFAULT_PERIODS_PER_DAY;
+    const totalExpectedPeriods = workingDays * periodsPerDay;
+
     let generated = 0, skipped = 0;
 
     for (const staff of staffList) {
@@ -352,10 +375,27 @@ export const runPayroll = async (req: AuthRequest, res: Response): Promise<void>
       const halfDays = attendances.filter(a => a.status === "HALF_DAY").length;
       const leaveDays = attendances.filter(a => a.status === "ON_LEAVE").length;
       const absentDays = workingDays - presentDays - halfDays - leaveDays;
-      const effectiveDays = presentDays + (halfDays * 0.5) + leaveDays; // leave counted as present
 
-      // Pro-rata salary
-      const ratio = effectiveDays / workingDays;
+      // Every marked day contributes its own full/half/leave-as-full
+      // period credit for that day (same PRESENT/LATE/HALF_DAY/
+      // ON_LEAVE-counts-as-present rules as before, just expressed in
+      // periods instead of whole days), then has THAT day's own
+      // periodsDeducted (Phase 5's late-entry/early-exit penalty)
+      // subtracted, clamped so a single day can never go negative. An
+      // unmarked day (implicitly ABSENT, no StaffAttendance row at
+      // all) contributes zero periods, same as before.
+      let totalPeriodsEarned = 0;
+      let totalPeriodsDeducted = 0;
+      for (const a of attendances) {
+        let dayPeriods = 0;
+        if (a.status === "PRESENT" || a.status === "LATE" || a.status === "ON_LEAVE") dayPeriods = periodsPerDay;
+        else if (a.status === "HALF_DAY") dayPeriods = periodsPerDay * 0.5;
+        totalPeriodsEarned += Math.max(dayPeriods - a.periodsDeducted, 0);
+        totalPeriodsDeducted += a.periodsDeducted;
+      }
+
+      // Pro-rata salary against periods completed, not whole days.
+      const ratio = totalExpectedPeriods > 0 ? totalPeriodsEarned / totalExpectedPeriods : 0;
       const grossEarning = Math.round(Number(sal.grossSalary) * ratio);
       const pfAmount = Math.round(Number(sal.pfEmployee) * ratio);
       const esiAmount = Math.round(Number(sal.esiEmployee) * ratio);
@@ -369,6 +409,7 @@ export const runPayroll = async (req: AuthRequest, res: Response): Promise<void>
           workingDays, presentDays: presentDays + halfDays, leaveDays, absentDays,
           grossEarning, totalDeduction, netPay,
           pfAmount, esiAmount, tdsAmount,
+          periodsDeducted: totalPeriodsDeducted,
           status: "DRAFT",
         },
       });
@@ -506,6 +547,7 @@ export const getPayslipPdf = async (req: AuthRequest, res: Response): Promise<vo
       year: String(payslip.year),
       workingDays: String(payslip.workingDays),
       presentDays: String(payslip.presentDays),
+      periodsDeducted: String(payslip.periodsDeducted),
       basic: "", // Basic/HRA/DA breakdown lives on SalaryStructure, not
       hra: "",   // Payslip itself (which only stores the computed
       da: "",    // totals) - left blank unless a future enhancement
@@ -535,7 +577,11 @@ export const getPayslipPdf = async (req: AuthRequest, res: Response): Promise<vo
     drawKeyValueRow(doc, "Designation", payslip.staff.designation, leftX, y); y += 18;
     drawKeyValueRow(doc, "Department", payslip.staff.department, leftX, y); y += 18;
     drawKeyValueRow(doc, "Working Days", String(payslip.workingDays), leftX, y); y += 18;
-    drawKeyValueRow(doc, "Present Days", String(payslip.presentDays), leftX, y); y += 24;
+    drawKeyValueRow(doc, "Present Days", String(payslip.presentDays), leftX, y); y += 18;
+    if (payslip.periodsDeducted > 0) {
+      drawKeyValueRow(doc, "Periods Deducted (late/early penalty)", String(payslip.periodsDeducted), leftX, y); y += 18;
+    }
+    y += 6;
     doc.y = y;
 
     doc.moveTo(leftX, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#cbd5e1").stroke();

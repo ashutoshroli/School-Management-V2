@@ -131,6 +131,9 @@ export default function PayrollPage() {
               <th className="px-4 py-3 text-left">Staff</th>
               <th className="px-4 py-3 text-right">Working</th>
               <th className="px-4 py-3 text-right">Present</th>
+              <th className="px-4 py-3 text-right" title="Periods deducted for the late-entry/early-exit penalty rule (spec Section 6), already factored into Gross/Net below">
+                Periods Deducted
+              </th>
               <th className="px-4 py-3 text-right">Gross</th>
               <th className="px-4 py-3 text-right">PF</th>
               <th className="px-4 py-3 text-right">ESI</th>
@@ -145,6 +148,7 @@ export default function PayrollPage() {
                   <td className="px-4 py-3 font-medium">{p.staff?.user?.name}</td>
                   <td className="px-4 py-3 text-right">{p.workingDays}</td>
                   <td className="px-4 py-3 text-right">{p.presentDays}</td>
+                  <td className={`px-4 py-3 text-right font-medium ${p.periodsDeducted > 0 ? "text-red-600" : "text-gray-400"}`}>{p.periodsDeducted}</td>
                   <td className="px-4 py-3 text-right">{formatCurrency(p.grossEarning)}</td>
                   <td className="px-4 py-3 text-right text-blue-600">{formatCurrency(p.pfAmount)}</td>
                   <td className="px-4 py-3 text-right text-purple-600">{formatCurrency(p.esiAmount)}</td>

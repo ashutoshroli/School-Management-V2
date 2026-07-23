@@ -1000,6 +1000,14 @@ model Payslip {
   pfAmount       Decimal  @default(0) @db.Decimal(10, 2)
   esiAmount      Decimal  @default(0) @db.Decimal(10, 2)
   tdsAmount      Decimal  @default(0) @db.Decimal(10, 2)
+  // Late-entry/early-exit combined penalty rule (spec Section 6) - the
+  // total StaffAttendance.periodsDeducted across this payslip's month,
+  // already folded into grossEarning/netPay above via runPayroll's
+  // per-period-completion ratio (see its doc comment) - stored here
+  // purely so a payslip is self-explanatory about WHY its ratio came
+  // out lower than a simple day-count would suggest, without needing
+  // to cross-reference the staff member's daily attendance calendar.
+  periodsDeducted Int     @default(0)
   status         PayslipStatus @default(DRAFT)
   pdfUrl         String?
   paidAt         DateTime?
