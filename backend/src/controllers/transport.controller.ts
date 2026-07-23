@@ -246,7 +246,10 @@ export const getVehicleById = async (req: AuthRequest, res: Response): Promise<v
 
 export const addVehicle = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { vehicleNo, type, capacity, driverName, driverPhone, driverLicense, ownership, monthlyFixedFee, perKmRate } = req.body;
+    const {
+      vehicleNo, type, capacity, driverName, driverPhone, driverLicense, ownership, monthlyFixedFee, perKmRate,
+      insuranceExpiry, fitnessExpiry, pucExpiry,
+    } = req.body;
     // BUG FIX + SECURITY: same as createRoute above - no branch-picker
     // in the "Add Vehicle" form, and no canAccessBranch check existed.
     const branchId = resolveEffectiveBranchId(req, req.body.branchId);
@@ -267,10 +270,54 @@ export const addVehicle = async (req: AuthRequest, res: Response): Promise<void>
         branchId, vehicleNo, type, capacity, driverName, driverPhone, driverLicense, isActive: true,
         ownership: ownership || "OWN",
         ...(ownership === "RENTED" && { monthlyFixedFee, perKmRate }),
+        // Compliance dates (spec Section 11) - see addVehicleSchema's
+        // doc comment; previously accepted nowhere at all.
+        insuranceExpiry, fitnessExpiry, pucExpiry,
       },
     });
     sendSuccess(res, vehicle, "Vehicle added", 201);
   } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Edit an existing vehicle - driver details, ownership/rental terms,
+ * and compliance dates all need to be correctable/renewable over time
+ * (e.g. insurance/fitness/PUC gets renewed annually), but addVehicle
+ * only ever ran once at creation with no way to revisit any of these
+ * fields afterward. vehicleNo is intentionally not editable here (see
+ * updateVehicleSchema's doc comment).
+ */
+export const updateVehicle = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const vehicle = await prisma.vehicle.findUnique({ where: { id } });
+    if (!vehicle) { sendError(res, "Vehicle not found", 404); return; }
+    if (!canAccessBranch(req, vehicle.branchId)) { sendError(res, "Vehicle not found", 404); return; }
+
+    const {
+      type, capacity, driverName, driverPhone, driverLicense, ownership, monthlyFixedFee, perKmRate,
+      insuranceExpiry, fitnessExpiry, pucExpiry, isActive,
+    } = req.body;
+
+    const updated = await prisma.vehicle.update({
+      where: { id },
+      data: {
+        ...(type !== undefined && { type }),
+        ...(capacity !== undefined && { capacity }),
+        ...(driverName !== undefined && { driverName }),
+        ...(driverPhone !== undefined && { driverPhone }),
+        ...(driverLicense !== undefined && { driverLicense }),
+        ...(ownership !== undefined && { ownership }),
+        ...(monthlyFixedFee !== undefined && { monthlyFixedFee }),
+        ...(perKmRate !== undefined && { perKmRate }),
+        ...(insuranceExpiry !== undefined && { insuranceExpiry }),
+        ...(fitnessExpiry !== undefined && { fitnessExpiry }),
+        ...(pucExpiry !== undefined && { pucExpiry }),
+        ...(isActive !== undefined && { isActive }),
+      },
+    });
+    sendSuccess(res, updated, "Vehicle updated");
+  } catch (error) { sendError(res, "Failed to update vehicle", 500, (error as Error).message); }
 };
 
 /**
