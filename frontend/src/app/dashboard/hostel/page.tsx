@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Home, Plus, Trash2, Layers, DoorOpen, Users, UserPlus, UserMinus, Search, BarChart3, UsersRound, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Home, Plus, Trash2, Layers, DoorOpen, Users, UserPlus, UserMinus, Search, BarChart3, UsersRound, CheckCircle2, AlertTriangle, CalendarClock, ClipboardCheck, Radio, Clock } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
 
 const ROOM_TYPES = ["SINGLE", "DOUBLE", "DORMITORY"];
@@ -66,6 +66,96 @@ export default function HostelPage() {
   const [bulkSelectedIds, setBulkSelectedIds] = useState<Map<string, any>>(new Map());
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ allocated: any[]; skipped: any[]; total: number } | null>(null);
+
+  // Set Allotment Cutoff (spec Section 13) - setAllotmentCutoff existed
+  // with no UI at all before this.
+  const [cutoffRoom, setCutoffRoom] = useState<any>(null);
+  const [cutoffDate, setCutoffDate] = useState("");
+  const [savingCutoff, setSavingCutoff] = useState(false);
+
+  // Finalize Allotments (spec Section 13) - finalizeHostelAllotments
+  // existed with no UI at all before this. Counts provisional
+  // allocations per building client-side (from the same `buildings`
+  // data already being fetched) so the button can be disabled/labeled
+  // with an accurate count without a separate round trip.
+  const [finalizing, setFinalizingId] = useState<string | null>(null);
+
+  const provisionalCountByBuilding = (b: any): number =>
+    (b.floors || []).reduce(
+      (sum: number, f: any) =>
+        sum + (f.rooms || []).reduce((s: number, r: any) => s + (r.allocations || []).filter((a: any) => a.isProvisional).length, 0),
+      0
+    );
+
+  const finalizeAllotments = async (building: any) => {
+    const count = provisionalCountByBuilding(building);
+    if (!confirm(`Finalize all ${count} provisional allotment(s) in "${building.name}"? This publishes them as confirmed.`)) return;
+    setFinalizingId(building.id);
+    try {
+      const res = await api.post("/facilities/hostel/finalize-allotments", { buildingId: building.id });
+      alert(res.data.message);
+      await fetchBuildings();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to finalize allotments");
+    } finally {
+      setFinalizingId(null);
+    }
+  };
+
+  // Currently In Hostel (RFID tap-derived live roster, spec Section 13)
+  // - getCurrentlyInHostel existed with no UI at all before this.
+  const [showCurrentlyIn, setShowCurrentlyIn] = useState(false);
+  const [currentlyIn, setCurrentlyIn] = useState<any[]>([]);
+  const [currentlyInLoading, setCurrentlyInLoading] = useState(false);
+
+  const openCurrentlyIn = async () => {
+    setShowCurrentlyIn(true);
+    setCurrentlyInLoading(true);
+    try {
+      const res = await api.get("/facilities/hostel/currently-in");
+      setCurrentlyIn(res.data.data || []);
+    } catch {
+      setCurrentlyIn([]);
+    } finally {
+      setCurrentlyInLoading(false);
+    }
+  };
+
+  // Room Requests (roommate-approval flow, spec Section 13) - a Warden
+  // can respond on the existing roommate's behalf ("staff override" -
+  // see respondToRoomRequest's own comment), but there was no UI
+  // listing pending requests for the Warden to act on at all.
+  const [showRoomRequests, setShowRoomRequests] = useState(false);
+  const [roomRequests, setRoomRequests] = useState<any[]>([]);
+  const [roomRequestsLoading, setRoomRequestsLoading] = useState(false);
+  const [respondingRequestId, setRespondingRequestId] = useState<string | null>(null);
+
+  const openRoomRequests = async () => {
+    setShowRoomRequests(true);
+    setRoomRequestsLoading(true);
+    try {
+      const res = await api.get("/facilities/hostel/room-requests");
+      setRoomRequests(res.data.data?.all || []);
+    } catch {
+      setRoomRequests([]);
+    } finally {
+      setRoomRequestsLoading(false);
+    }
+  };
+
+  const respondToRequest = async (id: string, decision: "APPROVE" | "REJECT") => {
+    setRespondingRequestId(id);
+    try {
+      const res = await api.patch(`/facilities/hostel/room-requests/${id}/respond`, { decision });
+      alert(res.data.message);
+      await openRoomRequests();
+      await fetchBuildings();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Failed to respond to request");
+    } finally {
+      setRespondingRequestId(null);
+    }
+  };
 
   const fetchBuildings = async () => {
     setLoading(true);
@@ -325,7 +415,13 @@ export default function HostelPage() {
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Home className="h-6 w-6 text-primary-600" /> Hostel
         </h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={openCurrentlyIn} className="btn-secondary flex items-center gap-2">
+            <Radio className="h-4 w-4" /> Currently In
+          </button>
+          <button onClick={openRoomRequests} className="btn-secondary flex items-center gap-2">
+            <ClipboardCheck className="h-4 w-4" /> Room Requests
+          </button>
           <button onClick={openOccupancy} className="btn-secondary flex items-center gap-2">
             <BarChart3 className="h-4 w-4" /> Occupancy
           </button>
@@ -355,10 +451,20 @@ export default function HostelPage() {
                     {b.type} | Warden: {b.warden || "Not assigned"}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className={`px-3 py-1 rounded-full text-xs font-medium ${b.type === "BOYS" ? "bg-blue-100 text-blue-700" : "bg-pink-100 text-pink-700"}`}>
                     {b.type}
                   </span>
+                  {provisionalCountByBuilding(b) > 0 && (
+                    <button
+                      onClick={() => finalizeAllotments(b)}
+                      disabled={finalizing === b.id}
+                      title="Finalize all provisional allotments in this building"
+                      className="text-xs font-medium text-amber-700 hover:text-amber-800 border border-amber-300 bg-amber-50 hover:bg-amber-100 rounded-lg px-2.5 py-1 flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <Clock className="h-3.5 w-3.5" /> {finalizing === b.id ? "Finalizing..." : `Finalize ${provisionalCountByBuilding(b)} Provisional`}
+                    </button>
+                  )}
                   <button
                     onClick={() => setFloorBuilding(b)}
                     title="Add Floor"
@@ -401,18 +507,34 @@ export default function HostelPage() {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                    {f.rooms?.map((r: any) => (
-                      <button
-                        key={r.id}
-                        onClick={() => openManageRoom(r)}
-                        title="Click to manage students in this room"
-                        className={`p-2 rounded-lg text-center text-xs border hover:ring-2 hover:ring-primary-300 transition-all ${r.occupied >= r.capacity ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"}`}
-                      >
-                        <p className="font-bold">{r.roomNo}</p>
-                        <p className="text-gray-500">{r.occupied}/{r.capacity}</p>
-                        <p className="text-[10px] text-gray-400">{r.type}</p>
-                      </button>
-                    ))}
+                    {f.rooms?.map((r: any) => {
+                      const hasProvisional = (r.allocations || []).some((a: any) => a.isProvisional);
+                      return (
+                        <div key={r.id} className="relative">
+                          <button
+                            onClick={() => openManageRoom(r)}
+                            title="Click to manage students in this room"
+                            className={`w-full p-2 rounded-lg text-center text-xs border hover:ring-2 hover:ring-primary-300 transition-all ${r.occupied >= r.capacity ? "bg-red-50 border-red-200" : "bg-green-50 border-green-200"}`}
+                          >
+                            <p className="font-bold">{r.roomNo}</p>
+                            <p className="text-gray-500">{r.occupied}/{r.capacity}</p>
+                            <p className="text-[10px] text-gray-400">{r.type}</p>
+                          </button>
+                          {hasProvisional && (
+                            <span title="Has provisional allotment(s) - not yet finalized" className="absolute -top-1.5 -right-1.5 bg-amber-400 text-white rounded-full p-0.5">
+                              <Clock className="h-3 w-3" />
+                            </span>
+                          )}
+                          <button
+                            onClick={() => { setCutoffRoom(r); setCutoffDate(r.allotmentCutoffDate ? r.allotmentCutoffDate.slice(0, 10) : ""); }}
+                            title="Set provisional-allotment cutoff date"
+                            className="w-full mt-1 text-[10px] text-primary-600 hover:text-primary-700 flex items-center justify-center gap-0.5"
+                          >
+                            <CalendarClock className="h-3 w-3" /> Cutoff
+                          </button>
+                        </div>
+                      );
+                    })}
                     {(!f.rooms || f.rooms.length === 0) && (
                       <p className="text-xs text-gray-400 col-span-full">No rooms yet - click "Add Room" above</p>
                     )}
@@ -551,7 +673,12 @@ export default function HostelPage() {
                 {manageRoom.allocations.map((a: any) => (
                   <div key={a.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
                     <div>
-                      <p className="font-medium">{a.student?.user?.name}</p>
+                      <p className="font-medium flex items-center gap-2">
+                        {a.student?.user?.name}
+                        {a.isProvisional && (
+                          <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">Provisional</span>
+                        )}
+                      </p>
                       <p className="text-xs text-gray-500">
                         {a.student?.admissionNo}
                         {a.bedNo ? ` \u2022 Bed: ${a.bedNo}` : ""}
@@ -801,6 +928,122 @@ export default function HostelPage() {
             >
               {bulkSubmitting ? "Allocating..." : `Allocate ${bulkSelectedIds.size || ""} Student(s)`}
             </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Set Allotment Cutoff */}
+      <Modal isOpen={!!cutoffRoom} onClose={() => setCutoffRoom(null)} title={`Allotment Cutoff - Room ${cutoffRoom?.roomNo || ""}`}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">
+            A student who requests this room while it's empty is auto-allotted but marked provisional until this cutoff
+            date passes and you finalize the building's allotments (or you finalize early).
+          </p>
+          <div>
+            <label className="block text-sm font-medium mb-1">Cutoff Date *</label>
+            <input type="date" className="input-field" value={cutoffDate} onChange={(e) => setCutoffDate(e.target.value)} required />
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <button type="button" onClick={() => setCutoffRoom(null)} className="btn-secondary">Cancel</button>
+            <button
+              type="button"
+              disabled={!cutoffDate || savingCutoff}
+              onClick={async () => {
+                setSavingCutoff(true);
+                try {
+                  const res = await api.patch(`/facilities/hostel/rooms/${cutoffRoom.id}/allotment-cutoff`, { cutoffDate });
+                  alert(res.data.message);
+                  setCutoffRoom(null);
+                  await fetchBuildings();
+                } catch (err: any) {
+                  alert(err.response?.data?.message || "Failed to set cutoff date");
+                } finally {
+                  setSavingCutoff(false);
+                }
+              }}
+              className="btn-primary disabled:opacity-50"
+            >
+              {savingCutoff ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Currently In Hostel - RFID tap-derived live roster */}
+      <Modal isOpen={showCurrentlyIn} onClose={() => setShowCurrentlyIn(false)} title="Currently In Hostel" size="lg">
+        <div className="space-y-2">
+          {currentlyInLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+            </div>
+          ) : currentlyIn.length > 0 ? (
+            <div className="max-h-96 overflow-y-auto space-y-1.5">
+              {currentlyIn.map((a: any) => (
+                <div key={a.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-lg text-sm">
+                  <span className="font-medium">{a.student?.user?.name}</span>
+                  <span className="text-xs text-gray-500">Room {a.room?.roomNo} &bull; tapped in {formatDate(a.lastTapAt)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400 text-center py-6">No one is currently recorded as inside (no RFID taps yet, or everyone has tapped out).</p>
+          )}
+          <div className="flex justify-end pt-4 border-t">
+            <button type="button" onClick={() => setShowCurrentlyIn(false)} className="btn-secondary">Close</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Room Requests - roommate-approval flow, staff override */}
+      <Modal isOpen={showRoomRequests} onClose={() => setShowRoomRequests(false)} title="Room Requests" size="lg">
+        <div className="space-y-3">
+          <p className="text-xs text-gray-400">
+            Normally the existing roommate approves/rejects these themselves - you can respond on their behalf if needed.
+          </p>
+          {roomRequestsLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="animate-spin h-6 w-6 border-4 border-primary-600 border-t-transparent rounded-full" />
+            </div>
+          ) : roomRequests.length > 0 ? (
+            <div className="max-h-96 overflow-y-auto space-y-2">
+              {roomRequests.map((r: any) => (
+                <div key={r.id} className="border rounded-lg p-3 flex items-center justify-between flex-wrap gap-2 text-sm">
+                  <div>
+                    <p className="font-medium">
+                      {r.student?.user?.name} <span className="text-gray-400">wants to join</span> {r.existingRoommate?.user?.name}
+                    </p>
+                    <p className="text-xs text-gray-500">{r.room.floor.building.name} - Room {r.room.roomNo} &bull; {formatDate(r.createdAt)}</p>
+                  </div>
+                  {r.status === "PENDING" ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => respondToRequest(r.id, "APPROVE")}
+                        disabled={respondingRequestId === r.id}
+                        className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => respondToRequest(r.id, "REJECT")}
+                        disabled={respondingRequestId === r.id}
+                        className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  ) : (
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${r.status === "APPROVED" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                      {r.status}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400 text-center py-6">No room requests found.</p>
+          )}
+          <div className="flex justify-end pt-4 border-t">
+            <button type="button" onClick={() => setShowRoomRequests(false)} className="btn-secondary">Close</button>
           </div>
         </div>
       </Modal>

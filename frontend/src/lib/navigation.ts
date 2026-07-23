@@ -249,7 +249,22 @@ export const navigation: NavItem[] = [
     label: "Hostel",
     href: "/dashboard/hostel",
     icon: "Home",
-    roles: [...ADMIN_ROLES, "WARDEN", "STUDENT", "PARENT"],
+    roles: [...ADMIN_ROLES, "WARDEN"],
+  },
+  // Self-service hostel page (spec Section 13) - the admin/warden
+  // "Hostel" page above manages ALL buildings/rooms and assumes
+  // staff-level actions (allocate/deallocate any student); this is a
+  // separate, single-child-scoped view (child switcher, request-a-bed/
+  // respond-to-roommate-request instead of data-entry forms) - same
+  // "My ..." pattern as My Fees/My Attendance/etc above. STUDENT/PARENT
+  // no longer see the staff "Hostel" link (they have no access to its
+  // authorize()-gated endpoints anyway - the shared route entry above
+  // was misleading them into a page that would only ever 403).
+  {
+    label: "My Hostel",
+    href: "/dashboard/my-hostel",
+    icon: "Home",
+    roles: PARENT_PORTAL_ROLES,
   },
   {
     label: "School Buildings",

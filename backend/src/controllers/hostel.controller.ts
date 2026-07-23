@@ -1,4 +1,5 @@
 import { Response } from "express";
+import { UserRole } from "@prisma/client";
 import prisma from "../config/database";
 import { AuthRequest } from "../types";
 import { sendSuccess, sendError } from "../utils/response";
@@ -456,6 +457,107 @@ export const requestBed = async (req: AuthRequest, res: Response): Promise<void>
     sendSuccess(res, request, "Request sent to the current roommate for approval", 201);
   } catch (error) {
     sendError(res, "Failed to request bed", 500, (error as Error).message);
+  }
+};
+
+/**
+ * List room requests relevant to the caller (spec Section 13's
+ * roommate-approval flow needed SOME way to discover a request exists
+ * at all - requestBed only ever returned the single just-created
+ * request to whoever called it; there was no way for the existing
+ * roommate, or the requesting student themselves on a later visit, to
+ * ever see it again).
+ *  - STUDENT: their own record's requests, both as the one asking
+ *    (`asRequester`) and as the existing roommate being asked
+ *    (`asRoommate`).
+ *  - PARENT: same, but for their linked child.
+ *  - Branch staff (Admin/Warden): every request in their branch, so
+ *    they can use the "staff override" respondToRoomRequest already
+ *    supports.
+ */
+export const getRoomRequests = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const role = req.user!.role;
+
+    if (role === UserRole.STUDENT || role === UserRole.PARENT) {
+      let studentId: string | undefined;
+      if (role === UserRole.STUDENT) {
+        const student = await prisma.student.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+        studentId = student?.id;
+      } else {
+        const link = await prisma.studentParent.findFirst({ where: { parent: { userId: req.user!.userId } }, select: { studentId: true } });
+        studentId = link?.studentId;
+      }
+      if (!studentId) { sendSuccess(res, { asRequester: [], asRoommate: [] }, "Room requests fetched"); return; }
+
+      const include = {
+        room: { select: { roomNo: true, floor: { select: { floorNo: true, building: { select: { name: true } } } } } },
+        student: { select: { user: { select: { name: true } } } },
+      };
+      const [asRequester, asRoommate] = await Promise.all([
+        prisma.hostelRoomRequest.findMany({ where: { studentId }, include, orderBy: { createdAt: "desc" } }),
+        prisma.hostelRoomRequest.findMany({ where: { existingRoommateId: studentId, status: "PENDING" }, include, orderBy: { createdAt: "desc" } }),
+      ]);
+      sendSuccess(res, { asRequester, asRoommate }, "Room requests fetched");
+      return;
+    }
+
+    // Branch staff: every request in scope, most recent first.
+    const branchId = resolveBranchId(req);
+    const requests = await prisma.hostelRoomRequest.findMany({
+      where: { room: { floor: { building: { branchId } } } },
+      include: {
+        room: { select: { roomNo: true, floor: { select: { floorNo: true, building: { select: { name: true } } } } } },
+        student: { select: { user: { select: { name: true } } } },
+        existingRoommate: { select: { user: { select: { name: true } } } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    sendSuccess(res, { all: requests }, "Room requests fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch room requests", 500, (error as Error).message);
+  }
+};
+
+/**
+ * A STUDENT/PARENT's own current hostel status (spec Section 13's
+ * self-service flow needs to know "am I already allotted, and to
+ * where, and is it still provisional" before deciding whether to show
+ * the request-bed flow at all) - no self-lookup like this existed;
+ * getBuildings/getOccupancy return the whole branch's data, not
+ * scoped to one student, and require staff-level authorize() anyway.
+ */
+export const getMyHostelStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const role = req.user!.role;
+    let studentId: string | undefined;
+
+    if (role === UserRole.STUDENT) {
+      const student = await prisma.student.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+      studentId = student?.id;
+    } else if (role === UserRole.PARENT) {
+      const link = await prisma.studentParent.findFirst({ where: { parent: { userId: req.user!.userId } }, select: { studentId: true } });
+      studentId = link?.studentId;
+    } else {
+      sendError(res, "This endpoint is only available to student/parent accounts", 403);
+      return;
+    }
+
+    if (!studentId) { sendSuccess(res, null, "No linked student record"); return; }
+
+    const allocation = await prisma.hostelAllocation.findUnique({
+      where: { studentId },
+      include: { room: { include: { floor: { include: { building: true } } } } },
+    });
+
+    if (!allocation || allocation.endDate) {
+      sendSuccess(res, null, "No active hostel allocation");
+      return;
+    }
+
+    sendSuccess(res, allocation, "Hostel status fetched");
+  } catch (error) {
+    sendError(res, "Failed to fetch hostel status", 500, (error as Error).message);
   }
 };
 
