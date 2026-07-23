@@ -2355,6 +2355,13 @@ model SchoolRoom {
   // a modeled entity anywhere else in this schema (Staff.department is
   // also just a free-text field).
   department      String?
+  // Room operational status (spec Section 18B) - lets facilities mark
+  // a room as temporarily out of use (MAINTENANCE) or explicitly free/
+  // unassigned (VACANT) rather than only ever inferring occupancy from
+  // a linked Section/assignedStaff. Defaults to ACTIVE so every
+  // existing room (and every new one, unless explicitly set
+  // otherwise) behaves exactly as before this field existed.
+  status    RoomStatus    @default(ACTIVE)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2403,6 +2410,20 @@ enum RoomBookingStatus {
   APPROVED
   REJECTED
   CANCELLED
+}
+
+// Room operational status (spec Section 18B) - independent of
+// SchoolRoomType (a room's TYPE never changes; its STATUS can).
+// ACTIVE = normal, in-use. MAINTENANCE = temporarily out of service
+// (e.g. repairs, renovation) - facilities should avoid scheduling a
+// class/booking into it. VACANT = explicitly free/unassigned right
+// now (e.g. a newly built room with no Section/staff assigned yet),
+// distinct from ACTIVE so "empty but usable" can be told apart from
+// "occupied/assigned and usable".
+enum RoomStatus {
+  ACTIVE
+  MAINTENANCE
+  VACANT
 }
 
 enum SchoolRoomType {
