@@ -3,7 +3,18 @@ jest.mock("../../config/database", () => ({
   default: {
     attendanceDevice: { findUnique: jest.fn() },
     staff: { findUnique: jest.fn(), findMany: jest.fn() },
-    staffAttendance: { findUnique: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), upsert: jest.fn() },
+    // Phase 5: late-entry/early-exit penalty rule - applyLateEarlyPenalty
+    // reads Branch's penalty-config fields and counts prior
+    // isLateEntry/isEarlyExit occurrences within a rolling window.
+    // branch.findUnique defaults to null (-> applyLateEarlyPenalty's own
+    // fallback defaults, e.g. threshold 5) and staffAttendance.count
+    // defaults to 0 (no prior occurrences), so any test that happens to
+    // trigger this path (including the real-`new Date()`-based ones
+    // below, whose LATE/early-exit outcome depends on the actual time a
+    // test run executes) resolves safely instead of throwing on an
+    // unmocked function.
+    branch: { findUnique: jest.fn().mockResolvedValue(null) },
+    staffAttendance: { findUnique: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), upsert: jest.fn(), count: jest.fn().mockResolvedValue(0) },
     holiday: { count: jest.fn() },
     $transaction: jest.fn(),
   },

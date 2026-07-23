@@ -411,14 +411,47 @@ export default function StaffProfilePage() {
                   </div>
                 </div>
 
+                {/* Late-entry/early-exit combined penalty rule (spec
+                    Section 6) - every N combined occurrences in a
+                    week-cycle deducts periods from that day's
+                    attendance (branch-configurable via Settings). */}
+                {(attendanceData.summary.lateEntryCount > 0 || attendanceData.summary.earlyExitCount > 0 || attendanceData.summary.totalPeriodsDeducted > 0) && (
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className="bg-orange-50 rounded-lg text-center py-2">
+                      <p className="text-lg font-bold text-orange-600">{attendanceData.summary.lateEntryCount}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Late Entries</p>
+                    </div>
+                    <div className="bg-orange-50 rounded-lg text-center py-2">
+                      <p className="text-lg font-bold text-orange-600">{attendanceData.summary.earlyExitCount}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Early Exits</p>
+                    </div>
+                    <div className="bg-red-50 rounded-lg text-center py-2">
+                      <p className="text-lg font-bold text-red-600">{attendanceData.summary.totalPeriodsDeducted}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Periods Deducted</p>
+                    </div>
+                  </div>
+                )}
+
                 {attendanceData.records.length === 0 ? (
                   <p className="text-sm text-gray-400">No attendance records for this month yet</p>
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {attendanceData.records.map((r: any) => (
-                      <div key={r.id} className={`px-3 py-2 rounded-lg text-sm flex justify-between ${ATTENDANCE_STATUS_COLORS[r.status] || "bg-gray-100"}`}>
+                      <div key={r.id} className={`px-3 py-2 rounded-lg text-sm flex justify-between items-center gap-2 ${ATTENDANCE_STATUS_COLORS[r.status] || "bg-gray-100"}`}>
                         <span>{formatDate(r.date)}</span>
-                        <span className="font-medium">{r.status.replace("_", " ")}</span>
+                        <span className="flex items-center gap-1">
+                          <span className="font-medium">{r.status.replace("_", " ")}</span>
+                          {(r.isLateEntry || r.isEarlyExit) && (
+                            <span title={[r.isLateEntry && "Late entry", r.isEarlyExit && "Early exit"].filter(Boolean).join(" + ")} className="text-[10px] font-bold">
+                              {r.isLateEntry ? "L" : ""}{r.isEarlyExit ? "E" : ""}
+                            </span>
+                          )}
+                          {r.periodsDeducted > 0 && (
+                            <span title={`${r.periodsDeducted} period(s) deducted`} className="text-[10px] font-bold text-red-700">
+                              -{r.periodsDeducted}
+                            </span>
+                          )}
+                        </span>
                       </div>
                     ))}
                   </div>
