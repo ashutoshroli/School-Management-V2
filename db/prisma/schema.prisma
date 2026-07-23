@@ -1788,6 +1788,9 @@ model LibraryBook {
 
   branch Branch         @relation(fields: [branchId], references: [id])
   issues LibraryIssue[]
+  // Opposite side of StaffLibraryIssue.book below - Prisma requires
+  // both sides of a relation to be declared.
+  staffIssues StaffLibraryIssue[]
 }
 
 // Branch-wide library policy (spec Section 12) - fine-per-day (Director
@@ -1865,8 +1868,16 @@ model StaffLibraryIssue {
   fineWaivedBy     String?
   lostDamageCost         Decimal @default(0) @db.Decimal(10, 2)
   lostDamageCostWaived   Decimal @default(0) @db.Decimal(10, 2)
+  lostDamageCostWaivedBy String?
   status     IssueStatus @default(ISSUED)
   createdAt  DateTime  @default(now())
+
+  // Needed so getStaffIssuedBooks/returnStaffBook (library.controller.ts)
+  // can `include: { book: ... }` the same way LibraryIssue.book does
+  // above - staffId deliberately stays a plain scalar, not a relation
+  // (see getStaffIssuedBooks's own comment for why the staff record is
+  // joined manually instead).
+  book LibraryBook @relation(fields: [bookId], references: [id])
 }
 
 enum IssueStatus {
