@@ -282,8 +282,14 @@ export const markLostOrDamaged = async (req: AuthRequest, res: Response): Promis
   try {
     const { id } = req.params;
     const { status } = req.body; // "LOST" | "DAMAGED"
+    // Which table `id` belongs to - "STUDENT" (default, LibraryIssue)
+    // or "STAFF" (StaffLibraryIssue). Optional/backward compatible:
+    // every existing caller omits this and keeps hitting LibraryIssue
+    // exactly as before.
+    const issueType = req.body.issueType === "STAFF" ? "STAFF" : "STUDENT";
+    const model = issueType === "STAFF" ? prisma.staffLibraryIssue : prisma.libraryIssue;
 
-    const issue = await prisma.libraryIssue.findUnique({ where: { id }, include: { book: true } });
+    const issue = await (model as any).findUnique({ where: { id }, include: { book: true } });
     if (!issue || issue.status !== "ISSUED") { sendError(res, "Invalid issue", 400); return; }
     if (!canAccessBranch(req, issue.book.branchId)) { sendError(res, "Invalid issue", 400); return; }
 
@@ -300,7 +306,7 @@ export const markLostOrDamaged = async (req: AuthRequest, res: Response): Promis
       cost = status === "LOST" ? branchConfig.flatLostCost : branchConfig.flatDamagedCost;
     }
 
-    const updated = await prisma.libraryIssue.update({
+    const updated = await (model as any).update({
       where: { id },
       data: { status, lostDamageCost: cost },
     });
@@ -321,8 +327,12 @@ export const waiveLibraryCost = async (req: AuthRequest, res: Response): Promise
   try {
     const { id } = req.params;
     const { waiveType, amount, isPercent } = req.body; // waiveType: "FINE" | "LOST_DAMAGE"
+    // Same STUDENT/STAFF discriminator as markLostOrDamaged above -
+    // optional, defaults to the original LibraryIssue table.
+    const issueType = req.body.issueType === "STAFF" ? "STAFF" : "STUDENT";
+    const model = issueType === "STAFF" ? prisma.staffLibraryIssue : prisma.libraryIssue;
 
-    const issue = await prisma.libraryIssue.findUnique({ where: { id }, include: { book: true } });
+    const issue = await (model as any).findUnique({ where: { id }, include: { book: true } });
     if (!issue) { sendError(res, "Issue not found", 404); return; }
     if (!canAccessBranch(req, issue.book.branchId)) { sendError(res, "Issue not found", 404); return; }
 
@@ -330,7 +340,7 @@ export const waiveLibraryCost = async (req: AuthRequest, res: Response): Promise
     const waivedAmount = isPercent ? (baseAmount * Number(amount)) / 100 : Number(amount);
     const cappedWaiver = Math.min(waivedAmount, baseAmount);
 
-    const updated = await prisma.libraryIssue.update({
+    const updated = await (model as any).update({
       where: { id },
       data: waiveType === "FINE"
         ? { fineWaivedAmount: cappedWaiver, fineWaivedBy: req.user!.userId }
@@ -362,6 +372,78 @@ export const deleteBook = async (req: AuthRequest, res: Response): Promise<void>
     await prisma.libraryBook.delete({ where: { id } });
     sendSuccess(res, null, "Book deleted");
   } catch (error) { sendError(res, "Failed to delete book", 500, (error as Error).message); }
+};
+
+/**
+ * List staff book issues - the staff-issuing counterpart to
+ * getIssuedBooks above. Needed because StaffLibraryIssue is a
+ * separate table from LibraryIssue (see that model's doc comment in
+ * schema.prisma), so it was never returned by getIssuedBooks and had
+ * no listing endpoint of its own at all - issueBookToStaff could
+ * create rows, but nothing could ever list or return them again.
+ */
+export const getStaffIssuedBooks = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const status = (req.query.status as string) || "ISSUED";
+    const branchId = resolveBranchId(req);
+    const staffId = req.query.staffId as string | undefined;
+    const overdueOnly = req.query.overdueOnly === "true";
+
+    const where: any = { status: status as any, book: { branchId } };
+    if (staffId) where.staffId = staffId;
+    if (overdueOnly) where.dueDate = { lt: new Date() };
+
+    const issues = await prisma.staffLibraryIssue.findMany({
+      where,
+      include: { book: { select: { title: true, author: true } } },
+      orderBy: { issueDate: "desc" },
+    });
+
+    // staffId has no direct relation on StaffLibraryIssue (see schema
+    // comment - it's a plain string, not a Prisma relation field), so
+    // the staff member's name/designation is attached here with one
+    // extra lookup rather than a `include`.
+    const staffIds = [...new Set(issues.map((i) => i.staffId))];
+    const staffRecords = staffIds.length
+      ? await prisma.staff.findMany({
+          where: { id: { in: staffIds } },
+          select: { id: true, employeeId: true, designation: true, user: { select: { name: true } } },
+        })
+      : [];
+    const staffById = new Map(staffRecords.map((s) => [s.id, s]));
+
+    const withStaff = issues.map((issue) => ({ ...issue, staff: staffById.get(issue.staffId) || null }));
+    sendSuccess(res, withStaff, "Staff issued books fetched");
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
+};
+
+/**
+ * Return a staff-issued book - mirrors returnBook above but against
+ * StaffLibraryIssue, and increments the book's availableCopies the
+ * same way. Uses the branch's own staffIssueLimit-adjacent finePerDay
+ * rate (LibraryConfig has one shared finePerDay for both audiences -
+ * spec Section 12 doesn't call for a separate staff-only rate).
+ */
+export const returnStaffBook = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const issue = await prisma.staffLibraryIssue.findUnique({ where: { id }, include: { book: true } });
+    if (!issue || issue.status !== "ISSUED") { sendError(res, "Invalid issue", 400); return; }
+    if (!canAccessBranch(req, issue.book.branchId)) { sendError(res, "Invalid issue", 400); return; }
+
+    const branchConfig = await resolveLibraryConfig(issue.book.branchId);
+
+    const now = new Date();
+    let fine = 0;
+    if (now > new Date(issue.dueDate)) {
+      const daysLate = Math.ceil((now.getTime() - new Date(issue.dueDate).getTime()) / (1000 * 60 * 60 * 24));
+      fine = daysLate * branchConfig.finePerDay;
+    }
+
+    await prisma.staffLibraryIssue.update({ where: { id }, data: { returnDate: now, fine, status: "RETURNED" } });
+    await prisma.libraryBook.update({ where: { id: issue.bookId }, data: { availableCopies: { increment: 1 } } });
+    sendSuccess(res, { fine }, `Book returned${fine > 0 ? `. Fine: Rs ${fine}` : ""}`);
+  } catch (error) { sendError(res, "Failed", 500, (error as Error).message); }
 };
 
 export const getIssuedBooks = async (req: AuthRequest, res: Response): Promise<void> => {

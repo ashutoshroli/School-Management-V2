@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { UserRole } from "@prisma/client";
-import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, getIssuedBooks, deleteBook, issueBookToStaff, markLostOrDamaged, waiveLibraryCost, getLibraryConfig, upsertLibraryConfig } from "../controllers/library.controller";
+import { addBook, getBooks, getBookById, issueBook, bulkIssueBook, returnBook, getIssuedBooks, deleteBook, issueBookToStaff, markLostOrDamaged, waiveLibraryCost, getLibraryConfig, upsertLibraryConfig, getStaffIssuedBooks, returnStaffBook } from "../controllers/library.controller";
 import { addItem, getItems, getItemById, purchaseStock, issueStock, getLowStockAlerts, deleteItem, returnIssuedStock, raiseInventoryPurchaseRequest, advanceInventoryPurchaseRequest, getInventoryPurchaseRequests, getApplianceExpiryAlerts } from "../controllers/inventory.controller";
 import { createRoute, getRoutes, addStop, allocateStudent, removeAllocation, getVehicles, getVehicleById, addVehicle, updateVehicle, deleteVehicle, deleteRoute, assignVehicleToRoute, unassignVehicleFromRoute, updateVehicleLocation, getVehicleLocations, logVehicleMaintenance, getVehicleMaintenanceLogs, setRouteDistance, getEffectiveStopFee } from "../controllers/transport.controller";
 import { createBuilding, getBuildings, addFloor, addRoom, allocateRoom, bulkAllocateRoom, deallocateRoom, getOccupancy, deleteBuilding, bulkAddFloors, bulkAddRooms, requestBed, respondToRoomRequest, getSuggestedRooms, setAllotmentCutoff, finalizeHostelAllotments, hostelTap, getCurrentlyInHostel } from "../controllers/hostel.controller";
@@ -30,6 +30,8 @@ router.patch("/library/return/:id", authorize(...ADMIN, UserRole.LIBRARIAN), ret
 router.get("/library/issued", authorize(...ADMIN, UserRole.LIBRARIAN), getIssuedBooks);
 router.delete("/library/books/:id", authorize(...ADMIN, UserRole.LIBRARIAN), deleteBook);
 router.post("/library/issue/staff", authorize(...ADMIN, UserRole.LIBRARIAN), validate(issueBookToStaffSchema), issueBookToStaff);
+router.get("/library/issued/staff", authorize(...ADMIN, UserRole.LIBRARIAN), getStaffIssuedBooks);
+router.patch("/library/return/staff/:id", authorize(...ADMIN, UserRole.LIBRARIAN), returnStaffBook);
 router.patch("/library/issue/:id/lost-damaged", authorize(...ADMIN, UserRole.LIBRARIAN), validate(markLostOrDamagedSchema), markLostOrDamaged);
 // Waiver restricted to Principal/Admin per spec Section 12.
 router.patch("/library/issue/:id/waive", authorize(...ADMIN, UserRole.PRINCIPAL, UserRole.VICE_PRINCIPAL), validate(waiveLibraryCostSchema), waiveLibraryCost);
