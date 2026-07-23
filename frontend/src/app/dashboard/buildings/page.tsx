@@ -6,14 +6,36 @@ import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { usePermissions } from "@/hooks/usePermissions";
 
-const ROOM_TYPES = [
-  "CLASSROOM", "LAB", "OFFICE", "CHAMBER", "TEACHER_CHAMBER", "STAFF_ROOM", "LIBRARY",
-  "AUDITORIUM", "SPORTS_ROOM", "TOILET", "STORE", "CANTEEN", "MEDICAL_ROOM", "OTHER",
+// Grouped for the Room Type dropdown's <optgroup>s (spec Section 18B) -
+// the flat list has grown too long (28 types) to scan without
+// grouping. Keep in sync with the backend's ROOM_TYPES validator list
+// and the SchoolRoomType enum in schema.prisma.
+const ROOM_TYPE_GROUPS: { label: string; types: string[] }[] = [
+  { label: "Classrooms & Labs", types: ["CLASSROOM", "LAB", "PHYSICS_LAB", "CHEMISTRY_LAB", "BIOLOGY_LAB", "COMPUTER_LAB"] },
+  {
+    label: "Offices & Chambers",
+    types: [
+      "OFFICE", "CHAMBER", "TEACHER_CHAMBER", "STAFF_ROOM", "PRINCIPAL_CHAMBER", "PRINCIPAL_WAITING_ROOM",
+      "VICE_PRINCIPAL_CHAMBER", "HOD_OFFICE", "FRONT_OFFICE", "ACCOUNTS_OFFICE", "RECEPTION", "SERVER_ROOM",
+      "CONFERENCE_ROOM", "TRANSPORT_OFFICE",
+    ],
+  },
+  { label: "Other Facilities", types: ["LIBRARY", "AUDITORIUM", "SPORTS_ROOM", "TOILET", "STORE", "CANTEEN", "MEDICAL_ROOM", "OTHER"] },
+];
+
+// Single-occupant office/chamber types (spec Section 18B) - these all
+// use SchoolRoom.assignedStaffId's existing "one room = one occupant"
+// case (Principal's own chamber, VP's chamber, HOD's office, etc),
+// same as the original CHAMBER/OFFICE types. Multi-occupant shared
+// rooms (STAFF_ROOM, TEACHER_CHAMBER) use RoomCabin instead, unaffected.
+const SINGLE_STAFF_ROOM_TYPES = [
+  "CHAMBER", "OFFICE", "PRINCIPAL_CHAMBER", "VICE_PRINCIPAL_CHAMBER", "HOD_OFFICE",
+  "FRONT_OFFICE", "ACCOUNTS_OFFICE", "RECEPTION", "SERVER_ROOM", "CONFERENCE_ROOM", "TRANSPORT_OFFICE",
 ];
 
 // Room operational status (spec Section 18B) - see RoomStatus enum's
-// doc comment in schema.prisma. Independent of ROOM_TYPES above (a
-// room's type never changes; its status can).
+// doc comment in schema.prisma. Independent of ROOM_TYPE_GROUPS above
+// (a room's type never changes; its status can).
 const ROOM_STATUSES = ["ACTIVE", "MAINTENANCE", "VACANT"];
 
 const STATUS_BADGE_STYLE: Record<string, string> = {
@@ -409,7 +431,7 @@ export default function SchoolBuildingsPage() {
                           <p className="font-bold">{r.roomNo}</p>
                           {r.name && <p className="text-gray-500 truncate">{r.name}</p>}
                           {r.type === "CLASSROOM" && r.capacity > 0 && <p className="text-gray-500">{occupied}/{r.capacity}</p>}
-                          {r.type === "CHAMBER" && r.assignedStaff && <p className="text-gray-500 truncate">{r.assignedStaff.user?.name}</p>}
+                          {SINGLE_STAFF_ROOM_TYPES.includes(r.type) && r.assignedStaff && <p className="text-gray-500 truncate">{r.assignedStaff.user?.name}</p>}
                           <p className="text-[10px] text-gray-400">{r.type.replace(/_/g, " ")}</p>
                           <span className={`inline-block text-[9px] font-medium px-1.5 py-0.5 rounded-full mt-1 ${STATUS_BADGE_STYLE[status] || STATUS_BADGE_STYLE.ACTIVE}`}>
                             {status}
@@ -513,7 +535,11 @@ export default function SchoolBuildingsPage() {
                 <input className="input-field col-span-2" placeholder="Room No *" value={r.roomNo} onChange={(e) => updateBulkRoomRow(i, "roomNo", e.target.value)} />
                 <input className="input-field col-span-3" placeholder="Name" value={r.name} onChange={(e) => updateBulkRoomRow(i, "name", e.target.value)} />
                 <select className="input-field col-span-2" value={r.type} onChange={(e) => updateBulkRoomRow(i, "type", e.target.value)}>
-                  {ROOM_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                  {ROOM_TYPE_GROUPS.map((g) => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.types.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                    </optgroup>
+                  ))}
                 </select>
                 <input type="number" min={0} className="input-field col-span-2" placeholder="Capacity" value={r.capacity} onChange={(e) => updateBulkRoomRow(i, "capacity", e.target.value)} />
                 <select className="input-field col-span-2" value={r.status || "ACTIVE"} onChange={(e) => updateBulkRoomRow(i, "status", e.target.value)}>
@@ -594,7 +620,11 @@ export default function SchoolBuildingsPage() {
             <div>
               <label className="block text-sm font-medium mb-1">Room Type *</label>
               <select className="input-field" value={roomForm.type} onChange={(e) => setRoomForm({ ...roomForm, type: e.target.value })}>
-                {ROOM_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                {ROOM_TYPE_GROUPS.map((g) => (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.types.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                  </optgroup>
+                ))}
               </select>
             </div>
             <div>
@@ -612,7 +642,7 @@ export default function SchoolBuildingsPage() {
             <label className="block text-sm font-medium mb-1">Direction from Main Gate</label>
             <input className="input-field" value={roomForm.directionFromGate} onChange={(e) => setRoomForm({ ...roomForm, directionFromGate: e.target.value })} placeholder="e.g. Left wing, 2nd door" />
           </div>
-          {(roomForm.type === "CHAMBER" || roomForm.type === "OFFICE") && (
+          {SINGLE_STAFF_ROOM_TYPES.includes(roomForm.type) && (
             <div>
               <label className="block text-sm font-medium mb-1">Assigned Staff</label>
               <select className="input-field" value={roomForm.assignedStaffId} onChange={(e) => setRoomForm({ ...roomForm, assignedStaffId: e.target.value })}>

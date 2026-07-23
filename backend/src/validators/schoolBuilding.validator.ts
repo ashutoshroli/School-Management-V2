@@ -1,18 +1,31 @@
 import { z } from "zod";
 
-// BUG FIX: TEACHER_CHAMBER was missing from this list even though it
-// has existed in the SchoolRoomType enum (schema.prisma) and in the
-// frontend's own ROOM_TYPES dropdown (buildings/page.tsx) all along -
-// z.enum() rejects any value not explicitly listed here, so saving a
-// room with type "TEACHER_CHAMBER" always 400'd at validation before
-// the request ever reached the controller.
+// Keep in sync with the SchoolRoomType enum in schema.prisma - z.enum()
+// rejects any value not explicitly listed here (see the TEACHER_CHAMBER
+// bug fixed in an earlier phase, which is why this list now includes
+// every subtype added by Phase 4 below up front instead of drifting
+// out of sync with the schema again).
 const ROOM_TYPES = [
   "CLASSROOM",
   "LAB",
+  "PHYSICS_LAB",
+  "CHEMISTRY_LAB",
+  "BIOLOGY_LAB",
+  "COMPUTER_LAB",
   "OFFICE",
   "CHAMBER",
   "TEACHER_CHAMBER",
   "STAFF_ROOM",
+  "PRINCIPAL_CHAMBER",
+  "PRINCIPAL_WAITING_ROOM",
+  "VICE_PRINCIPAL_CHAMBER",
+  "HOD_OFFICE",
+  "FRONT_OFFICE",
+  "ACCOUNTS_OFFICE",
+  "RECEPTION",
+  "SERVER_ROOM",
+  "CONFERENCE_ROOM",
+  "TRANSPORT_OFFICE",
   "LIBRARY",
   "AUDITORIUM",
   "SPORTS_ROOM",
