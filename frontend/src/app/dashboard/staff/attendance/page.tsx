@@ -267,6 +267,9 @@ export default function StaffAttendancePage() {
                   <th className="px-4 py-3 text-center">Late</th>
                   <th className="px-4 py-3 text-center">On Leave</th>
                   <th className="px-4 py-3 text-center">Attendance %</th>
+                  <th className="px-4 py-3 text-center" title="Every 5 combined late-entries/early-exits in a week-cycle deducts periods from that day's attendance (branch-configurable)">
+                    Periods Deducted
+                  </th>
                 </tr></thead>
                 <tbody>
                   {reportRows.map((r: any) => (
@@ -279,9 +282,10 @@ export default function StaffAttendancePage() {
                       <td className="px-4 py-3 text-center text-orange-600">{r.late}</td>
                       <td className="px-4 py-3 text-center text-blue-600">{r.onLeave}</td>
                       <td className={`px-4 py-3 text-center font-medium ${r.attendancePercent < 75 ? "text-red-600" : "text-gray-900"}`}>{r.attendancePercent}%</td>
+                      <td className={`px-4 py-3 text-center font-medium ${r.totalPeriodsDeducted > 0 ? "text-red-600" : "text-gray-400"}`}>{r.totalPeriodsDeducted}</td>
                     </tr>
                   ))}
-                  {reportRows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">No data for this month</td></tr>}
+                  {reportRows.length === 0 && <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-500">No data for this month</td></tr>}
                 </tbody>
               </table>
             </div>
